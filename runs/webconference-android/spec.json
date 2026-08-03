@@ -24,6 +24,14 @@
       "units": 1,
       "tag": "test",
       "selection_policy": null
+    },
+    {
+      "service": {
+        "Custom": "devsystem.verify"
+      },
+      "units": 1,
+      "tag": "verify",
+      "selection_policy": null
     }
   ],
   "operator_pubkey_hex": null,
