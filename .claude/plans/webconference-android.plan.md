@@ -32,6 +32,12 @@ The review stage is now real for this run: a genuine pass over the existing code
 - `devsystem.verify`
 - `devsystem.review`
 
+## Stalled stages (devsystem.improve)
+
+Proposed and live in the spec, but no iteration has run *as* these stages yet -- likely blocked on a pending human decision:
+
+- `devsystem.android_native_bridge`
+
 ## Decision needed
 
 Reply `approve` to accept this iteration's proposals as-is and let the next iteration proceed, or `request-changes` with your answer/direction (this canvas live-reloads on `--reply`).
