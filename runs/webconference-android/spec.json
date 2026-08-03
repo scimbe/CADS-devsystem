@@ -40,6 +40,14 @@
       "units": 1,
       "tag": "review",
       "selection_policy": null
+    },
+    {
+      "service": {
+        "Custom": "devsystem.improve"
+      },
+      "units": 1,
+      "tag": "improve",
+      "selection_policy": null
     }
   ],
   "operator_pubkey_hex": null,
