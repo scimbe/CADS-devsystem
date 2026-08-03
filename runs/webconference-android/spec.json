@@ -32,6 +32,14 @@
       "units": 1,
       "tag": "verify",
       "selection_policy": null
+    },
+    {
+      "service": {
+        "Custom": "devsystem.review"
+      },
+      "units": 1,
+      "tag": "review",
+      "selection_policy": null
     }
   ],
   "operator_pubkey_hex": null,
