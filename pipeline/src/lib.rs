@@ -68,6 +68,117 @@ pub fn plan_only_spec(run_id: &str, operator_pubkey_hex: Option<String>) -> Pipe
     }
 }
 
+/// A real proposal a role-filler agent emits mid-iteration when it discovers this run
+/// needs a stage/service the current [`PipelineSpec`] doesn't have yet -- e.g. "we need
+/// an Android emulator to test the next slice against". This is the actual mechanism
+/// behind the self-optimizing design (#382): the pipeline is not fixed at `full_spec()`,
+/// it grows via proposals like this one, applied to the *live* spec by [`apply_proposal`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StageProposal {
+    /// Which role/agent raised this (e.g. `"devsystem.implement"`, matching a stage
+    /// tag) -- not a human identity, an accountability trail for which stage's
+    /// role-filler asked for the new capability.
+    pub proposed_by: String,
+    /// The new stage's service name, e.g. `"devsystem.android_emulator_test"`. Always
+    /// namespaced `devsystem.*` by convention (not enforced -- a pipeline designer
+    /// could propose a bare custom name too).
+    pub stage_id: String,
+    /// Short tag for the new [`RequiredRole`] (mirrors the existing seven stages'
+    /// `tag` convention: the `devsystem.` prefix stripped).
+    pub tag: String,
+    /// Why this stage is needed -- the actual content a human checks during a
+    /// periodic ecc-plan-canvas check-in, not a machine-only field.
+    pub rationale: String,
+    /// If set, names an existing running service that can fill this role today (no
+    /// new service needs to be built) -- otherwise the proposal implies "build one".
+    pub use_existing_service: Option<String>,
+    /// Auction seats needed for this role. Defaults to 1 in practice; kept explicit
+    /// since a stage might need more than one filler (e.g. two review agents).
+    pub units: u64,
+}
+
+/// What happened when a [`StageProposal`] was applied to a live [`PipelineSpec`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProposalOutcome {
+    /// A new [`RequiredRole`] was appended to the spec.
+    Added,
+    /// The spec already declared a role for this `stage_id` -- applying a proposal is
+    /// idempotent, never creates a duplicate role for the same service.
+    AlreadyPresent,
+}
+
+/// Apply a [`StageProposal`] to a **live** [`PipelineSpec`], mutating it in place. This
+/// is the literal mechanism by which "the pipeline builds itself" per the operator's
+/// framing: a role-filler's feedback becomes a new auction-able role in the same spec
+/// future iterations convene against, with no CADS-Tunnel core change required (still
+/// just a new `ServiceType::Custom` name).
+pub fn apply_proposal(spec: &mut PipelineSpec, proposal: &StageProposal) -> ProposalOutcome {
+    let service = ServiceType::Custom(proposal.stage_id.clone());
+    if spec.roles.iter().any(|r| r.service == service) {
+        return ProposalOutcome::AlreadyPresent;
+    }
+    spec.roles.push(RequiredRole {
+        service,
+        units: proposal.units,
+        tag: proposal.tag.clone(),
+        selection_policy: None,
+    });
+    ProposalOutcome::Added
+}
+
+/// Explicit, bounded termination criteria for one run's "super loop" (#382 §"Abbruch
+/// kriterien"): the pipeline's own self-optimization is iterative, not unsupervised
+/// forever -- these numbers are what make it a *bounded* loop.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct AbortCriteria {
+    /// Hard ceiling on iterations for this run, regardless of progress.
+    pub max_iterations: u32,
+    /// Consecutive failed iterations (a role-filler reporting `succeeded: false`)
+    /// before the run aborts rather than keeps retrying.
+    pub max_consecutive_failures: u32,
+    /// A mandatory human check-in (via ecc-plan-canvas) fires at least this often,
+    /// even when every iteration is succeeding -- "regelmässiger Austausch mit dem
+    /// Owner", not just on failure.
+    pub checkin_every: u32,
+}
+
+impl Default for AbortCriteria {
+    /// Conservative defaults for a brand-new run: short leash until a human has seen
+    /// at least one real check-in.
+    fn default() -> Self {
+        AbortCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 5 }
+    }
+}
+
+/// One role-filler's real output for one iteration of a stage -- the unit the super
+/// loop's abort/check-in logic below actually operates on.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct IterationRecord {
+    pub run_id: String,
+    pub stage: String,
+    pub iteration: u32,
+    pub feedback: String,
+    pub proposals: Vec<StageProposal>,
+    pub succeeded: bool,
+}
+
+/// True when this iteration must pause for a human check-in before continuing --
+/// either the configured cadence was hit, or the run has reached its iteration
+/// ceiling (the ceiling always forces a check-in, even off-cadence, so a run can never
+/// silently run past `max_iterations` without a human seeing it).
+pub fn should_checkin(record: &IterationRecord, criteria: &AbortCriteria) -> bool {
+    if record.iteration == 0 || criteria.checkin_every == 0 {
+        return record.iteration >= criteria.max_iterations;
+    }
+    record.iteration % criteria.checkin_every == 0 || record.iteration >= criteria.max_iterations
+}
+
+/// True when the run should abort outright (not just pause for check-in): too many
+/// consecutive failures, or the hard iteration ceiling was passed.
+pub fn should_abort(consecutive_failures: u32, current_iteration: u32, criteria: &AbortCriteria) -> bool {
+    consecutive_failures >= criteria.max_consecutive_failures || current_iteration >= criteria.max_iterations
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,6 +246,82 @@ mod tests {
             spec.convene(&[], 100),
             Err(PipelineError::UnfilledRole { service: ServiceType::Custom(STAGE_PLAN.to_string()) })
         );
+    }
+
+    #[test]
+    fn apply_proposal_adds_a_new_role_a_role_filler_can_actually_convene_for() {
+        // The literal proof of the self-optimizing design: a role-filler's proposal
+        // (e.g. "we need an Android emulator to test") becomes a real, auction-able
+        // role in the live spec -- not a declared-but-inert stage.
+        let mut spec = plan_only_spec("run-2", None);
+        assert_eq!(spec.roles.len(), 1);
+
+        let proposal = StageProposal {
+            proposed_by: STAGE_IMPLEMENT.to_string(),
+            stage_id: "devsystem.android_emulator_test".to_string(),
+            tag: "android_emulator_test".to_string(),
+            rationale: "the webconference-android slice needs a real emulator run before verify can pass".to_string(),
+            use_existing_service: None,
+            units: 1,
+        };
+        assert_eq!(apply_proposal(&mut spec, &proposal), ProposalOutcome::Added);
+        assert_eq!(spec.roles.len(), 2);
+
+        let emulator_filler = offer(
+            3,
+            vec![ServiceType::Custom("devsystem.android_emulator_test".to_string())],
+            7,
+        );
+        let plan_filler = offer(1, vec![ServiceType::Custom(STAGE_PLAN.to_string())], 10);
+        let assignments = spec
+            .convene(&[plan_filler, emulator_filler], 100)
+            .expect("both the original plan role and the newly proposed role convene for real");
+        assert_eq!(assignments.len(), 2);
+        assert!(assignments
+            .iter()
+            .any(|a| a.service == ServiceType::Custom("devsystem.android_emulator_test".to_string()) && a.provider == holder(3)));
+    }
+
+    #[test]
+    fn apply_proposal_is_idempotent_never_double_declares_a_stage() {
+        let mut spec = full_spec("run-3", None);
+        let before = spec.roles.len();
+        let proposal = StageProposal {
+            proposed_by: STAGE_TEST.to_string(),
+            stage_id: STAGE_TEST.to_string(),
+            tag: "test".to_string(),
+            rationale: "already exists -- must be a no-op".to_string(),
+            use_existing_service: None,
+            units: 1,
+        };
+        assert_eq!(apply_proposal(&mut spec, &proposal), ProposalOutcome::AlreadyPresent);
+        assert_eq!(spec.roles.len(), before, "no duplicate role for an already-declared stage");
+    }
+
+    #[test]
+    fn should_checkin_fires_on_the_configured_cadence_and_at_the_ceiling() {
+        let criteria = AbortCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 5 };
+        let rec = |iteration: u32| IterationRecord {
+            run_id: "run-4".into(),
+            stage: STAGE_IMPLEMENT.into(),
+            iteration,
+            feedback: "ok".into(),
+            proposals: vec![],
+            succeeded: true,
+        };
+        assert!(!should_checkin(&rec(1), &criteria));
+        assert!(!should_checkin(&rec(4), &criteria));
+        assert!(should_checkin(&rec(5), &criteria), "hits the configured cadence");
+        assert!(should_checkin(&rec(10), &criteria), "hits the cadence again");
+        assert!(should_checkin(&rec(20), &criteria), "hard ceiling always forces a check-in");
+    }
+
+    #[test]
+    fn should_abort_when_consecutive_failures_reach_the_bound_even_off_cadence() {
+        let criteria = AbortCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 5 };
+        assert!(!should_abort(2, 7, &criteria));
+        assert!(should_abort(3, 7, &criteria), "three consecutive failures aborts regardless of iteration count");
+        assert!(should_abort(0, 20, &criteria), "reaching the iteration ceiling also aborts");
     }
 
     #[test]
