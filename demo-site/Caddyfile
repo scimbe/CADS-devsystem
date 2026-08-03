@@ -20,6 +20,15 @@
 }
 
 :443 {
+	# The gate's own /gate/check issues the login redirect itself when it's
+	# needed (a 302 straight to /gate/start) -- Caddy's forward_auth copies
+	# that response to the client verbatim. No handle_errors block needed
+	# (an earlier version of this Caddyfile had one; it never actually fired --
+	# forward_auth never routes a non-2xx auth response through Caddy's error
+	# pipeline at all, confirmed against Caddy's own forward_auth docs).
+	forward_auth https://{$CT_GATE_UPSTREAM_HOST} {
+		uri /gate/check
+	}
 	root * /srv
 	file_server
 	encode gzip
