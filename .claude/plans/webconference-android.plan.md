@@ -1,29 +1,30 @@
-# Check-in: `webconference-android` -- iteration 4
+# Check-in: `webconference-android` -- iteration 5
 
 ## Run summary
 
-4 iteration(s) so far, 5 role(s) currently in the live spec.
+5 iteration(s) so far, 6 role(s) currently in the live spec.
 
 - iteration 1 (`devsystem.implement`, ok): Inspected the scaffold (CADS-webconference-android@4ea9b88) and CADS-Tunnel's crates: MainActivity is a placeholder TextView, matching the f...
 - iteration 2 (`devsystem.test`, ok): The run's spec had no devsystem.test role yet, and the Android repo had zero tests -- assembleDebug only proved the scaffold compiles, not t...
 - iteration 3 (`devsystem.verify`, ok): Verification had only ever run manually, by hand, on the production host inside a locally pulled mingc/android-build-box -- no continuous ch...
 - iteration 4 (`devsystem.review`, ok): Ran a real review pass over the scaffold (not just the newest commit): AndroidManifest.xml, MainActivity.kt, build.gradle.kts, and the new C...
+- iteration 5 (`devsystem.improve`, ok): The run's spec had no devsystem.improve role yet, and the stalled_stages() detection mechanism built two commits ago (65d0c26) had never act...
 
-**Stage:** `devsystem.review`
+**Stage:** `devsystem.improve`
 
 ## What this stage found
 
-Ran a real review pass over the scaffold (not just the newest commit): AndroidManifest.xml, MainActivity.kt, build.gradle.kts, and the new CI workflow. Two genuine findings, both fixed: (1) android:allowBackup="true" (the default) on a project whose real purpose is a Noise_IK/Agent-Fabric client -- cheap to close off now, before any real session/key material exists, rather than after. (2) MainActivity set padding with raw pixel ints, not density-aware -- moved to dp values in a new dimens.xml. Verified both fixes hermetically (testDebugUnitTest 1/1, assembleDebug) and confirmed the real CI run (30859108660) passed end to end. Commit CADS-webconference-android@484ea56.
+The run's spec had no devsystem.improve role yet, and the stalled_stages() detection mechanism built two commits ago (65d0c26) had never actually been run against this run as its own iteration -- it only existed as library code + a check-in artifact side-effect. Ran it for real here: stalled_stages(state) against this run's actual history correctly returns exactly one stage, devsystem.android_native_bridge -- proposed at iteration 1, still never run as its own stage, matching the still-open cargo-ndk vs UniFFI decision on CADS-Tunnel#382. No other stage (test/verify/review) is stalled; each has a real matching iteration in history.
 
 ## Proposals
 
-### `devsystem.review`
+### `devsystem.improve`
 
-- **Proposed by:** `devsystem.review`
-- **Tag / units:** `review` / 1
+- **Proposed by:** `devsystem.improve`
+- **Tag / units:** `improve` / 1
 - **Existing service to reuse:** none -- a new service must be built or provided
 
-The review stage is now real for this run: a genuine pass over the existing code found and fixed a real (if currently low-stakes) security issue and a real correctness issue, both verified hermetically and against a real CI run rather than assumed fixed.
+The improve stage is now real for this run: stalled_stages() genuinely analyzed this run's own history (not a hypothetical one) and correctly identified the one real stalled proposal. Self-registers into the live spec the same way test/verify/review did.
 
 ## Stages added to the live spec so far
 
@@ -31,6 +32,7 @@ The review stage is now real for this run: a genuine pass over the existing code
 - `devsystem.test`
 - `devsystem.verify`
 - `devsystem.review`
+- `devsystem.improve`
 
 ## Stalled stages (devsystem.improve)
 
