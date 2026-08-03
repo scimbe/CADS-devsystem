@@ -63,6 +63,12 @@ agent's context, no literature list leaking into the coding agent's.
 | remember | `devsystem.remember` | `remember` |
 | improve | `devsystem.improve` | `improve` |
 
-Only `plan` is wired into any real run today (see the README's status
-section) — the rest exist in `full_spec()` as declared roles, unused by any
-actual pipeline run yet.
+As of the `webconference-android` run (see `runs/webconference-android/` and
+the README's status section), `implement`/`test`/`verify`/`review`/`improve`
+have all had a real iteration recorded; `plan`'s gate (`ecc-plan-canvas`) is
+verified and reused for that same run's check-ins. `remember` has its
+envelope-writing mechanism live (every iteration appends to `memory.jsonl`)
+but has not yet run as its *own* stage the way the others have.
+`android_native_bridge` (a stage this run itself proposed, not one of the
+original seven) is live in the spec but stalled pending a human decision —
+see `pipeline/src/improve.rs`'s `stalled_stages()`.

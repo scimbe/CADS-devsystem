@@ -59,6 +59,12 @@ is not implemented here yet — next slice.
 - No bunsenbrenner-branded theme yet (proposal §5.1) — ECC ships its own
   dark theme with an accent palette; re-skinning it (if desired) is a CSS
   override, not a fork, since the canvas serves local artifact files as-is.
-- No actual pipeline run has driven this end-to-end yet — the CLI mechanism
-  is verified working in isolation, not yet wired into a real `plan`-role
-  filler agent's workflow.
+- A real run (`runs/webconference-android/`) now drives this CLI mechanism
+  repeatedly for real (`devsystem_checkin`, every periodic check-in served
+  and confirmed via the actual loopback page) — no longer isolated. What's
+  still open: the specific `plan`-role-filler cycle described in steps 1-4
+  above (a filler writes a plan, a human `approve`s or `request-changes`es
+  it to gate advancing to `test`) hasn't run for this project yet — every
+  check-in delivered so far has been the runner's periodic/mandatory
+  check-in (`pipeline/src/checkin.rs`), a related but distinct use of the
+  same canvas mechanism, not a `plan`-stage role-filler's own gate.

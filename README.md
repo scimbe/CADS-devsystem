@@ -19,7 +19,10 @@ wildcard cert) — will move to `tls` + a real cert once promoted to Grün.
 ## Status (2026-08-03)
 
 Driven as an ongoing loop effort, one real, tested increment at a time — not
-a single large push. Landed so far:
+a single large push, and explicitly **not** a static, pre-declared pipeline:
+every stage below except `plan` entered the live spec through a real
+`StageProposal` a role-filler iteration raised for itself, not upfront
+design. Landed so far:
 
 - ✅ **`RequiredRole`/`convene()` generalized** beyond the flappy-demo crew
   fixtures (`ServiceType::Custom`, CADS-Tunnel `v0.4.13`) — a pipeline
@@ -31,16 +34,41 @@ a single large push. Landed so far:
   [`pipeline/src/lib.rs`](pipeline/src/lib.rs).
 - ✅ **The `plan` stage's human-review gate**: ECC ([affaan-m/ECC](https://github.com/affaan-m/ECC),
   MIT, `npm i -g ecc-universal`) is a real, public, harness-agnostic package —
-  its `ecc-plan-canvas` CLI was tracked down, installed, and verified working
-  in this environment (loopback review server, real HTML page served, full
-  open/await/end cycle). See [`docs/plan-stage.md`](docs/plan-stage.md) for
-  the concrete integration. Reused as proposed, not rebuilt.
-- 🚧 **Wiring the `plan` stage only** (`plan_only_spec` in `pipeline/`), per
-  the proposal's own suggested sequencing — before committing to the full
-  seven-stage build.
-- ❌ Not started: `test`/`implement`/`review`/`verify`/`remember`/`improve`,
-  the target Android repo, mem0+Qdrant memory backend, the landing-page
-  Kanban.
+  its `ecc-plan-canvas` CLI is installed and used for real, not just verified
+  standalone. See [`docs/plan-stage.md`](docs/plan-stage.md).
+- ✅ **The self-optimization mechanism** (`pipeline/src/runner.rs`):
+  `StageProposal`/`apply_proposal` mutate a *live* `PipelineSpec` mid-run;
+  `AbortCriteria`/`should_checkin`/`should_abort` bound the "super loop" —
+  proven not just by unit tests but by a real run's mandatory 5-iteration
+  check-in genuinely firing (`RunOutcome::CheckinDue`), not a manual pause.
+- ✅ **`devsystem.remember`'s first piece** (`pipeline/src/envelope.rs`): the
+  zylos envelope (documented since the first commit, unimplemented until
+  now) is real code — every iteration appends its `EnvelopeRecord` to
+  `runs/<run_id>/memory.jsonl`, JSONL shaped for a future mem0/Qdrant load
+  without reshaping.
+- ✅ **`devsystem.improve`'s first piece** (`pipeline/src/improve.rs`):
+  `stalled_stages()` mechanically finds proposals live in the spec with no
+  iteration run as that stage yet — surfaced automatically in every
+  check-in artifact.
+- ✅ **Flagship proof, real and building**: [`CADS-webconference-android`](https://github.com/scimbe/CADS-webconference-android)
+  has a real Kotlin/Gradle scaffold, a hermetically-verified signed debug
+  APK, a real Robolectric unit test, a real GitHub Actions CI workflow
+  (watched to a passing run, not assumed), and two real review-found fixes
+  (`allowBackup`, density-aware padding).
+- ✅ **A real run** (`runs/webconference-android/`) has driven 5 genuine
+  iterations (`implement → test → verify → review → improve`), growing the
+  live spec from 1 role to 6 entirely through real proposals.
+- ⏸ **Currently paused, on purpose**: iteration 5 raised
+  `devsystem.android_native_bridge` (`cargo-ndk` vs `UniFFI` for a JNI bridge
+  to CADS-Tunnel's existing Rust Noise_IK/Agent-Fabric code) as a real
+  architecture-defining decision — per the runner's own contract, no further
+  iteration on this run happens until [CADS-Tunnel#382](https://github.com/scimbe/CADS-Tunnel/issues/382)
+  gets an answer.
+- ❌ Not started: mem0/Qdrant actually loading `memory.jsonl` (the log format
+  is ready; nothing consumes it yet), the visual pipeline editor, the
+  resource/SaaS/agent catalog, the local git server — all explicitly
+  deferred until this flagship run proves the mechanics end to end, per the
+  operator's own phased sequencing.
 
 ## What's reused from CADS-Tunnel/ct-agent, unchanged
 
