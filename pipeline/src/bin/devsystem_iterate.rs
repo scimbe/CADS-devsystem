@@ -6,6 +6,7 @@
 //!
 //! Usage: `devsystem_iterate <run_id> <record.json>`
 
+use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration};
 use devsystem_pipeline::runner::{run_iteration, RunOutcome, RunState};
 use devsystem_pipeline::{plan_only_spec, AbortCriteria, IterationRecord};
 use std::env;
@@ -36,6 +37,12 @@ fn main() {
 
     let record: IterationRecord =
         serde_json::from_str(&fs::read_to_string(&record_path).expect("read record.json")).expect("valid record.json");
+
+    // devsystem.remember, made real: every iteration's zylos envelope is appended to
+    // the run's durable memory log before anything else happens to `record`.
+    let memory_path = run_dir.join("memory.jsonl");
+    let envelope = envelope_from_iteration(&record);
+    append_to_memory_log(&memory_path, &envelope).expect("append to memory.jsonl");
 
     let criteria = AbortCriteria::default();
     let outcome = run_iteration(&mut spec, &mut state, record, &criteria);
