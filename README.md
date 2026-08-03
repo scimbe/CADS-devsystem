@@ -23,32 +23,18 @@ a single large push. Landed so far:
   stages (`pipeline/`) and a hermetically-tested proof that `convene()`
   clears a real auction for a devsystem-declared role — see
   [`pipeline/src/lib.rs`](pipeline/src/lib.rs).
+- ✅ **The `plan` stage's human-review gate**: ECC ([affaan-m/ECC](https://github.com/affaan-m/ECC),
+  MIT, `npm i -g ecc-universal`) is a real, public, harness-agnostic package —
+  its `ecc-plan-canvas` CLI was tracked down, installed, and verified working
+  in this environment (loopback review server, real HTML page served, full
+  open/await/end cycle). See [`docs/plan-stage.md`](docs/plan-stage.md) for
+  the concrete integration. Reused as proposed, not rebuilt.
 - 🚧 **Wiring the `plan` stage only** (`plan_only_spec` in `pipeline/`), per
   the proposal's own suggested sequencing — before committing to the full
   seven-stage build.
 - ❌ Not started: `test`/`implement`/`review`/`verify`/`remember`/`improve`,
   the target Android repo, mem0+Qdrant memory backend, the landing-page
   Kanban.
-
-### Open question: the Plan Canvas dependency
-
-The proposal's `plan` stage says to reuse "ECC's Plan Canvas"
-(`commands/plan-canvas.md`, `scripts/plan-canvas.js`) directly, plus ECC
-skills like `android-clean-architecture` and `tdd-workflow` for later stages.
-**None of these exist in the environment driving this loop** — only the
-generic [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills)
-set is installed (`~/.claude/skills/`), which has no Plan Canvas equivalent.
-Either:
-
-1. ECC lives somewhere else (a different agent's environment, a private
-   toolkit) and needs to be pointed at/shared, or
-2. It needs to be built from scratch here — a real scope addition to this
-   plan, not a "reuse" as originally proposed.
-
-Flagged on #382 rather than guessed at. Until resolved, the `plan` stage's
-human-review gate will be a minimal, self-contained substitute (a blocking
-review page, not a "ECC Plan Canvas"-branded one) if built before this
-resolves.
 
 ## What's reused from CADS-Tunnel/ct-agent, unchanged
 
