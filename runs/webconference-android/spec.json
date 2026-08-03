@@ -16,6 +16,14 @@
       "units": 1,
       "tag": "android_native_bridge",
       "selection_policy": null
+    },
+    {
+      "service": {
+        "Custom": "devsystem.test"
+      },
+      "units": 1,
+      "tag": "test",
+      "selection_policy": null
     }
   ],
   "operator_pubkey_hex": null,

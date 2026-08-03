@@ -1,0 +1,17 @@
+{
+  "run_id": "webconference-android",
+  "stage": "devsystem.test",
+  "iteration": 2,
+  "feedback": "The run's spec had no devsystem.test role yet, and the Android repo had zero tests -- assembleDebug only proved the scaffold compiles, not that it behaves correctly. Added a stable view id (scaffold_status_text) to MainActivity's TextView and a Robolectric JVM unit test asserting it displays R.string.status_scaffold. Verified hermetically inside mingc/android-build-box: ./gradlew testDebugUnitTest -> BUILD SUCCESSFUL, 1 test / 0 failures (real JUnit XML report); re-ran ./gradlew assembleDebug to confirm no regression. Found and fixed a real bug along the way: the new ids.xml's own comment used '--', invalid inside an XML comment (SAXParseException) -- caught before committing. Commit CADS-webconference-android@0bbdb2e.",
+  "succeeded": true,
+  "proposals": [
+    {
+      "proposed_by": "devsystem.test",
+      "stage_id": "devsystem.test",
+      "tag": "test",
+      "rationale": "The test stage is now real for this run: a genuine Robolectric unit test verifies MainActivity's actual displayed text, not just that the project compiles. No new build service was needed -- the same mingc/android-build-box image already used for assembleDebug also runs ./gradlew testDebugUnitTest, so this proposal reuses an existing service rather than requesting a new one.",
+      "use_existing_service": "mingc/android-build-box (already in use for assembleDebug; ./gradlew testDebugUnitTest runs in the same hermetic container)",
+      "units": 1
+    }
+  ]
+}
