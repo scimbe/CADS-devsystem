@@ -4,6 +4,7 @@
 //! invocation lives in the `devsystem_checkin` binary, since spawning a process isn't
 //! something a hermetic `cargo test` should do.
 
+use crate::improve::stalled_stages;
 use crate::runner::RunState;
 use crate::IterationRecord;
 
@@ -74,6 +75,17 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
         md.push('\n');
     }
 
+    let stalled = stalled_stages(state);
+    if !stalled.is_empty() {
+        md.push_str("## Stalled stages (devsystem.improve)\n\n");
+        md.push_str("Proposed and live in the spec, but no iteration has run *as* these \
+            stages yet -- likely blocked on a pending human decision:\n\n");
+        for s in &stalled {
+            md.push_str(&format!("- `{s}`\n"));
+        }
+        md.push('\n');
+    }
+
     md.push_str("## Decision needed\n\n");
     md.push_str("Reply `approve` to accept this iteration's proposals as-is and let the next \
         iteration proceed, or `request-changes` with your answer/direction (this canvas \
@@ -129,6 +141,22 @@ mod tests {
         assert!(md.contains("reuse the audited Rust Noise_IK code"));
         assert!(md.contains("none -- a new service must be built or provided"));
         assert!(md.contains("Decision needed"));
+    }
+
+    #[test]
+    fn a_proposed_stage_with_no_iteration_of_its_own_is_reported_as_stalled() {
+        let proposal = StageProposal {
+            proposed_by: "devsystem.implement".into(),
+            stage_id: "devsystem.android_native_bridge".into(),
+            tag: "android_native_bridge".into(),
+            rationale: "blocked on a real architecture decision".into(),
+            use_existing_service: None,
+            units: 1,
+        };
+        let state = state_with_one_iteration(vec![proposal]);
+        let md = render_plan_markdown(&state).unwrap();
+        assert!(md.contains("## Stalled stages (devsystem.improve)"));
+        assert!(md.contains("`devsystem.android_native_bridge`"));
     }
 
     #[test]

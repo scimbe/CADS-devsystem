@@ -16,6 +16,7 @@ use ct_common::pipeline::{PipelineSpec, RequiredRole, SelectionPolicy};
 
 pub mod checkin;
 pub mod envelope;
+pub mod improve;
 pub mod runner;
 
 /// The seven pipeline-stage service names (#382 §3), each a `ServiceType::Custom` --
