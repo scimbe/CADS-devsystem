@@ -7,8 +7,8 @@
 //! Usage: `devsystem_iterate <run_id> <record.json>`
 
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration};
-use devsystem_pipeline::runner::{run_iteration, RunOutcome, RunState};
-use devsystem_pipeline::{plan_only_spec, AbortCriteria, IterationRecord};
+use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, RunOutcome};
+use devsystem_pipeline::{AbortCriteria, IterationRecord};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -19,21 +19,7 @@ fn main() {
     let record_path = args.next().expect("usage: devsystem_iterate <run_id> <record.json>");
 
     let run_dir = PathBuf::from("runs").join(&run_id);
-    fs::create_dir_all(&run_dir).expect("create runs/<run_id>/");
-
-    let spec_path = run_dir.join("spec.json");
-    let state_path = run_dir.join("state.json");
-
-    let mut spec = if spec_path.exists() {
-        serde_json::from_str(&fs::read_to_string(&spec_path).unwrap()).expect("valid spec.json")
-    } else {
-        plan_only_spec(&run_id, None)
-    };
-    let mut state = if state_path.exists() {
-        serde_json::from_str(&fs::read_to_string(&state_path).unwrap()).expect("valid state.json")
-    } else {
-        RunState::new(run_id.clone())
-    };
+    let (mut spec, mut state) = load_or_init_run(&run_dir, &run_id).expect("load or initialize run");
 
     let record: IterationRecord =
         serde_json::from_str(&fs::read_to_string(&record_path).expect("read record.json")).expect("valid record.json");
@@ -47,8 +33,7 @@ fn main() {
     let criteria = AbortCriteria::default();
     let outcome = run_iteration(&mut spec, &mut state, record, &criteria);
 
-    fs::write(&spec_path, serde_json::to_string_pretty(&spec).unwrap()).expect("write spec.json");
-    fs::write(&state_path, serde_json::to_string_pretty(&state).unwrap()).expect("write state.json");
+    persist_run(&run_dir, &spec, &state).expect("persist run");
 
     println!("run_id={run_id} iteration_outcome={outcome:?} roles_now={} added_stages={:?}", spec.roles.len(), state.added_stages);
     match outcome {

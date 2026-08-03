@@ -3,9 +3,12 @@
 //! pause for a human check-in, or aborts -- the actual glue between the primitives in
 //! `lib.rs` and a persisted, resumable run (#382).
 
-use crate::{apply_proposal, should_abort, should_checkin, AbortCriteria, IterationRecord, ProposalOutcome};
+use crate::{apply_proposal, plan_only_spec, should_abort, should_checkin, AbortCriteria, IterationRecord, ProposalOutcome};
 use ct_common::pipeline::PipelineSpec;
 use serde::{Deserialize, Serialize};
+use std::error::Error;
+use std::fs;
+use std::path::Path;
 
 /// Persisted state for one run -- serialized to `runs/<run_id>/state.json` in the
 /// coordination repo so a run survives across separate loop firings (each firing is a
@@ -71,10 +74,41 @@ pub fn run_iteration(
     }
 }
 
+/// Load a run's persisted `spec.json`/`state.json` from `run_dir`, or start fresh
+/// (a new `plan_only_spec` + empty `RunState`) if this is the run's first iteration.
+/// The actual load-or-init logic behind `devsystem_iterate` -- pulled out here so
+/// it's unit-testable directly, without spawning the binary as a subprocess.
+pub fn load_or_init_run(run_dir: &Path, run_id: &str) -> Result<(PipelineSpec, RunState), Box<dyn Error>> {
+    let spec_path = run_dir.join("spec.json");
+    let state_path = run_dir.join("state.json");
+
+    let spec = if spec_path.exists() {
+        serde_json::from_str(&fs::read_to_string(&spec_path)?)?
+    } else {
+        plan_only_spec(run_id, None)
+    };
+    let state = if state_path.exists() {
+        serde_json::from_str(&fs::read_to_string(&state_path)?)?
+    } else {
+        RunState::new(run_id.to_string())
+    };
+    Ok((spec, state))
+}
+
+/// Persist a run's spec + state to `run_dir`, creating it if needed. The write side
+/// of the same load/persist round-trip `devsystem_iterate` performs every real
+/// invocation.
+pub fn persist_run(run_dir: &Path, spec: &PipelineSpec, state: &RunState) -> Result<(), Box<dyn Error>> {
+    fs::create_dir_all(run_dir)?;
+    fs::write(run_dir.join("spec.json"), serde_json::to_string_pretty(spec)?)?;
+    fs::write(run_dir.join("state.json"), serde_json::to_string_pretty(state)?)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{plan_only_spec, STAGE_IMPLEMENT};
+    use crate::STAGE_IMPLEMENT;
 
     fn record(iteration: u32, succeeded: bool, proposals: Vec<crate::StageProposal>) -> IterationRecord {
         IterationRecord {
@@ -139,5 +173,41 @@ mod tests {
         run_iteration(&mut spec, &mut state, record(1, false, vec![]), &criteria);
         run_iteration(&mut spec, &mut state, record(2, true, vec![]), &criteria);
         assert_eq!(state.consecutive_failures, 0);
+    }
+
+    fn temp_run_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("devsystem-runner-test-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn load_or_init_starts_fresh_when_no_files_exist_yet() {
+        let dir = temp_run_dir("fresh");
+        let (spec, state) = load_or_init_run(&dir, "a-new-run").unwrap();
+        assert_eq!(spec.roles.len(), 1, "plan_only_spec's single starting role");
+        assert_eq!(state.run_id, "a-new-run");
+        assert!(state.history.is_empty());
+        assert!(!dir.exists(), "load_or_init never creates the directory itself -- persist_run does");
+    }
+
+    #[test]
+    fn persist_then_load_round_trips_a_real_spec_and_state() {
+        let dir = temp_run_dir("roundtrip");
+        let mut spec = plan_only_spec("roundtrip-run", None);
+        let mut state = RunState::new("roundtrip-run");
+        let criteria = AbortCriteria::default();
+        run_iteration(&mut spec, &mut state, record(1, true, vec![]), &criteria);
+
+        persist_run(&dir, &spec, &state).unwrap();
+        assert!(dir.join("spec.json").exists());
+        assert!(dir.join("state.json").exists());
+
+        let (loaded_spec, loaded_state) = load_or_init_run(&dir, "roundtrip-run").unwrap();
+        assert_eq!(loaded_spec, spec);
+        assert_eq!(loaded_state.run_id, state.run_id);
+        assert_eq!(loaded_state.history.len(), 1);
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
