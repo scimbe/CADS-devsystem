@@ -14,6 +14,8 @@
 use ct_common::channel::ServiceType;
 use ct_common::pipeline::{PipelineSpec, RequiredRole, SelectionPolicy};
 
+pub mod runner;
+
 /// The seven pipeline-stage service names (#382 §3), each a `ServiceType::Custom` --
 /// a pipeline-designer-level decision, not a CADS-Tunnel core one.
 pub const STAGE_PLAN: &str = "devsystem.plan";
