@@ -19,6 +19,32 @@ pub fn render_plan_markdown(state: &RunState) -> Option<String> {
 fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
     let mut md = String::new();
     md.push_str(&format!("# Check-in: `{}` -- iteration {}\n\n", state.run_id, record.iteration));
+
+    // A periodic check-in is about the whole run so far, not just the iteration that
+    // happened to trigger it -- a human pausing here needs "how's this run going",
+    // not just the latest slice. Every prior iteration gets one summary line;
+    // the triggering iteration gets full detail below.
+    if state.history.len() > 1 {
+        md.push_str("## Run summary\n\n");
+        md.push_str(&format!(
+            "{} iteration(s) so far, {} role(s) currently in the live spec.\n\n",
+            state.history.len(),
+            state.added_stages.len() + 1, // +1 for the always-present plan role
+        ));
+        for r in &state.history {
+            let status = if r.succeeded { "ok" } else { "FAILED" };
+            let first_line = r.feedback.lines().next().unwrap_or("");
+            let truncated = if first_line.chars().count() > 140 {
+                let head: String = first_line.chars().take(140).collect();
+                format!("{head}...")
+            } else {
+                first_line.to_string()
+            };
+            md.push_str(&format!("- iteration {} (`{}`, {status}): {truncated}\n", r.iteration, r.stage));
+        }
+        md.push('\n');
+    }
+
     md.push_str(&format!("**Stage:** `{}`\n\n", record.stage));
     md.push_str("## What this stage found\n\n");
     md.push_str(&record.feedback);
@@ -110,5 +136,42 @@ mod tests {
         let state = state_with_one_iteration(vec![]);
         let md = render_plan_markdown(&state).unwrap();
         assert!(md.contains("None this iteration."));
+    }
+
+    #[test]
+    fn a_single_iteration_run_has_no_run_summary_section() {
+        // Nothing to summarize yet when this is the only iteration -- avoid a
+        // redundant "1 iteration so far" section duplicating the detail below it.
+        let state = state_with_one_iteration(vec![]);
+        let md = render_plan_markdown(&state).unwrap();
+        assert!(!md.contains("## Run summary"));
+    }
+
+    #[test]
+    fn a_multi_iteration_run_summarizes_every_prior_iteration_not_just_the_latest() {
+        let mut state = RunState::new("run-multi");
+        state.history.push(IterationRecord {
+            run_id: "run-multi".into(),
+            stage: "devsystem.implement".into(),
+            iteration: 1,
+            feedback: "found the JNI gap".into(),
+            proposals: vec![],
+            succeeded: true,
+        });
+        state.history.push(IterationRecord {
+            run_id: "run-multi".into(),
+            stage: "devsystem.test".into(),
+            iteration: 2,
+            feedback: "added a Robolectric test".into(),
+            proposals: vec![],
+            succeeded: true,
+        });
+        state.added_stages.push("devsystem.test".into());
+
+        let md = render_plan_markdown(&state).unwrap();
+        assert!(md.contains("## Run summary"));
+        assert!(md.contains("2 iteration(s) so far"));
+        assert!(md.contains("found the JNI gap"), "the non-latest iteration must still be summarized");
+        assert!(md.contains("added a Robolectric test"));
     }
 }
