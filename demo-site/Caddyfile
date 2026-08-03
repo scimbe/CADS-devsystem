@@ -1,0 +1,29 @@
+# Origin for the devsystem-demo.bunsenbrenner.org demo (CADS-Tunnel #382). Caddy
+# terminates TLS and serves the static status page directly -- no backend bridge.
+#
+# Unlike the other demo repos' Caddyfiles, this hostname was provisioned through
+# CADS-Tunnel's normal, tracked POST /admin/provision-tunnel path (real
+# subject_tunnels row, real routing token) -- NOT scripts/authorize-pipeline.sh's
+# headless enroll/issue path, which would mint a SECOND, conflicting token for
+# the same hostname (the exact bug class filed as CADS-Tunnel#385). The cert
+# here is a locally-generated self-signed one: sufficient for once this tunnel
+# reaches Grün (own cert, real SNI passthrough) -- while it's Gelb (the
+# default for a freshly provisioned tunnel, this deployment's current state)
+# the edge terminates the customer-facing TLS itself with its shared wildcard
+# cert and forwards PLAINTEXT to the origin, so this Caddyfile serves plain
+# HTTP on :443, not TLS -- `tls ...` here would make Caddy reject the edge's
+# forwarded plaintext as a protocol mismatch ("Client sent an HTTP request to
+# an HTTPS server"). Switch back to `tls /certs/fullchain.pem /certs/privkey.pem`
+# once `ct-agent certificate` promotes this tunnel to Grün.
+{
+	auto_https off
+}
+
+:443 {
+	root * /srv
+	file_server
+	encode gzip
+	header {
+		X-Content-Type-Options "nosniff"
+	}
+}

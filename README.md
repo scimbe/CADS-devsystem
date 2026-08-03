@@ -10,6 +10,12 @@ target software actually being built by a pipeline run lives in its own,
 separate repo (per the proposal's own separation of concerns) — nothing about
 the software gets built *in* this repo.
 
+**Live status page: [devsystem-demo.bunsenbrenner.org](https://devsystem-demo.bunsenbrenner.org/)**
+— a real CADS-Tunnel Browser-Plane tunnel (own Keycloak account, own
+`admin_provision_tunnel`-tracked subdomain, own agent/origin pair; source in
+[`demo-site/`](demo-site/)), not a mockup. Currently Gelb-tier (shared
+wildcard cert) — will move to `tls` + a real cert once promoted to Grün.
+
 ## Status (2026-08-03)
 
 Driven as an ongoing loop effort, one real, tested increment at a time — not
