@@ -282,6 +282,7 @@ let criteriaOpen = false;
 // this repo's whole frontend stays vanilla JS/CSS, no build step.
 const PANEL_DEFAULTS = {
   runs:       { title: 'Runs',              x: 16,   y: 16,  w: 280, h: 420 },
+  process:    { title: 'Process',            x: 1064, y: 592, w: 340, h: 300 },
   roles:      { title: 'Roles',              x: 312,  y: 16,  w: 400, h: 300 },
   healthcrit: { title: 'Health & Criteria',  x: 728,  y: 16,  w: 320, h: 300 },
   risks:      { title: 'Risks & Stalled',    x: 312,  y: 332, w: 400, h: 240 },
@@ -626,12 +627,13 @@ async function selectRun(id) {
   currentRun = id;
   if (switching) resetAssistantTranscript(id);
   await refreshRunsList();
-  for (const panelId of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture']) {
+  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture']) {
     document.getElementById(`body-${panelId}`).innerHTML = '<span class="lede">Loading…</span>';
   }
   try {
     const data = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
     currentRunData = data;
+    renderProcessPanel(id, data);
     renderRolesPanel(id, data);
     renderHealthCriteriaPanel(id, data);
     renderRisksPanel(data);
@@ -646,7 +648,7 @@ async function selectRun(id) {
     renderCodePanel(id, data);
     renderArchitecturePanel(id, data);
   } catch (e) {
-    for (const panelId of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture']) {
+    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture']) {
       document.getElementById(`body-${panelId}`).innerHTML = `<span class="status-line err">${e.message}</span>`;
     }
   }
@@ -819,6 +821,60 @@ async function renderArchitecturePanel(id, data) {
 
   body.innerHTML = viewerHtml + specHtml + roleRows
     + `<div class="lede" style="font-size:.72rem;margin-top:.4rem">Live backing status and bidding are on the Roles panel.</div>`;
+}
+
+// "Where are we right now" -- operator: "es fehlt immer noch das
+// Fenster/Panel mit dem aktuellen Prozess und wo wir uns gerade befinden."
+// The pipeline is async iterate-then-checkin, not a live running task, so
+// there is no real "currently executing" state to show (existing code
+// elsewhere in this file already says as much, deliberately, rather than
+// fabricate one) -- this panel instead synthesizes the real signal that
+// genuinely exists: the most recent real iteration, plus what's honestly
+// outstanding (stalled stages, open backlog/milestones, real risk findings),
+// all sourced from the same GET /api/runs/{id} payload every other panel
+// already has -- no new backend call, no new data.
+function renderProcessPanel(id, data) {
+  const body = document.getElementById('body-process');
+  const h = data.health;
+  if (!h) { body.innerHTML = '<span class="lede">No health data.</span>'; return; }
+  const history = data.state.history;
+  const latest = history[history.length - 1];
+  const paused = !!data.state.paused;
+  const openBacklog = (data.state.backlog || []).filter(b => !b.done).length;
+  const openMilestones = (data.state.milestones || []).filter(m => !m.achieved).length;
+  const stalled = data.stalled_stages || [];
+  const risks = data.risks || [];
+
+  const pausedBanner = paused ? `<div class="paused-banner">⏸ paused -- no new iterations until resumed</div>` : '';
+
+  const headline = `
+    <div class="health" style="margin-bottom:.6rem">
+      <span class="stat${h.consecutive_failures >= h.criteria.max_consecutive_failures - 1 ? ' danger' : ''}">
+        iteration <b>${h.iterations_completed}</b> / ${h.criteria.max_iterations}</span>
+      <span class="stat${h.iterations_until_checkin <= 1 ? ' warn' : ''}">
+        check-in in <b>${h.iterations_until_checkin}</b></span>
+      <span class="stat${h.consecutive_failures > 0 ? ' danger' : ''}">
+        failures <b>${h.consecutive_failures}</b> / ${h.criteria.max_consecutive_failures}</span>
+    </div>`;
+
+  const latestHtml = latest
+    ? `<div class="role-latest ${latest.succeeded ? 'ok' : 'fail'}">
+         last: <b>${escapeHtml(latest.stage)}</b>, iteration ${latest.iteration} (${latest.succeeded ? 'ok' : 'FAILED'})
+         ${latest.proposals && latest.proposals.length ? ` · proposed <b>${escapeHtml(latest.proposals[0].stage_id)}</b>` : ''}
+         <div class="lede" style="font-size:.78rem;margin-top:.25rem">${escapeHtml(truncate(latest.feedback, 220))}</div>
+       </div>`
+    : `<div class="role-latest lede">no iterations yet</div>`;
+
+  const outstandingParts = [];
+  if (stalled.length) outstandingParts.push(`<span class="stalled-badge">${stalled.length} stalled: ${stalled.map(escapeHtml).join(', ')}</span>`);
+  if (risks.length) outstandingParts.push(`<span class="risk-badge">${risks.length} risk(s)</span>`);
+  if (openBacklog) outstandingParts.push(`<span class="lede">${openBacklog} open backlog item(s)</span>`);
+  if (openMilestones) outstandingParts.push(`<span class="lede">${openMilestones} open milestone(s)</span>`);
+  const outstandingHtml = outstandingParts.length
+    ? `<div style="margin-top:.6rem;display:flex;flex-direction:column;gap:.35rem">${outstandingParts.join('')}</div>`
+    : `<div class="lede" style="margin-top:.6rem;font-size:.8rem">nothing outstanding right now</div>`;
+
+  body.innerHTML = pausedBanner + headline + latestHtml + outstandingHtml;
 }
 
 function renderHealthCriteriaPanel(id, data) {
