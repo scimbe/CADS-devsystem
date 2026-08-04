@@ -710,6 +710,7 @@ function renderCustomPanelsManager(id, data) {
         if (id === currentRun) currentRunData = fresh;
         renderCustomPanelsManager(id, fresh);
         renderCustomPanels(id, fresh);
+        await refreshRunsList();
       } catch (err) {
         alert(`Could not approve proposal: ${err.message}`);
       }
@@ -722,6 +723,7 @@ function renderCustomPanelsManager(id, data) {
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
         if (id === currentRun) currentRunData = fresh;
         renderCustomPanelsManager(id, fresh);
+        await refreshRunsList();
       } catch (err) {
         alert(`Could not reject proposal: ${err.message}`);
       }
@@ -1672,6 +1674,7 @@ async function renderArchitecturePanel(id, data) {
         if (id === currentRun) currentRunData = fresh;
         renderArchitecturePanel(id, fresh);
         renderRolesPanel(id, fresh);
+        await refreshRunsList();
       } catch (err) {
         alert(`Could not approve stage proposal: ${err.message}`);
       }
@@ -1684,6 +1687,7 @@ async function renderArchitecturePanel(id, data) {
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
         if (id === currentRun) currentRunData = fresh;
         renderArchitecturePanel(id, fresh);
+        await refreshRunsList();
       } catch (err) {
         alert(`Could not reject stage proposal: ${err.message}`);
       }
@@ -1699,6 +1703,7 @@ async function renderArchitecturePanel(id, data) {
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
         if (id === currentRun) currentRunData = fresh;
         renderArchitecturePanel(id, fresh);
+        await refreshRunsList();
       } catch (err) {
         alert(`Could not post issue to GitHub: ${err.message}`);
       }
@@ -1711,6 +1716,7 @@ async function renderArchitecturePanel(id, data) {
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
         if (id === currentRun) currentRunData = fresh;
         renderArchitecturePanel(id, fresh);
+        await refreshRunsList();
       } catch (err) {
         alert(`Could not reject issue proposal: ${err.message}`);
       }
