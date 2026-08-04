@@ -184,6 +184,10 @@
         font-weight:700;font-family:var(--mono);font-size:.82rem;cursor:pointer}
  button:hover{filter:brightness(1.08)}
  button.secondary{background:transparent;border:1px solid var(--border);color:var(--text)}
+ .btn{display:inline-block;text-align:center;text-decoration:none;background:var(--accent);color:var(--accent-ink);
+      border-radius:6px;padding:.5rem .9rem;font-weight:700;font-family:var(--mono);font-size:.82rem}
+ .btn:hover{filter:brightness(1.08)}
+ .btn.secondary{background:transparent;border:1px solid var(--border);color:var(--text)}
  .role{font-family:var(--mono);font-size:.75rem;background:rgba(95,184,171,.12);color:var(--accent2);
        border-radius:5px;padding:.15rem .5rem}
  button.stalled-fill{border:1px solid var(--accent);background:rgba(217,138,79,.12);color:var(--accent);
@@ -312,6 +316,7 @@ const PANEL_DEFAULTS = {
   memory:     { title: 'Memory Log',         x: 1780, y: 16,  w: 360, h: 300 },
   code:       { title: 'Code',               x: 1420, y: 592, w: 340, h: 300 },
   architecture: { title: 'Pipeline',         x: 1780, y: 332, w: 380, h: 420 },
+  support:    { title: 'Support',            x: 728,  y: 592, w: 320, h: 220 },
 };
 
 const LAYOUT_KEY = 'devsystem-panel-layout-v1';
@@ -676,6 +681,23 @@ function placeholderIfNoRun(panelId) {
   const el = document.getElementById(`body-${panelId}`);
   if (!currentRun) { el.innerHTML = '<span class="lede">Select a run in the Runs panel.</span>'; return true; }
   return false;
+}
+
+// Static -- no run data involved, rendered once at load, not per selectRun().
+// Real links, copied verbatim from bunsenbrenner.org's own support section
+// (this deployment is a tunnel hosted there, not a separate project asking
+// for its own separate support).
+function renderSupportPanel() {
+  const body = document.getElementById('body-support');
+  if (!body) return;
+  body.innerHTML = `
+    <p class="lede" style="margin-bottom:.8rem">Bunsenbrenner is free to use and runs on donated time and
+      server costs. If this pipeline helped you get something live, a small contribution keeps it going.</p>
+    <div style="display:flex;flex-direction:column;gap:.5rem">
+      <a class="btn" href="https://steady.page/plans/77a32d9c-c399-4ca1-9515-7a628c7a9413" target="_blank" rel="noopener">Support as a member &rarr;</a>
+      <a class="btn secondary" href="https://buymeacoffee.com/bunsenbrenner" target="_blank" rel="noopener">Buy me a coffee &rarr;</a>
+      <a class="btn secondary" href="https://github.com/scimbe/CADS-Tunnel" target="_blank" rel="noopener">GitHub -- feature requests, issues &rarr;</a>
+    </div>`;
 }
 
 // Real per-role status view (operator feedback: "die einzelnen Rollen sehen, was
@@ -1954,6 +1976,7 @@ async function loadWhoami() {
 
 initPanels();
 initProcessPrompt();
+renderSupportPanel();
 loadRuns();
 loadWhoami();
 checkAssistantHeartbeat();
