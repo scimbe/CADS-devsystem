@@ -1032,34 +1032,59 @@ function placeholderIfNoRun(panelId) {
 async function renderRagPanel(id, data) {
   const body = document.getElementById('body-rag');
   const repoUrl = data.state.repo_url;
-  if (!repoUrl) {
-    body.innerHTML = `<span class="lede">This run has no repo_url set yet -- set one on the Pipeline panel first, then come back here to index its docs.</span>`;
-    return;
-  }
   let status;
   try {
     status = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/rag/search?q=`);
   } catch (e) {
-    status = { configured: false };
+    status = { configured: false, manual_documents: [] };
   }
-  const statusLine = status.configured
-    ? `<span class="lede" style="font-size:.72rem">Indexed ${status.files_indexed} file(s) from <code>${escapeHtml(status.branch)}</code>, synced ${escapeHtml(new Date(status.synced_at * 1000).toLocaleString())}.</span>`
-    : `<span class="lede" style="font-size:.72rem">Not synced yet.</span>`;
+  const syncLine = !repoUrl
+    ? `<span class="lede" style="font-size:.72rem">No repo_url set (Pipeline panel) -- repo sync unavailable, but uploading documents below works regardless.</span>`
+    : status.configured && status.branch
+      ? `<span class="lede" style="font-size:.72rem">Repo: indexed ${status.files_indexed} file(s) from <code>${escapeHtml(status.branch)}</code>, synced ${escapeHtml(new Date(status.synced_at * 1000).toLocaleString())}.</span>`
+      : `<span class="lede" style="font-size:.72rem">Repo: not synced yet.</span>`;
+  // Re-rendering after an upload/remove replaces body.innerHTML wholesale,
+  // which would otherwise silently re-collapse this <details> right after the
+  // action that made someone want it open -- found live: the "Remove" button
+  // became unclickable (hidden, not just visually collapsed) immediately
+  // after a successful upload.
+  const wasDocsOpen = body.querySelector('details')?.open ?? false;
+  const manualDocs = status.manual_documents || [];
+  const docsList = manualDocs.length
+    ? manualDocs.map(d => `
+        <div class="role-card" style="padding:.4rem .5rem">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:.4rem">
+            <span class="role-meta">${escapeHtml(d.path)}</span>
+            <button type="button" class="secondary rag-doc-remove-btn" data-id="${escapeHtml(d.id)}" style="font-size:.68rem;padding:.1rem .4rem">Remove</button>
+          </div>
+        </div>`).join('')
+    : `<span class="lede" style="font-size:.72rem">No uploaded documents yet.</span>`;
   body.innerHTML = `
     <div style="display:flex;gap:.4rem;margin-bottom:.5rem">
-      <input id="rag-search-input" type="text" placeholder="search ${escapeHtml(repoUrl.replace('https://github.com/', ''))}'s docs..." style="flex:1">
-      <button type="button" class="secondary" id="rag-sync-btn">Sync now</button>
+      <input id="rag-search-input" type="text" placeholder="search docs..." style="flex:1">
+      <button type="button" class="secondary" id="rag-sync-btn"${repoUrl ? '' : ' disabled title="set repo_url first"'}>Sync now</button>
     </div>
-    ${statusLine}
+    ${syncLine}
     <div id="rag-sync-status" class="status-line"></div>
-    <div id="rag-results" style="margin-top:.5rem;display:flex;flex-direction:column;gap:.5rem"></div>`;
+    <div id="rag-results" style="margin-top:.5rem;display:flex;flex-direction:column;gap:.5rem"></div>
+
+    <details style="margin-top:.7rem"${wasDocsOpen ? ' open' : ''}>
+      <summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Uploaded documents (${manualDocs.length})</summary>
+      <div id="rag-docs-list" style="display:flex;flex-direction:column;gap:.3rem;margin:.4rem 0">${docsList}</div>
+      <form id="rag-upload-form" style="margin-top:.4rem">
+        <label>name<input id="rag-doc-path" type="text" placeholder="notes.md" required></label>
+        <label>text<textarea id="rag-doc-text" rows="4" required style="width:100%;font-family:var(--mono);font-size:.75rem" placeholder="paste or type real text..."></textarea></label>
+        <button type="submit">Upload</button>
+        <span id="rag-upload-status" class="status-line"></span>
+      </form>
+    </details>`;
 
   const resultsEl = document.getElementById('rag-results');
   const runSearch = async (q) => {
     if (!q.trim()) { resultsEl.innerHTML = ''; return; }
     try {
       const r = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/rag/search?q=${encodeURIComponent(q)}`);
-      if (!r.configured) { resultsEl.innerHTML = `<span class="lede">Sync first -- nothing indexed yet.</span>`; return; }
+      if (!r.configured) { resultsEl.innerHTML = `<span class="lede">Sync a repo or upload a document first -- nothing indexed yet.</span>`; return; }
       resultsEl.innerHTML = r.results.length
         ? r.results.map(res => `<div class="role-card"><div class="role-meta">${escapeHtml(res.path)} (score ${res.score})</div><div style="font-size:.78rem;margin-top:.3rem">${escapeHtml(res.snippet)}…</div></div>`).join('')
         : `<span class="lede">No matches.</span>`;
@@ -1072,18 +1097,46 @@ async function renderRagPanel(id, data) {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => runSearch(e.target.value), 250);
   });
-  document.getElementById('rag-sync-btn').addEventListener('click', async () => {
-    const statusEl = document.getElementById('rag-sync-status');
-    statusEl.textContent = 'Fetching real content from GitHub…'; statusEl.className = 'status-line';
+  if (repoUrl) {
+    document.getElementById('rag-sync-btn').addEventListener('click', async () => {
+      const statusEl = document.getElementById('rag-sync-status');
+      statusEl.textContent = 'Fetching real content from GitHub…'; statusEl.className = 'status-line';
+      try {
+        const r = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/rag/sync`, { method: 'POST' });
+        statusEl.textContent = `Synced: ${r.files_indexed}/${r.files_seen} file(s), ${r.chunks} chunk(s).`;
+        statusEl.className = 'status-line ok';
+        await renderRagPanel(id, data);
+      } catch (e) {
+        statusEl.textContent = e.message; statusEl.className = 'status-line err';
+      }
+    });
+  }
+  document.getElementById('rag-upload-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const statusEl = document.getElementById('rag-upload-status');
+    const path = document.getElementById('rag-doc-path').value.trim();
+    const text = document.getElementById('rag-doc-text').value;
+    statusEl.textContent = 'Uploading…'; statusEl.className = 'status-line';
     try {
-      const r = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/rag/sync`, { method: 'POST' });
-      statusEl.textContent = `Synced: ${r.files_indexed}/${r.files_seen} file(s), ${r.chunks} chunk(s).`;
-      statusEl.className = 'status-line ok';
+      await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/rag/documents`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path, text }),
+      });
       await renderRagPanel(id, data);
-    } catch (e) {
-      statusEl.textContent = e.message; statusEl.className = 'status-line err';
+    } catch (err) {
+      statusEl.textContent = err.message; statusEl.className = 'status-line err';
     }
   });
+  for (const btn of body.querySelectorAll('.rag-doc-remove-btn')) {
+    btn.onclick = async () => {
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/rag/documents/${encodeURIComponent(btn.dataset.id)}/remove`, { method: 'POST' });
+        await renderRagPanel(id, data);
+      } catch (err) {
+        alert(`Could not remove document: ${err.message}`);
+      }
+    };
+  }
 }
 
 // Static -- no run data involved, rendered once at load, not per selectRun().

@@ -98,6 +98,8 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/roles/{tag}/fill-mode", post(set_role_fill_mode))
         .route("/api/runs/{id}/rag/sync", post(sync_rag))
         .route("/api/runs/{id}/rag/search", get(search_rag))
+        .route("/api/runs/{id}/rag/documents", post(add_rag_document))
+        .route("/api/runs/{id}/rag/documents/{doc_id}/remove", post(remove_rag_document))
         .route("/api/runs/{id}/panels", post(add_custom_panel))
         .route("/api/runs/{id}/panels/{panel_id}/remove", post(remove_custom_panel))
         .route("/api/runs/{id}/offers/submit", post(submit_offer))
@@ -888,6 +890,15 @@ fn rag_index_path(state: &AppState, id: &str) -> PathBuf {
     run_dir(state, id).join("rag_index.json")
 }
 
+fn load_rag_index(state: &AppState, id: &str) -> Option<rag::RagIndex> {
+    fs::read_to_string(rag_index_path(state, id)).ok().and_then(|s| serde_json::from_str(&s).ok())
+}
+
+fn persist_rag_index(state: &AppState, id: &str, index: &rag::RagIndex) -> Result<(), String> {
+    let s = serde_json::to_string_pretty(index).map_err(|e| e.to_string())?;
+    fs::write(rag_index_path(state, id), s).map_err(|e| e.to_string())
+}
+
 /// `POST /api/runs/{id}/rag/sync` (#382 task 29): real fetch + chunk + index of
 /// whatever `RunState.repo_url` currently names, via [`rag::sync_repo`]. Owner-
 /// restricted like every other GUI mutation -- this hits GitHub's real API on the
@@ -910,8 +921,14 @@ async fn sync_rag(State(state): State<AppState>, AxPath(id): AxPath<String>, hea
     let Some(repo_url) = run_state.repo_url.clone() else {
         return (StatusCode::BAD_REQUEST, "this run has no repo_url set yet -- set one first (POST /api/runs/{id}/repo)").into_response();
     };
+    // Preserve any manually-uploaded documents across a re-sync -- sync_repo
+    // only ever knows about the GitHub side, so it can't preserve them itself;
+    // splicing them back in here is what actually keeps a re-sync from
+    // silently deleting something a human added by hand.
+    let existing_manual = load_rag_index(&state, &id).map(|i| i.manual_documents).unwrap_or_default();
     match rag::sync_repo(&state.http_client, &repo_url, unix_now()).await {
-        Ok(index) => {
+        Ok(mut index) => {
+            index.manual_documents = existing_manual;
             let summary = serde_json::json!({
                 "repo_url": index.repo_url,
                 "branch": index.branch,
@@ -920,10 +937,9 @@ async fn sync_rag(State(state): State<AppState>, AxPath(id): AxPath<String>, hea
                 "files_indexed": index.files_indexed,
                 "chunks": index.chunks.len(),
             });
-            match serde_json::to_string_pretty(&index).and_then(|s| Ok(fs::write(rag_index_path(&state, &id), s))) {
-                Ok(Ok(())) => Json(summary).into_response(),
-                Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the index: {e}")).into_response(),
-                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not serialize the index: {e}")).into_response(),
+            match persist_rag_index(&state, &id, &index) {
+                Ok(()) => Json(summary).into_response(),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the index: {e}")).into_response(),
             }
         }
         Err(e) => (StatusCode::BAD_GATEWAY, format!("sync failed: {e}")).into_response(),
@@ -958,23 +974,128 @@ async fn search_rag(
     if !owner_authorized(&headers, &run_state) {
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
     }
-    let index_path = rag_index_path(&state, &id);
-    if !index_path.exists() {
-        return Json(serde_json::json!({"configured": false, "results": []})).into_response();
-    }
-    let index: rag::RagIndex = match fs::read_to_string(&index_path).ok().and_then(|s| serde_json::from_str(&s).ok()) {
-        Some(i) => i,
-        None => return (StatusCode::INTERNAL_SERVER_ERROR, "could not read the persisted index").into_response(),
+    let Some(index) = load_rag_index(&state, &id) else {
+        return Json(serde_json::json!({"configured": false, "results": [], "manual_documents": []})).into_response();
     };
     let results = rag::search(&index, q.q.trim(), 10);
+    // Metadata only (id/path/added_at) -- the real text is only ever returned
+    // via a search match's snippet, not the management listing, so the GUI's
+    // document list doesn't have to fetch (and the network doesn't have to
+    // carry) potentially-large uploaded text just to render a title.
+    let manual_documents: Vec<_> =
+        index.manual_documents.iter().map(|d| serde_json::json!({"id": d.id, "path": d.path, "added_at": d.added_at})).collect();
     Json(serde_json::json!({
         "configured": true,
         "synced_at": index.synced_at,
         "branch": index.branch,
         "files_indexed": index.files_indexed,
         "results": results,
+        "manual_documents": manual_documents,
     }))
     .into_response()
+}
+
+#[derive(Deserialize)]
+struct AddRagDocumentRequest {
+    path: String,
+    text: String,
+}
+
+/// Real cap, same reasoning as `MAX_CUSTOM_PANEL_HTML_BYTES`: a run's RAG
+/// index is loaded into memory on every search; nothing here should let one
+/// pasted document make that unreasonably large. Well above any real doc
+/// (README-sized text is a few KB); this is a sanity ceiling, not a design
+/// target.
+const MAX_RAG_DOCUMENT_BYTES: usize = 500_000;
+
+/// `POST /api/runs/{id}/rag/documents` (#382 RAG slice 2): a real, human-
+/// uploaded document -- paste text or upload a small file through the GUI,
+/// no GitHub repo involved. Owner-restricted like every other GUI mutation.
+/// Creates the index if this run has never synced a repo at all -- upload
+/// doesn't require `repo_url` to be set first, unlike `sync_rag`.
+async fn add_rag_document(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<AddRagDocumentRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let path = body.path.trim().to_string();
+    if path.is_empty() {
+        return (StatusCode::BAD_REQUEST, "path must not be empty").into_response();
+    }
+    if body.text.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "text must not be empty").into_response();
+    }
+    if body.text.len() > MAX_RAG_DOCUMENT_BYTES {
+        return (StatusCode::BAD_REQUEST, format!("text must be under {MAX_RAG_DOCUMENT_BYTES} bytes")).into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let run_state = match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, s)) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let mut index = load_rag_index(&state, &id).unwrap_or_else(|| rag::RagIndex {
+        repo_url: run_state.repo_url.clone().unwrap_or_default(),
+        synced_at: 0,
+        branch: String::new(),
+        files_seen: 0,
+        files_indexed: 0,
+        chunks: Vec::new(),
+        manual_documents: Vec::new(),
+    });
+    let doc = rag::RagDocument { id: format!("{:016x}", rand::random::<u64>()), path, text: body.text, added_at: unix_now() };
+    index.manual_documents.push(doc.clone());
+    match persist_rag_index(&state, &id, &index) {
+        Ok(()) => Json(serde_json::json!({"id": doc.id, "path": doc.path, "added_at": doc.added_at})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the index: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/rag/documents/{doc_id}/remove` -- real per-document
+/// delete, the other half of the operator's "kann ich die Dokumente
+/// verwalten" ask. Only ever removes from `manual_documents`; a repo-synced
+/// file is removed by it no longer existing in the repo at the next sync,
+/// not by an individual-delete action here.
+async fn remove_rag_document(
+    State(state): State<AppState>,
+    AxPath((id, doc_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let run_state = match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, s)) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let Some(mut index) = load_rag_index(&state, &id) else {
+        return (StatusCode::NOT_FOUND, "no RAG index for this run yet").into_response();
+    };
+    let before = index.manual_documents.len();
+    index.manual_documents.retain(|d| d.id != doc_id);
+    if index.manual_documents.len() == before {
+        return (StatusCode::NOT_FOUND, format!("no manual document with id {doc_id:?}")).into_response();
+    }
+    match persist_rag_index(&state, &id, &index) {
+        Ok(()) => Json(serde_json::json!({"removed": doc_id})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the index: {e}")).into_response(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -1522,6 +1643,109 @@ mod tests {
                 "/api/runs/owned-mutate-run/roles/plan/fill-mode",
                 "someone-else@example.com",
                 Some(serde_json::json!({"mode": "dedicated", "label": "X"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn rag_document_add_then_remove_round_trips_and_becomes_searchable() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-doc-run"}))).await.unwrap();
+
+        // No repo ever synced -- upload must work anyway (doesn't require repo_url).
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/rag-doc-run/rag/documents",
+                serde_json::json!({"path": "notes.txt", "text": "a real note about Agent-Fabric channel joins"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let created = body_json(response).await;
+        let doc_id = created["id"].as_str().unwrap().to_string();
+        assert_eq!(created["path"], "notes.txt");
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri("/api/runs/rag-doc-run/rag/search?q=Agent-Fabric").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["configured"], true);
+        assert_eq!(body["results"][0]["path"], "notes.txt");
+        assert_eq!(body["manual_documents"].as_array().unwrap().len(), 1);
+        assert_eq!(body["manual_documents"][0]["path"], "notes.txt");
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", &format!("/api/runs/rag-doc-run/rag/documents/{doc_id}/remove"), serde_json::json!({})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/rag-doc-run/rag/search?q=Agent-Fabric").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        assert!(body["results"].as_array().unwrap().is_empty(), "removed document must no longer be searchable");
+        assert!(body["manual_documents"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn rag_document_rejects_empty_fields_and_an_oversized_upload() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-doc-bad-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/rag-doc-bad-run/rag/documents", serde_json::json!({"path": "  ", "text": "x"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+
+        let huge = "x".repeat(MAX_RAG_DOCUMENT_BYTES + 1);
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/rag-doc-bad-run/rag/documents", serde_json::json!({"path": "a.txt", "text": huge})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn removing_an_unknown_rag_document_id_is_a_real_404() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-doc-404-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/rag-doc-404-run/rag/documents/does-not-exist/remove", serde_json::json!({})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_different_account_cannot_upload_a_rag_document_to_someone_elses_run() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "owner@example.com", Some(serde_json::json!({"run_id": "rag-doc-owned-run"}))))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(gate_request(
+                "POST",
+                "/api/runs/rag-doc-owned-run/rag/documents",
+                "someone-else@example.com",
+                Some(serde_json::json!({"path": "a.txt", "text": "hello"})),
             ))
             .await
             .unwrap();

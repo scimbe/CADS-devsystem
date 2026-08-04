@@ -57,6 +57,21 @@ pub struct RagChunk {
     pub text: String,
 }
 
+/// A real, human-uploaded document (#382 RAG slice 2 -- "kann ich Dokumente
+/// hochladen"). Plain text/markdown pasted or uploaded through the GUI, not a
+/// GitHub file -- lives alongside `chunks` (the repo sync's output) but is
+/// never touched by `sync_repo`, so re-syncing the repo can't silently delete
+/// something a human added by hand. Chunked on the fly at search time (not
+/// pre-chunked and stored twice) via the same [`chunk_text`] the sync path
+/// uses, so both sources score identically.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RagDocument {
+    pub id: String,
+    pub path: String,
+    pub text: String,
+    pub added_at: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RagIndex {
     pub repo_url: String,
@@ -65,6 +80,8 @@ pub struct RagIndex {
     pub files_seen: usize,
     pub files_indexed: usize,
     pub chunks: Vec<RagChunk>,
+    #[serde(default)]
+    pub manual_documents: Vec<RagDocument>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -212,39 +229,55 @@ pub async fn sync_repo(client: &reqwest::Client, repo_url: &str, now: u64) -> Re
         eprintln!("devsystem-web: RAG sync for {repo_url} -- GitHub truncated the tree response, files_seen may undercount the real total");
     }
 
-    Ok(RagIndex { repo_url: repo_url.to_string(), synced_at: now, branch, files_seen, files_indexed, chunks })
+    Ok(RagIndex { repo_url: repo_url.to_string(), synced_at: now, branch, files_seen, files_indexed, chunks, manual_documents: Vec::new() })
 }
 
 /// Real keyword search over a persisted index -- case-insensitive term overlap
 /// scoring (count of query words present in the chunk, weighted slightly by
 /// exact-phrase presence), not a fabricated relevance model. Good enough to
 /// find the right doc file; not claiming to be more than that.
+fn score_chunk(query_lower: &str, terms: &[&str], text: &str) -> u32 {
+    let text_lower = text.to_ascii_lowercase();
+    let mut score = 0u32;
+    for term in terms {
+        score += text_lower.matches(term).count() as u32;
+    }
+    if text_lower.contains(query_lower) {
+        score += 5;
+    }
+    score
+}
+
 pub fn search(index: &RagIndex, query: &str, limit: usize) -> Vec<RagSearchResult> {
     let query_lower = query.to_ascii_lowercase();
     let terms: Vec<&str> = query_lower.split_whitespace().filter(|t| !t.is_empty()).collect();
     if terms.is_empty() {
         return Vec::new();
     }
-    let mut scored: Vec<(u32, &RagChunk)> = index
-        .chunks
-        .iter()
-        .filter_map(|c| {
-            let text_lower = c.text.to_ascii_lowercase();
-            let mut score = 0u32;
-            for term in &terms {
-                score += text_lower.matches(term).count() as u32;
+    let mut scored: Vec<(u32, String, String)> = Vec::new();
+    for c in &index.chunks {
+        let score = score_chunk(&query_lower, &terms, &c.text);
+        if score > 0 {
+            scored.push((score, c.path.clone(), c.text.clone()));
+        }
+    }
+    // Manual documents are chunked here, at query time, rather than pre-chunked
+    // and persisted twice -- they're usually short (pasted/uploaded text, not a
+    // whole repo), so re-chunking per search is cheap, and it means chunk_text's
+    // own behavior only ever needs to be correct in one place.
+    for doc in &index.manual_documents {
+        for chunk in chunk_text(&doc.text) {
+            let score = score_chunk(&query_lower, &terms, &chunk);
+            if score > 0 {
+                scored.push((score, doc.path.clone(), chunk));
             }
-            if text_lower.contains(&query_lower) {
-                score += 5;
-            }
-            (score > 0).then_some((score, c))
-        })
-        .collect();
+        }
+    }
     scored.sort_by(|a, b| b.0.cmp(&a.0));
     scored
         .into_iter()
         .take(limit)
-        .map(|(score, c)| RagSearchResult { path: c.path.clone(), score, snippet: c.text.trim().chars().take(400).collect() })
+        .map(|(score, path, text)| RagSearchResult { path, score, snippet: text.trim().chars().take(400).collect() })
         .collect()
 }
 
@@ -296,6 +329,7 @@ mod tests {
                 RagChunk { path: "a.md".into(), index: 0, text: "this document is about Noise_IK handshake details".into() },
                 RagChunk { path: "b.md".into(), index: 0, text: "Noise appears here but handshake does not".into() },
             ],
+            manual_documents: Vec::new(),
         };
         let results = search(&index, "Noise_IK handshake", 10);
         assert_eq!(results[0].path, "a.md", "the real exact-phrase match should outrank a partial overlap");
@@ -303,7 +337,36 @@ mod tests {
 
     #[test]
     fn search_returns_nothing_for_a_query_with_no_real_match() {
-        let index = RagIndex { repo_url: "x".into(), synced_at: 0, branch: "main".into(), files_seen: 1, files_indexed: 1, chunks: vec![RagChunk { path: "a.md".into(), index: 0, text: "hello world".into() }] };
+        let index = RagIndex {
+            repo_url: "x".into(),
+            synced_at: 0,
+            branch: "main".into(),
+            files_seen: 1,
+            files_indexed: 1,
+            chunks: vec![RagChunk { path: "a.md".into(), index: 0, text: "hello world".into() }],
+            manual_documents: Vec::new(),
+        };
         assert!(search(&index, "nonexistent-term-xyz", 10).is_empty());
+    }
+
+    #[test]
+    fn search_covers_a_real_manually_uploaded_document_not_just_repo_sync_chunks() {
+        let index = RagIndex {
+            repo_url: "x".into(),
+            synced_at: 0,
+            branch: "main".into(),
+            files_seen: 0,
+            files_indexed: 0,
+            chunks: Vec::new(),
+            manual_documents: vec![RagDocument {
+                id: "doc-1".into(),
+                path: "notes.txt".into(),
+                text: "a real uploaded note about Agent-Fabric channel joins".into(),
+                added_at: 0,
+            }],
+        };
+        let results = search(&index, "Agent-Fabric", 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].path, "notes.txt");
     }
 }
