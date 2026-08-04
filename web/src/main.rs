@@ -63,6 +63,17 @@ struct AppState {
     /// silently doing nothing or fabricating a response.
     assistant_url: Option<Arc<str>>,
     http_client: reqwest::Client,
+    /// Real embedding credential for RAG semantic search (`rag::embed_texts`),
+    /// `RAG_EMBEDDING_API_KEY` at startup -- `None` when unconfigured, the same
+    /// honest-degrade contract `assistant_url` already established: `search_rag`
+    /// falls back to keyword-only search rather than fabricating a "semantic"
+    /// result with no real embedding behind it.
+    rag_embedding_api_key: Option<Arc<str>>,
+    /// Embedding provider's API base URL, `RAG_EMBEDDING_API_BASE` at startup,
+    /// defaulting to OpenAI's -- overridable so a real alternate
+    /// OpenAI-compatible provider (or a test's own mock server) never requires
+    /// a code change, only a different env var.
+    rag_embedding_api_base: Arc<str>,
 }
 
 fn unix_now() -> u64 {
@@ -190,12 +201,20 @@ async fn main() {
     if assistant_url.is_none() {
         println!("DEVSYSTEM_ASSISTANT_URL not set -- the Assistant panel will report itself unconfigured");
     }
+    let rag_embedding_api_key: Option<Arc<str>> = std::env::var("RAG_EMBEDDING_API_KEY").ok().filter(|s| !s.trim().is_empty()).map(Arc::from);
+    if rag_embedding_api_key.is_none() {
+        println!("RAG_EMBEDDING_API_KEY not set -- RAG search will stay keyword-only, no semantic results");
+    }
+    let rag_embedding_api_base: Arc<str> =
+        std::env::var("RAG_EMBEDDING_API_BASE").ok().filter(|s| !s.trim().is_empty()).map(Arc::from).unwrap_or_else(|| Arc::from("https://api.openai.com/v1"));
     let state = AppState {
         runs_dir: Arc::new(runs_dir),
         write_lock: Arc::new(tokio::sync::Mutex::new(())),
         offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         assistant_url,
         http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().expect("build http client"),
+        rag_embedding_api_key,
+        rag_embedding_api_base,
     };
 
     let static_dir = std::env::var("DEVSYSTEM_STATIC_DIR").unwrap_or_else(|_| "web/static".to_string());
@@ -922,6 +941,41 @@ fn persist_rag_index(state: &AppState, id: &str, index: &rag::RagIndex) -> Resul
     fs::write(rag_index_path(state, id), s).map_err(|e| e.to_string())
 }
 
+/// Real batch embedding of whatever in `index` doesn't have one yet -- chunks
+/// from a fresh `sync_repo` always lack one (real chunks are never embedded
+/// twice), manual documents already carrying an embedding (preserved across a
+/// re-sync) are skipped so a re-sync doesn't re-spend real embedding cost on
+/// unchanged text. One real batched API call for however many texts need it,
+/// not one call per chunk -- `embed_texts` already accepts a batch. No-ops
+/// (and costs nothing) when no embedding credential is configured, or when
+/// there's genuinely nothing new to embed. Logs, never panics, on a real
+/// provider failure -- a sync/upload still succeeds with keyword-only search
+/// for the new content rather than failing the whole operation over a
+/// secondary feature.
+async fn embed_index_in_place(state: &AppState, index: &mut rag::RagIndex) {
+    let Some(api_key) = state.rag_embedding_api_key.clone() else {
+        return;
+    };
+    let chunk_idxs: Vec<usize> = index.chunks.iter().enumerate().filter(|(_, c)| c.embedding.is_none()).map(|(i, _)| i).collect();
+    let doc_idxs: Vec<usize> = index.manual_documents.iter().enumerate().filter(|(_, d)| d.embedding.is_none()).map(|(i, _)| i).collect();
+    if chunk_idxs.is_empty() && doc_idxs.is_empty() {
+        return;
+    }
+    let texts: Vec<String> =
+        chunk_idxs.iter().map(|&i| index.chunks[i].text.clone()).chain(doc_idxs.iter().map(|&i| index.manual_documents[i].text.clone())).collect();
+    match rag::embed_texts(&state.http_client, &state.rag_embedding_api_base, &api_key, &texts).await {
+        Ok(embeddings) => {
+            for (offset, &i) in chunk_idxs.iter().enumerate() {
+                index.chunks[i].embedding = Some(embeddings[offset].clone());
+            }
+            for (offset, &i) in doc_idxs.iter().enumerate() {
+                index.manual_documents[i].embedding = Some(embeddings[chunk_idxs.len() + offset].clone());
+            }
+        }
+        Err(e) => eprintln!("devsystem-web: RAG embedding failed for {} chunk(s)/{} document(s), continuing keyword-only for them: {e}", chunk_idxs.len(), doc_idxs.len()),
+    }
+}
+
 /// `POST /api/runs/{id}/rag/sync` (#382 task 29): real fetch + chunk + index of
 /// whatever `RunState.repo_url` currently names, via [`rag::sync_repo`]. Owner-
 /// restricted like every other GUI mutation -- this hits GitHub's real API on the
@@ -952,6 +1006,7 @@ async fn sync_rag(State(state): State<AppState>, AxPath(id): AxPath<String>, hea
     match rag::sync_repo(&state.http_client, &repo_url, unix_now()).await {
         Ok(mut index) => {
             index.manual_documents = existing_manual;
+            embed_index_in_place(&state, &mut index).await;
             let summary = serde_json::json!({
                 "repo_url": index.repo_url,
                 "branch": index.branch,
@@ -1000,7 +1055,22 @@ async fn search_rag(
     let Some(index) = load_rag_index(&state, &id) else {
         return Json(serde_json::json!({"configured": false, "results": [], "manual_documents": []})).into_response();
     };
-    let results = rag::search(&index, q.q.trim(), 10);
+    // Real semantic search only when a real embedding credential is configured
+    // -- an embedding failure (bad key, provider outage) degrades to
+    // keyword-only results rather than failing the whole search, since the
+    // keyword path never depended on this credential and shouldn't start
+    // failing because of it.
+    let query_embedding = match &state.rag_embedding_api_key {
+        Some(key) => match rag::embed_texts(&state.http_client, &state.rag_embedding_api_base, key, &[q.q.trim().to_string()]).await {
+            Ok(mut embeddings) => embeddings.pop(),
+            Err(e) => {
+                eprintln!("devsystem-web: RAG query embedding failed, falling back to keyword-only search: {e}");
+                None
+            }
+        },
+        None => None,
+    };
+    let results = rag::combined_search(&index, q.q.trim(), query_embedding.as_deref(), 10);
     // Metadata only (id/path/added_at) -- the real text is only ever returned
     // via a search match's snippet, not the management listing, so the GUI's
     // document list doesn't have to fetch (and the network doesn't have to
@@ -1075,8 +1145,9 @@ async fn add_rag_document(
         chunks: Vec::new(),
         manual_documents: Vec::new(),
     });
-    let doc = rag::RagDocument { id: format!("{:016x}", rand::random::<u64>()), path, text: body.text, added_at: unix_now() };
+    let doc = rag::RagDocument { id: format!("{:016x}", rand::random::<u64>()), path, text: body.text, added_at: unix_now(), embedding: None };
     index.manual_documents.push(doc.clone());
+    embed_index_in_place(&state, &mut index).await;
     match persist_rag_index(&state, &id, &index) {
         Ok(()) => Json(serde_json::json!({"id": doc.id, "path": doc.path, "added_at": doc.added_at})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the index: {e}")).into_response(),
@@ -1707,7 +1778,16 @@ mod tests {
             offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             assistant_url: assistant_url.map(Arc::from),
             http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().expect("build http client"),
+            rag_embedding_api_key: None,
+            rag_embedding_api_base: Arc::from("https://api.openai.com/v1"),
         };
+        (state, dir)
+    }
+
+    fn test_state_with_rag_embedding(api_key: &str, api_base: &str) -> (AppState, tempfile::TempDir) {
+        let (mut state, dir) = test_state();
+        state.rag_embedding_api_key = Some(Arc::from(api_key));
+        state.rag_embedding_api_base = Arc::from(api_base);
         (state, dir)
     }
 
@@ -3002,6 +3082,8 @@ mod tests {
             offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             assistant_url: None,
             http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().expect("build http client"),
+            rag_embedding_api_key: None,
+            rag_embedding_api_base: Arc::from("https://api.openai.com/v1"),
         };
         let app = api_router(state);
 
@@ -3285,6 +3367,79 @@ mod tests {
             axum::serve(listener, mock_app).await.expect("serve mock");
         });
         (port, rx)
+    }
+
+    /// Real local embedding-API mock -- always returns the same fixed unit
+    /// vector for every input, real HTTP round trip through the exact
+    /// `rag::embed_texts` client code, not a stub of that function itself.
+    /// Good enough to prove the real wiring (upload -> embed -> persist ->
+    /// query-embed -> cosine-match -> `match_kind: "semantic"` in the real
+    /// HTTP response) without needing a real OpenAI credential.
+    async fn spawn_mock_embedding_server() -> String {
+        let mock_app = axum::Router::new().route(
+            "/embeddings",
+            axum::routing::post(|Json(body): Json<serde_json::Value>| async move {
+                let n = body["input"].as_array().map(|a| a.len()).unwrap_or(1);
+                let data: Vec<_> = (0..n).map(|i| serde_json::json!({"embedding": [1.0, 0.0], "index": i})).collect();
+                Json(serde_json::json!({"data": data}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind mock listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, mock_app).await.expect("serve mock");
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn rag_search_returns_a_real_semantic_match_when_an_embedding_credential_is_configured() {
+        let base = spawn_mock_embedding_server().await;
+        let (state, _dir) = test_state_with_rag_embedding("fake-key", &base);
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-semantic-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/rag-semantic-run/rag/documents",
+                serde_json::json!({"path": "notes.txt", "text": "completely different wording with no shared keywords at all"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "upload must succeed even though it triggers a real embedding call");
+
+        // A query with zero keyword overlap against the uploaded text -- the
+        // mock server embeds everything to the identical vector, so this can
+        // only match via the real semantic path, never score_chunk's keyword
+        // overlap. Proves match_kind: "semantic" is real, not a label slapped
+        // on a keyword hit.
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/rag-semantic-run/rag/search?q=xyz-no-overlap-query").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        let results = body["results"].as_array().expect("real results array");
+        assert_eq!(results.len(), 1, "the semantic-only match must still surface");
+        assert_eq!(results[0]["path"], "notes.txt");
+        assert_eq!(results[0]["match_kind"], "semantic");
+    }
+
+    #[tokio::test]
+    async fn rag_search_stays_keyword_only_when_no_embedding_credential_is_configured() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-keyword-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/rag-keyword-run/rag/documents", serde_json::json!({"path": "notes.txt", "text": "hello world"})))
+            .await
+            .unwrap();
+
+        let response =
+            app.oneshot(Request::builder().uri("/api/runs/rag-keyword-run/rag/search?q=hello").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["results"][0]["match_kind"], "keyword", "no credential configured must never fabricate a semantic result");
     }
 
     #[tokio::test]
