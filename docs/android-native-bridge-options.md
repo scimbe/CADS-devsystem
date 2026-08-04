@@ -1,4 +1,17 @@
-# Android native bridge: research for the open `devsystem.android_native_bridge` decision
+# Android native bridge: research for the `devsystem.android_native_bridge` decision
+
+> **Resolved (2026-08-04): UniFFI, per this doc's own research lean below.**
+> Real work has landed on [`CADS-webconference-android`](https://github.com/scimbe/CADS-webconference-android):
+> a real `native-bridge/` UniFFI + `cargo-ndk` crate, with real Noise_IK
+> public-key generation wired into `MainActivity` (not a stub/mock call),
+> and several consecutive green Android CI runs building/verifying it. The
+> `devsystem.android_native_bridge` role/stage itself is currently a
+> pending proposal in `runs/webconference-android/` (the run's own spec was
+> separately reset by the operator for a fresh setup-flow re-test, unrelated
+> to this technical decision) -- see the main [README](../README.md)'s
+> Status section for the run's current real state. The research below is
+> kept as-is for the record; it's what the decision was actually based on,
+> not retroactively rewritten.
 
 Background: iteration 1 of the `webconference-android` run found that CADS-Tunnel's
 Noise_IK handshake (`crates/client/src/noise.rs`) and Agent-Fabric/channel primitives
