@@ -34,9 +34,35 @@ jobs:
     # web/ (the real GUI backend, #382) had no CI either -- same class of gap as
     # pipeline/ had until the job above. It's a path-dependent consumer of
     # pipeline/, not tested by the job above at all.
+    #
+    # Real, honest gap this job had until now, caught while driving
+    # CADS-devsystem#7: this job only ever ran `cargo build`, never
+    # `cargo test` -- every "N/N tests pass" claim across that issue/PR was
+    # true locally but never actually verified in CI. Fixed here alongside
+    # adding the real Postgres+pgvector service the RAG semantic-search work
+    # needs, rather than leaving that gap open a third time.
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: -D warnings
+      # Real pgvector-enabled Postgres, not plain postgres -- the RAG
+      # vector_store tests run `CREATE EXTENSION IF NOT EXISTS vector` as
+      # part of their real migration, which a stock postgres image can't
+      # satisfy.
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/web_ci
+      RAG_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/web_ci
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: web_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
 
@@ -49,6 +75,14 @@ jobs:
       - name: cargo build (web crate)
         working-directory: web
         run: cargo build --all-targets --verbose
+
+      - name: cargo test (web crate, real hermetic tests -- mocked embedding/Unstructured servers, no real external API calls)
+        working-directory: web
+        run: cargo test --all-targets --verbose
+
+      - name: cargo test --ignored (real Postgres+pgvector integration tests, against the real service above)
+        working-directory: web
+        run: cargo test --all-targets --verbose -- --ignored
 
       - name: docker build (the actual image deployed live behind devsystem-demo.bunsenbrenner.org)
         run: docker build -f web/Dockerfile -t devsystem-web:ci .
