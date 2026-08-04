@@ -1,0 +1,15 @@
+{
+  "id": "devsystem-webconference-android",
+  "roles": [
+    {
+      "service": {
+        "Custom": "devsystem.plan"
+      },
+      "units": 1,
+      "tag": "plan",
+      "selection_policy": null
+    }
+  ],
+  "operator_pubkey_hex": null,
+  "selection_policy": "LowestFloor"
+}
