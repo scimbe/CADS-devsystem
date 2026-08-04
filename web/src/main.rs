@@ -823,16 +823,27 @@ async fn set_repo_url(
 }
 
 #[derive(Deserialize)]
+struct AcceptedBidReq {
+    holder_label: String,
+    price: u64,
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 enum SetRoleFillModeRequest {
     Auction,
-    Dedicated { label: String },
+    Dedicated {
+        label: String,
+        #[serde(default)]
+        accepted_bid: Option<AcceptedBidReq>,
+    },
 }
 
-/// `POST /api/runs/{id}/roles/{tag}/fill-mode` (#382 Roles panel ask 1/4): switch one
-/// role between `Auction` (today's default, unchanged) and `Dedicated` (a plain,
-/// human-chosen label -- not yet a real reachability-checked identity; see
-/// [`RoleFillMode`]'s own doc comment for why this stops short of a fuller registry).
+/// `POST /api/runs/{id}/roles/{tag}/fill-mode` (#382 Roles panel ask 1/4, extended by
+/// the operator's direct-accept ask): switch one role between `Auction` (today's
+/// default, unchanged) and `Dedicated` -- either a plain hand-typed label, or a real
+/// bid accepted directly from the live auction view (`accepted_bid`, a point-in-time
+/// snapshot of `holder_label`/`price`; see [`RoleFillMode`]'s own doc comment).
 /// `:tag` is validated against the run's real live spec, not accepted blindly -- an
 /// unknown role tag is a real `400`, not silently stored as dead data nobody's
 /// `spec.roles` will ever match.
@@ -848,7 +859,7 @@ async fn set_role_fill_mode(
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
     }
-    if let SetRoleFillModeRequest::Dedicated { label } = &body {
+    if let SetRoleFillModeRequest::Dedicated { label, .. } = &body {
         if label.trim().is_empty() {
             return (StatusCode::BAD_REQUEST, "label must be non-empty for a dedicated role").into_response();
         }
@@ -867,7 +878,10 @@ async fn set_role_fill_mode(
     }
     let mode = match body {
         SetRoleFillModeRequest::Auction => RoleFillMode::Auction,
-        SetRoleFillModeRequest::Dedicated { label } => RoleFillMode::Dedicated { label: label.trim().to_string() },
+        SetRoleFillModeRequest::Dedicated { label, accepted_bid } => RoleFillMode::Dedicated {
+            label: label.trim().to_string(),
+            accepted_bid: accepted_bid.map(|b| devsystem_pipeline::runner::AcceptedBid { holder_label: b.holder_label, price: b.price }),
+        },
     };
     // `Auction` is the implicit default for a tag absent from the map -- storing it
     // explicitly would just be dead weight that never affects behavior, so switching
@@ -2074,6 +2088,26 @@ mod tests {
         let response = app.oneshot(Request::builder().uri("/api/runs/fillmode-run").body(Body::empty()).unwrap()).await.unwrap();
         let body = body_json(response).await;
         assert!(body["state"]["role_fill_modes"].as_object().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn role_fill_mode_can_directly_accept_a_real_bid_with_its_price_snapshot() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "accept-bid-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/accept-bid-run/roles/plan/fill-mode",
+                serde_json::json!({"mode": "dedicated", "label": "Compass-1", "accepted_bid": {"holder_label": "abc123", "price": 8}}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["fill_mode"]["accepted_bid"]["holder_label"], "abc123");
+        assert_eq!(body["fill_mode"]["accepted_bid"]["price"], 8);
     }
 
     #[tokio::test]

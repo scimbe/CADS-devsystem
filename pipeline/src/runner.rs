@@ -34,11 +34,34 @@ pub struct BacklogItem {
 /// `devsystem.assistant`'s hardcoded probe is -- there is no general registry of
 /// addressable LLM agents to check against yet (the real gap task #27/#29 already
 /// found), so this deliberately doesn't fabricate one.
+///
+/// `accepted_bid` (operator ask: "in dem developer pipeline auch ohne Auktion
+/// eines der angebotenen nutzen, in dem wir das Gebot ohne Auktion annehmen")
+/// is `Some` when Dedicated was set by directly accepting one specific real
+/// bid from the live auction view (its real `holder_label`/`price` snapshot
+/// at accept time -- prices/bidders can change afterward, this is honestly a
+/// point-in-time record of what was accepted, not a live-tracked one), and
+/// `None` for a plain hand-typed label with no real bid behind it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum RoleFillMode {
     Auction,
-    Dedicated { label: String },
+    Dedicated {
+        label: String,
+        #[serde(default)]
+        accepted_bid: Option<AcceptedBid>,
+    },
+}
+
+/// The real, point-in-time snapshot of a bid a human directly accepted --
+/// see [`RoleFillMode::Dedicated`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AcceptedBid {
+    /// The auction view's own short display label for the bidder (`RoleBidView.who`,
+    /// derived from their real pubkey) -- not the raw pubkey itself, which the
+    /// auction view never exposes.
+    pub holder_label: String,
+    pub price: u64,
 }
 
 /// A real, human-added GUI panel beyond the core set the pipeline itself ships --

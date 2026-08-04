@@ -237,6 +237,11 @@
  .role-latest.fail{border-left-color:var(--danger)}
  .role-count{font-size:.7rem;margin-top:.2rem}
  .role-tools{font-size:.7rem;margin-top:.2rem}
+ .role-bids{margin-top:.35rem;display:flex;flex-direction:column;gap:.25rem}
+ .role-bid-row{display:flex;justify-content:space-between;align-items:center;gap:.4rem;
+               font-size:.72rem;font-family:var(--mono)}
+ .role-bid-who em{color:var(--accent2);font-style:normal}
+ .role-bid-accept-btn{font-size:.65rem;padding:.1rem .4rem;flex-shrink:0}
  .arch-viewer{font-family:var(--mono);font-size:.78rem;padding:.5rem .65rem;border:1px solid var(--border);
               border-radius:8px;margin-bottom:.6rem}
  .arch-note{font-size:.72rem;color:var(--muted);margin-top:.3rem}
@@ -1261,7 +1266,13 @@ async function renderRolesPanel(id, data) {
       // Honest, not fabricated: there's no general reachability check for an
       // arbitrary dedicated-agent label yet (only devsystem.assistant has a real
       // probe endpoint) -- this just states the mode + label, nothing more.
-      badge = `<span class="arch-badge dedicated">dedicated: ${escapeHtml(fillMode.label)}</span>`;
+      // A directly-accepted real bid shows its real, point-in-time price too --
+      // still labeled as a snapshot, not a live-tracked figure (the bidder could
+      // have changed their price or gone offline since).
+      const acceptedNote = fillMode.accepted_bid
+        ? ` (accepted bid ${escapeHtml(fillMode.accepted_bid.holder_label)} @ ${fillMode.accepted_bid.price}, at accept time)`
+        : '';
+      badge = `<span class="arch-badge dedicated">dedicated: ${escapeHtml(fillMode.label)}${acceptedNote}</span>`;
     } else if (isAssistant) {
       if (!assistantStatus.configured) badge = `<span class="arch-badge warn">not configured on this deployment</span>`;
       else if (assistantStatus.reachable) {
@@ -1292,6 +1303,26 @@ async function renderRolesPanel(id, data) {
     const toolsHtml = isAssistant && Array.isArray(assistantStatus.disallowed_tools)
       ? `<div class="role-tools lede">advice-only -- no ct-agent tools; blocked: ${assistantStatus.disallowed_tools.map(escapeHtml).join(', ')}</div>`
       : '';
+    // Operator ask: "in dem developer pipeline auch ohne Auktion eines der
+    // angebotenen nutzen... dafuer muessen nur die Agenten sichtbar sein mit
+    // deren Kosten" -- every real bid for this role, not just the winner, each
+    // with its real price and a real "Accept" button that skips the auction
+    // entirely (sets Dedicated with a real accepted_bid snapshot). Auction-
+    // eligible roles only (not devsystem.assistant, which never goes through
+    // convene() at all).
+    let bidListHtml = '';
+    if (!isAssistant && auctionRoles) {
+      const view = auctionRoles.find(v => v.role === r.tag);
+      if (view && view.bids.length) {
+        bidListHtml = `<div class="role-bids">
+          ${view.bids.map(b => `
+            <div class="role-bid-row">
+              <span class="role-bid-who">${escapeHtml(b.who)}${b.win ? ' <em>(winning)</em>' : ''} @ ${b.price}</span>
+              <button type="button" class="secondary role-bid-accept-btn" data-tag="${escapeHtml(r.tag)}" data-who="${escapeHtml(b.who)}" data-price="${b.price}">Accept directly</button>
+            </div>`).join('')}
+        </div>`;
+      }
+    }
     return `<div class="role-card">
       <div class="role-card-head">
         <span class="role">${escapeHtml(r.tag)}</span>
@@ -1300,6 +1331,7 @@ async function renderRolesPanel(id, data) {
       </div>
       <div class="role-meta">${escapeHtml(stageId)} · units ${r.units} · policy ${escapeHtml(String(policy))}</div>
       ${toolsHtml}
+      ${bidListHtml}
       ${latestHtml}
       <div class="role-count lede">${roleHistory.length} iteration(s) total for this role</div>
     </div>`;
@@ -1340,6 +1372,24 @@ async function renderRolesPanel(id, data) {
 
   for (const btn of body.querySelectorAll('.fillmode-menu-btn')) {
     btn.onclick = (e) => { e.stopPropagation(); openFillModePopover(id, data, btn); };
+  }
+  for (const btn of body.querySelectorAll('.role-bid-accept-btn')) {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const tag = btn.dataset.tag, who = btn.dataset.who, price = parseInt(btn.dataset.price, 10);
+      if (!confirm(`Accept ${who} @ ${price} directly for "${tag}", skipping the auction?`)) return;
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/roles/${encodeURIComponent(tag)}/fill-mode`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mode: 'dedicated', label: who, accepted_bid: { holder_label: who, price } }),
+        });
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        await renderRolesPanel(id, fresh);
+      } catch (err) {
+        alert(`Could not accept bid: ${err.message}`);
+      }
+    };
   }
 }
 
