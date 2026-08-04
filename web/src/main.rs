@@ -126,9 +126,21 @@ async fn whoami(headers: axum::http::HeaderMap) -> impl IntoResponse {
 /// here -- this endpoint is reachable by anyone who passes the site-wide login
 /// gate (the exact "no per-account scoping yet" gap #382 raised), so this stays
 /// the minimum honest signal rather than handing out internal network topology.
+///
+/// `disallowed_tools` answers the GUI's "which ct-agent-connected tools does the
+/// assistant have" question honestly: none -- it's the exact
+/// [`devsystem_pipeline::ASSISTANT_DISALLOWED_TOOLS`] list the bridge itself
+/// passes to `claude -p --disallowedTools`, static configuration rather than a
+/// live probe, so it's reported regardless of `configured`/`reachable`.
 async fn assistant_status(State(state): State<AppState>) -> impl IntoResponse {
     let Some(url) = state.assistant_url.clone() else {
-        return Json(serde_json::json!({"configured": false, "reachable": null, "response_time_ms": null})).into_response();
+        return Json(serde_json::json!({
+            "configured": false,
+            "reachable": null,
+            "response_time_ms": null,
+            "disallowed_tools": devsystem_pipeline::ASSISTANT_DISALLOWED_TOOLS,
+        }))
+        .into_response();
     };
     let started = std::time::Instant::now();
     let reachable = state
@@ -143,7 +155,13 @@ async fn assistant_status(State(state): State<AppState>) -> impl IntoResponse {
     // timeout itself, not a real response time, so it's reported as null
     // rather than a number that would misleadingly look like one.
     let response_time_ms = reachable.then(|| started.elapsed().as_millis() as u64);
-    Json(serde_json::json!({"configured": true, "reachable": reachable, "response_time_ms": response_time_ms})).into_response()
+    Json(serde_json::json!({
+        "configured": true,
+        "reachable": reachable,
+        "response_time_ms": response_time_ms,
+        "disallowed_tools": devsystem_pipeline::ASSISTANT_DISALLOWED_TOOLS,
+    }))
+    .into_response()
 }
 
 #[tokio::main]
@@ -1888,6 +1906,11 @@ mod tests {
         assert_eq!(body["configured"], false);
         assert!(body["reachable"].is_null(), "reachable must be null (not attempted), not a fabricated false, when nothing is configured");
         assert!(body["response_time_ms"].is_null());
+        assert_eq!(
+            body["disallowed_tools"],
+            serde_json::json!(devsystem_pipeline::ASSISTANT_DISALLOWED_TOOLS),
+            "the honest 'no ct-agent tools' answer is static config, reported even when unconfigured"
+        );
     }
 
     #[tokio::test]
@@ -1901,6 +1924,7 @@ mod tests {
         assert_eq!(body["configured"], true);
         assert_eq!(body["reachable"], true, "a real TCP-reachable mock bridge, even answering 404 on GET /, must report reachable");
         assert!(body["response_time_ms"].as_u64().is_some(), "a real completed probe must report a real measured latency");
+        assert_eq!(body["disallowed_tools"], serde_json::json!(devsystem_pipeline::ASSISTANT_DISALLOWED_TOOLS));
     }
 
     #[tokio::test]

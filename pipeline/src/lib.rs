@@ -34,6 +34,17 @@ pub const STAGE_IMPROVE: &str = "devsystem.improve";
 pub const ALL_STAGES: [&str; 7] =
     [STAGE_PLAN, STAGE_TEST, STAGE_IMPLEMENT, STAGE_REVIEW, STAGE_VERIFY, STAGE_REMEMBER, STAGE_IMPROVE];
 
+/// The real, current answer to "what tools does `devsystem.assistant` have" (#382
+/// task: a GUI tool registry for the assistant role): none beyond its default
+/// read-only grounding -- `devsystem_assistant`'s `ask_llm` passes this exact list
+/// to `claude -p --disallowedTools`. Shared as one constant (not duplicated as a
+/// string literal in both the assistant binary and the web API) so the two can
+/// never drift apart and silently start lying to each other. There is no
+/// ct-agent-connected tool registry to report on yet -- the assistant is
+/// deliberately advice-only, grounded via fetched run state, never given
+/// filesystem/shell/network access of its own.
+pub const ASSISTANT_DISALLOWED_TOOLS: [&str; 6] = ["Edit", "Write", "Bash", "WebFetch", "WebSearch", "Agent"];
+
 /// Build the real [`PipelineSpec`] for one pipeline run, keyed by `run_id` (the
 /// coordination repo's convention: one GitHub Issue per run, `run_id` matching the
 /// issue number/slug). `operator_pubkey_hex` is the Agent-Fabric channel operator key

@@ -213,6 +213,7 @@
  .role-latest.ok{border-left-color:var(--accent2)}
  .role-latest.fail{border-left-color:var(--danger)}
  .role-count{font-size:.7rem;margin-top:.2rem}
+ .role-tools{font-size:.7rem;margin-top:.2rem}
  .arch-viewer{font-family:var(--mono);font-size:.78rem;padding:.5rem .65rem;border:1px solid var(--border);
               border-radius:8px;margin-bottom:.6rem}
  .arch-note{font-size:.72rem;color:var(--muted);margin-top:.3rem}
@@ -884,12 +885,20 @@ async function renderRolesPanel(id, data) {
            iteration ${latest.iteration} (${latest.succeeded ? 'ok' : 'FAILED'}): ${escapeHtml(truncate(latest.feedback, 160))}
          </div>`
       : `<div class="role-latest lede">no iteration yet for this role</div>`;
+    // The honest answer to "which ct-agent-connected tools does this role have":
+    // for devsystem.assistant, none -- it's deliberately advice-only, and this is
+    // the real list its own bridge passes to `claude -p --disallowedTools`, not a
+    // speculative tool marketplace. Every other role has no such concept yet.
+    const toolsHtml = isAssistant && Array.isArray(assistantStatus.disallowed_tools)
+      ? `<div class="role-tools lede">advice-only -- no ct-agent tools; blocked: ${assistantStatus.disallowed_tools.map(escapeHtml).join(', ')}</div>`
+      : '';
     return `<div class="role-card">
       <div class="role-card-head">
         <span class="role">${escapeHtml(r.tag)}</span>
         ${badge}
       </div>
       <div class="role-meta">${escapeHtml(stageId)} · units ${r.units} · policy ${escapeHtml(String(policy))}</div>
+      ${toolsHtml}
       ${latestHtml}
       <div class="role-count lede">${roleHistory.length} iteration(s) total for this role</div>
     </div>`;

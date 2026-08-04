@@ -142,7 +142,7 @@ fn ask_llm(instruction: &str, system_prompt: &str) -> Result<LlmReply, String> {
         .arg("--output-format")
         .arg("json")
         .arg("--disallowedTools")
-        .arg("Edit,Write,Bash,WebFetch,WebSearch,Agent")
+        .arg(devsystem_pipeline::ASSISTANT_DISALLOWED_TOOLS.join(","))
         .arg("--append-system-prompt")
         .arg(system_prompt)
         .stdin(Stdio::null())
