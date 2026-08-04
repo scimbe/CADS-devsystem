@@ -23,9 +23,12 @@
 //! itself already uses (so this binary is a thin, real wrapper, not a
 //! reimplementation): `CT_CHANNEL_ADDR`, `CT_CHANNEL_NOISE_KEY` (this
 //! process's own private key), `CT_CHANNEL_PEER_NOISE_KEY` (the handler's
-//! public key), `CT_CHANNEL_PEER_CERT` (the hex cert the handler printed on
-//! startup). `CT_AGENT_BIN` optionally overrides the `ct-agent` binary path
-//! (default: `ct-agent` on `PATH`).
+//! public key), and either `CT_CHANNEL_PEER_CERT` (the literal hex cert) or
+//! `CT_CHANNEL_PEER_CERT_FILE` (a path to read it from, fresh, on every call
+//! -- see `resolve_peer_cert`'s doc comment for why a file is needed at all:
+//! the handler's real listen cert is NOT stable across its own respawns).
+//! `CT_AGENT_BIN` optionally overrides the `ct-agent` binary path (default:
+//! `ct-agent` on `PATH`).
 
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -124,11 +127,34 @@ fn call_with(ct_agent_bin: &str, addr: &str, noise_key: &str, peer_noise_key: &s
     response.ok_or_else(|| format!("no line of {ct_agent_bin}'s output parsed as a real IssueResponse -- stderr: {stderr_text:?}"))
 }
 
+/// Real finding, live-verified (2026-08-05): the cert a `ct-agent channel
+/// --serve` process prints on startup is freshly generated EVERY time it
+/// starts, even reusing the identical `CT_CHANNEL_NOISE_KEY` -- confirmed by
+/// starting the same identity twice and diffing the two printed certs (they
+/// were completely different, not just superficially). The direct-address
+/// accept path also serves exactly one session then exits (#48 slice 2's own
+/// doc comment), so a real always-on deployment needs a respawn loop --
+/// which means the cert this function needs is a MOVING TARGET, not a value
+/// safe to configure once. `CT_CHANNEL_PEER_CERT_FILE` lets a wrapper script
+/// that owns that respawn loop publish the current cert to a well-known path
+/// (atomically, so this never reads a half-written file) and this function
+/// reads it fresh on every single call, immediately before dialing --
+/// `CT_CHANNEL_PEER_CERT` (the literal value) still works too, for the
+/// direct one-shot case this binary was originally verified against.
+fn resolve_peer_cert() -> Result<String, String> {
+    if let Ok(literal) = env::var("CT_CHANNEL_PEER_CERT") {
+        return Ok(literal);
+    }
+    let path = required_env("CT_CHANNEL_PEER_CERT_FILE")
+        .map_err(|_| "neither CT_CHANNEL_PEER_CERT nor CT_CHANNEL_PEER_CERT_FILE is set -- one is required to dial the channel".to_string())?;
+    std::fs::read_to_string(&path).map(|s| s.trim().to_string()).map_err(|e| format!("could not read CT_CHANNEL_PEER_CERT_FILE ({path}): {e}"))
+}
+
 fn call(req: &IssueRequest) -> Result<IssueResponse, String> {
     let addr = required_env("CT_CHANNEL_ADDR")?;
     let noise_key = required_env("CT_CHANNEL_NOISE_KEY")?;
     let peer_noise_key = required_env("CT_CHANNEL_PEER_NOISE_KEY")?;
-    let peer_cert = required_env("CT_CHANNEL_PEER_CERT")?;
+    let peer_cert = resolve_peer_cert()?;
     call_with(&ct_agent_bin(), &addr, &noise_key, &peer_noise_key, &peer_cert, req)
 }
 
@@ -307,5 +333,61 @@ echo "this channel produced garbage, not a real reply""#);
         let req = IssueRequest { repo: "scimbe/CADS-webconference-demo".to_string(), title: "t".to_string(), body: "b".to_string() };
         let err = call_with(&bin, "127.0.0.1:1", "k", "pk", "cert", &req).expect_err("unparseable output must be a real error, not a silent None treated as success");
         assert!(err.contains("no line"));
+    }
+
+    // resolve_peer_cert reads/writes real process-wide env vars -- guarded by
+    // the same lock as the subprocess tests (serializing more than strictly
+    // necessary is harmless; racing two tests over the same env var names is
+    // not) and each test clears both vars on the way out so it never leaks
+    // state into a test that runs after it.
+    fn clear_cert_env() {
+        env::remove_var("CT_CHANNEL_PEER_CERT");
+        env::remove_var("CT_CHANNEL_PEER_CERT_FILE");
+    }
+
+    #[test]
+    fn resolve_peer_cert_prefers_the_literal_env_var_when_both_are_set() {
+        let _guard = SUBPROCESS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_cert_env();
+        let dir = std::env::temp_dir().join(format!("github-issue-client-cert-test-{}-1", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cert.txt");
+        fs::write(&path, "cert-from-file").unwrap();
+
+        env::set_var("CT_CHANNEL_PEER_CERT", "cert-from-literal-env");
+        env::set_var("CT_CHANNEL_PEER_CERT_FILE", path.to_string_lossy().to_string());
+        assert_eq!(resolve_peer_cert(), Ok("cert-from-literal-env".to_string()));
+
+        clear_cert_env();
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_peer_cert_reads_the_real_file_fresh_when_only_the_file_var_is_set() {
+        let _guard = SUBPROCESS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_cert_env();
+        let dir = std::env::temp_dir().join(format!("github-issue-client-cert-test-{}-2", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cert.txt");
+
+        // A real respawn-loop wrapper's whole point: the cert changes, and
+        // this must pick up whatever is on disk right now, not a cached value.
+        fs::write(&path, "cert-version-one\n").unwrap();
+        env::set_var("CT_CHANNEL_PEER_CERT_FILE", path.to_string_lossy().to_string());
+        assert_eq!(resolve_peer_cert(), Ok("cert-version-one".to_string()), "trailing newline must be trimmed");
+
+        fs::write(&path, "cert-version-two").unwrap();
+        assert_eq!(resolve_peer_cert(), Ok("cert-version-two".to_string()), "a real respawn must be picked up on the very next call, not stale");
+
+        clear_cert_env();
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_peer_cert_reports_honestly_when_neither_is_configured() {
+        let _guard = SUBPROCESS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        clear_cert_env();
+        let err = resolve_peer_cert().expect_err("no cert source configured must be a real, clear error");
+        assert!(err.contains("CT_CHANNEL_PEER_CERT") && err.contains("CT_CHANNEL_PEER_CERT_FILE"));
     }
 }
