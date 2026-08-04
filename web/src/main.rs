@@ -500,7 +500,7 @@ async fn iterate_run(
     };
 
     let memory_path = dir.join("memory.jsonl");
-    let envelope = envelope_from_iteration(&record);
+    let envelope = envelope_from_iteration(&record, &run_state.requirements);
     if let Err(e) = append_to_memory_log(&memory_path, &envelope) {
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("memory log failed: {e}")).into_response();
     }

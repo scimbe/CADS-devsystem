@@ -35,7 +35,7 @@ fn run_local(run_id: &str, record_path: &str) -> std::process::ExitCode {
     // devsystem.remember, made real: every iteration's zylos envelope is appended to
     // the run's durable memory log before anything else happens to `record`.
     let memory_path = run_dir.join("memory.jsonl");
-    let envelope = envelope_from_iteration(&record);
+    let envelope = envelope_from_iteration(&record, &state.requirements);
     append_to_memory_log(&memory_path, &envelope).expect("append to memory.jsonl");
 
     let criteria = state.criteria;
