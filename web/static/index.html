@@ -199,10 +199,6 @@
  .backlog-item{display:flex;align-items:flex-start;gap:.5rem;font-size:.85rem;cursor:pointer}
  .backlog-item input{width:auto;margin-top:.2rem}
  .backlog-item.done span{color:var(--muted);text-decoration:line-through}
- .auction-role{border:1px solid var(--border);border-radius:8px;padding:.5rem .7rem;margin-bottom:.5rem;font-size:.82rem}
- .auction-role-head{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:.3rem}
- .auction-bid{display:flex;justify-content:space-between;font-family:var(--mono);font-size:.78rem;padding:.15rem 0;color:var(--muted)}
- .auction-bid.win{color:var(--accent2);font-weight:700}
  .commit-entry{border:1px solid var(--border);border-radius:8px;padding:.5rem .7rem;margin-top:.5rem;font-size:.82rem}
  .commit-sha{font-family:var(--mono);font-size:.75rem;color:var(--accent2)}
  .commit-msg{margin-top:.2rem}
@@ -295,7 +291,6 @@ const PANEL_DEFAULTS = {
   milestones: { title: 'Milestones',         x: 1420, y: 332, w: 340, h: 240 },
   checkin:    { title: 'Check-in',           x: 16,   y: 452, w: 280, h: 300 },
   memory:     { title: 'Memory Log',         x: 1780, y: 16,  w: 360, h: 300 },
-  auction:    { title: 'Auction',            x: 1064, y: 592, w: 340, h: 300 },
   code:       { title: 'Code',               x: 1420, y: 592, w: 340, h: 300 },
   architecture: { title: 'Pipeline',         x: 1780, y: 332, w: 380, h: 420 },
 };
@@ -648,7 +643,6 @@ async function selectRun(id) {
     document.getElementById('view-checkin').onclick = () => viewCheckin(id);
     document.getElementById('body-memory').innerHTML = `<button class="secondary" id="view-memory">View memory log</button><div id="memory-view"></div>`;
     document.getElementById('view-memory').onclick = () => viewMemory(id);
-    renderAuctionPanel(id);
     renderCodePanel(id, data);
     renderArchitecturePanel(id, data);
   } catch (e) {
@@ -662,38 +656,6 @@ function placeholderIfNoRun(panelId) {
   const el = document.getElementById(`body-${panelId}`);
   if (!currentRun) { el.innerHTML = '<span class="lede">Select a run in the Runs panel.</span>'; return true; }
   return false;
-}
-
-// The real auction, not a fixture: whatever devsystem_offer (or any process that
-// signs a real CapacityOffer) has actually submitted for this run's roles. A role
-// with no qualifying offer shows the real PipelineError, not a fabricated empty
-// bid list -- "no bids yet" is the honest state most runs start in.
-async function renderAuctionPanel(id) {
-  const body = document.getElementById('body-auction');
-  body.innerHTML = '<span class="lede">Loading…</span>';
-  try {
-    const data = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/auction`);
-    if (data.error) {
-      body.innerHTML = `<span class="lede">${escapeHtml(data.error)}</span>`;
-      return;
-    }
-    const roles = data.roles || [];
-    if (!roles.length) {
-      body.innerHTML = '<span class="lede">No roles.</span>';
-      return;
-    }
-    body.innerHTML = roles.map(r => `
-      <div class="auction-role">
-        <div class="auction-role-head">${escapeHtml(r.role)}</div>
-        ${r.bids.length ? r.bids.map(b => `
-          <div class="auction-bid${b.win ? ' win' : ''}">
-            <span>${b.win ? '★' : '–'} ${escapeHtml(b.who)}</span>
-            <span>${b.units} unit(s) @ ${b.price}</span>
-          </div>`).join('') : '<div class="lede" style="font-size:.78rem">no bids yet</div>'}
-      </div>`).join('');
-  } catch (e) {
-    body.innerHTML = `<span class="status-line err">${e.message}</span>`;
-  }
 }
 
 // Real per-role status view (operator feedback: "die einzelnen Rollen sehen, was
@@ -1828,7 +1790,7 @@ loadRuns();
 loadWhoami();
 checkAssistantHeartbeat();
 setInterval(checkAssistantHeartbeat, 20000);
-for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'checkin', 'memory', 'auction', 'architecture']) {
+for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'checkin', 'memory', 'architecture']) {
   placeholderIfNoRun(id);
 }
 </script>
