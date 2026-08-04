@@ -48,6 +48,14 @@
       "units": 1,
       "tag": "improve",
       "selection_policy": null
+    },
+    {
+      "service": {
+        "Custom": "devsystem.android_native_build_ci"
+      },
+      "units": 1,
+      "tag": "android_native_build_ci",
+      "selection_policy": null
     }
   ],
   "operator_pubkey_hex": null,
