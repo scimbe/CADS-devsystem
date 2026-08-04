@@ -37,9 +37,9 @@ async fn main() {
 
     let app = Router::new()
         .route("/api/runs", get(list_runs).post(create_run))
-        .route("/api/runs/:id", get(get_run))
-        .route("/api/runs/:id/iterate", post(iterate_run))
-        .route("/api/runs/:id/checkin", get(checkin_run))
+        .route("/api/runs/{id}", get(get_run))
+        .route("/api/runs/{id}/iterate", post(iterate_run))
+        .route("/api/runs/{id}/checkin", get(checkin_run))
         .layer(CorsLayer::permissive())
         .with_state(state)
         .fallback_service(ServeDir::new(static_dir));

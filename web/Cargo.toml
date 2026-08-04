@@ -9,10 +9,13 @@ name = "devsystem-web"
 path = "src/main.rs"
 
 [dependencies]
+# No direct ct-common dep -- it was never actually used here (verified by grepping
+# src/main.rs), only needed transitively via devsystem-pipeline. Removing it closes
+# the root cause of a real Dependabot false-downgrade (see #382 history) rather than
+# just declining the PR each time it reappears.
 devsystem-pipeline = { path = "../pipeline" }
-ct-common = { git = "https://github.com/scimbe/CADS-Tunnel", tag = "v0.4.13" }
-axum = "0.7"
+axum = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
-tower-http = { version = "0.5", features = ["fs", "cors"] }
+tower-http = { version = "0.7", features = ["fs", "cors"] }
