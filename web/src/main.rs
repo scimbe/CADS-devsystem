@@ -220,6 +220,30 @@ fn run_exists(state: &AppState, id: &str) -> bool {
     run_dir(state, id).join("state.json").exists()
 }
 
+/// Real per-run access restriction (#382 #28), narrowly scoped: a signed-in browser
+/// user (a real `X-Gate-Email` from the gate) may only view/act on a run they
+/// created, UNLESS the run has no recorded owner -- a pre-existing run from before
+/// `owner_email` existed, which stays open to any signed-in user rather than locking
+/// everyone out of runs nobody "owns" yet.
+///
+/// A caller with NO gate header at all is deliberately left unrestricted here: every
+/// headless CLI tool this whole pipeline mechanism runs on
+/// (`devsystem_iterate`/`devsystem_checkin`, this very autonomous loop) has never
+/// been gate-authenticated and isn't meant to be -- and `offers/submit` is
+/// self-authenticating by real signature (CADS-Tunnel#388), explicitly excluded from
+/// the gate at the Caddy layer for exactly that reason. This function only ever
+/// narrows *browser* access; it must never be the thing that breaks the headless
+/// mechanism.
+fn owner_authorized(headers: &axum::http::HeaderMap, run_state: &devsystem_pipeline::runner::RunState) -> bool {
+    let Some(caller) = headers.get("x-gate-email").and_then(|v| v.to_str().ok()) else {
+        return true;
+    };
+    match &run_state.owner_email {
+        None => true,
+        Some(owner) => owner == caller,
+    }
+}
+
 #[derive(Serialize)]
 struct RunSummary {
     run_id: String,
@@ -242,7 +266,7 @@ fn needs_attention(health: &RunHealth) -> bool {
     health.consecutive_failures + 1 >= health.criteria.max_consecutive_failures || health.iterations_until_checkin <= 1
 }
 
-async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
+async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap) -> impl IntoResponse {
     let mut runs = Vec::new();
     let Ok(entries) = fs::read_dir(state.runs_dir.as_path()) else {
         return Json(runs).into_response();
@@ -253,6 +277,9 @@ async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
             continue;
         }
         if let Ok((spec, run_state)) = load_or_init_run(&run_dir(&state, &id), &id) {
+            if !owner_authorized(&headers, &run_state) {
+                continue;
+            }
             let stalled = stalled_stages(&run_state);
             let risk_count = preflight_annotations(&run_state).len();
             let health = run_health(&run_state);
@@ -311,7 +338,7 @@ struct CreateRunRequest {
     run_id: String,
 }
 
-async fn get_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> impl IntoResponse {
+async fn get_run(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
     }
@@ -320,6 +347,9 @@ async fn get_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> i
     }
     match load_or_init_run(&run_dir(&state, &id), &id) {
         Ok((spec, run_state)) => {
+            if !owner_authorized(&headers, &run_state) {
+                return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+            }
             let stalled = stalled_stages(&run_state);
             let health = run_health(&run_state);
             let risks = preflight_annotations(&run_state);
@@ -381,7 +411,12 @@ fn default_true() -> bool {
     true
 }
 
-async fn iterate_run(State(state): State<AppState>, AxPath(id): AxPath<String>, Json(body): Json<IterateRequest>) -> impl IntoResponse {
+async fn iterate_run(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<IterateRequest>,
+) -> impl IntoResponse {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
     }
@@ -391,6 +426,9 @@ async fn iterate_run(State(state): State<AppState>, AxPath(id): AxPath<String>, 
         Ok(v) => v,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
     };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
     if run_state.paused {
         return (StatusCode::CONFLICT, "run is paused -- resume it first (POST /api/runs/{id}/resume)").into_response();
     }
@@ -432,7 +470,7 @@ async fn iterate_run(State(state): State<AppState>, AxPath(id): AxPath<String>, 
     .into_response()
 }
 
-async fn checkin_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> impl IntoResponse {
+async fn checkin_run(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
     }
@@ -443,6 +481,9 @@ async fn checkin_run(State(state): State<AppState>, AxPath(id): AxPath<String>) 
         Ok(v) => v,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
     };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
     match render_plan_markdown(&run_state) {
         Some(markdown) => Json(serde_json::json!({"markdown": markdown})).into_response(),
         None => (StatusCode::NOT_FOUND, "no iteration history yet").into_response(),
@@ -453,12 +494,19 @@ async fn checkin_run(State(state): State<AppState>, AxPath(id): AxPath<String>) 
 /// `iterate_run` has appended a real envelope every iteration since the mechanism
 /// was built, but nothing could ever read it back. Real data, not a stub: whatever
 /// this run's actual history produced.
-async fn memory_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> impl IntoResponse {
+async fn memory_run(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
     }
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, run_state)) if !owner_authorized(&headers, &run_state) => {
+            return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+        }
+        Ok(_) => {}
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
     }
     let memory_path = run_dir(&state, &id).join("memory.jsonl");
     match read_memory_log(&memory_path) {
@@ -469,12 +517,23 @@ async fn memory_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -
 
 /// The only place `Trust::Governed` should ever get set: a human, through the GUI,
 /// explicitly marking one memory entry as reviewed. Never automatic.
-async fn govern_memory(State(state): State<AppState>, AxPath((id, index)): AxPath<(String, usize)>) -> impl IntoResponse {
+async fn govern_memory(
+    State(state): State<AppState>,
+    AxPath((id, index)): AxPath<(String, usize)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
     }
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, run_state)) if !owner_authorized(&headers, &run_state) => {
+            return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+        }
+        Ok(_) => {}
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
     }
     let _guard = state.write_lock.lock().await;
     let memory_path = run_dir(&state, &id).join("memory.jsonl");
@@ -499,6 +558,7 @@ struct UpdateCriteriaRequest {
 async fn update_criteria(
     State(state): State<AppState>,
     AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<UpdateCriteriaRequest>,
 ) -> impl IntoResponse {
     if !valid_run_id(&id) {
@@ -516,6 +576,9 @@ async fn update_criteria(
         Ok(v) => v,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
     };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
     run_state.criteria = AbortCriteria {
         max_iterations: body.max_iterations,
         max_consecutive_failures: body.max_consecutive_failures,
@@ -530,15 +593,15 @@ async fn update_criteria(
 /// Real "stop, let me correct something" control -- operator feedback: "ich weiss
 /// nicht... wie ich es anhalten kann um es zu korrigieren." Sets `RunState::paused`;
 /// `iterate_run` refuses new iterations while it's set.
-async fn pause_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> impl IntoResponse {
-    set_paused(state, id, true).await
+async fn pause_run(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    set_paused(state, id, true, headers).await
 }
 
-async fn resume_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> impl IntoResponse {
-    set_paused(state, id, false).await
+async fn resume_run(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    set_paused(state, id, false, headers).await
 }
 
-async fn set_paused(state: AppState, id: String, paused: bool) -> axum::response::Response {
+async fn set_paused(state: AppState, id: String, paused: bool, headers: axum::http::HeaderMap) -> axum::response::Response {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
     }
@@ -551,6 +614,9 @@ async fn set_paused(state: AppState, id: String, paused: bool) -> axum::response
         Ok(v) => v,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
     };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
     run_state.paused = paused;
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"paused": run_state.paused})).into_response(),
@@ -570,6 +636,7 @@ struct AddBacklogItemRequest {
 async fn add_backlog_item(
     State(state): State<AppState>,
     AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<AddBacklogItemRequest>,
 ) -> impl IntoResponse {
     if !valid_run_id(&id) {
@@ -588,6 +655,9 @@ async fn add_backlog_item(
         Ok(v) => v,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
     };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
     if run_state.backlog.len() >= MAX_LIST_ITEMS {
         return (StatusCode::BAD_REQUEST, format!("backlog is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
     }
@@ -598,7 +668,11 @@ async fn add_backlog_item(
     }
 }
 
-async fn toggle_backlog_item(State(state): State<AppState>, AxPath((id, index)): AxPath<(String, usize)>) -> impl IntoResponse {
+async fn toggle_backlog_item(
+    State(state): State<AppState>,
+    AxPath((id, index)): AxPath<(String, usize)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
     }
@@ -611,6 +685,9 @@ async fn toggle_backlog_item(State(state): State<AppState>, AxPath((id, index)):
         Ok(v) => v,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
     };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
     let Some(item) = run_state.backlog.get_mut(index) else {
         return (StatusCode::NOT_FOUND, format!("no backlog item at index {index}")).into_response();
     };
@@ -633,6 +710,7 @@ struct AddMilestoneRequest {
 async fn add_milestone(
     State(state): State<AppState>,
     AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<AddMilestoneRequest>,
 ) -> impl IntoResponse {
     if !valid_run_id(&id) {
@@ -651,6 +729,9 @@ async fn add_milestone(
         Ok(v) => v,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
     };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
     if run_state.milestones.len() >= MAX_LIST_ITEMS {
         return (StatusCode::BAD_REQUEST, format!("milestones is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
     }
@@ -661,7 +742,11 @@ async fn add_milestone(
     }
 }
 
-async fn toggle_milestone_handler(State(state): State<AppState>, AxPath((id, index)): AxPath<(String, usize)>) -> impl IntoResponse {
+async fn toggle_milestone_handler(
+    State(state): State<AppState>,
+    AxPath((id, index)): AxPath<(String, usize)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
     }
@@ -674,6 +759,9 @@ async fn toggle_milestone_handler(State(state): State<AppState>, AxPath((id, ind
         Ok(v) => v,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
     };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
     if let Err(e) = toggle_milestone(&mut run_state, index) {
         return (StatusCode::NOT_FOUND, e).into_response();
     }
@@ -694,7 +782,12 @@ struct SetRepoUrlRequest {
 /// project-agnostic promise). An empty `repo_url` clears it. Only a basic
 /// `https://` sanity check here; the GUI does the real work of talking to
 /// GitHub's API, client-side, against whatever URL a human actually confirms.
-async fn set_repo_url(State(state): State<AppState>, AxPath(id): AxPath<String>, Json(body): Json<SetRepoUrlRequest>) -> impl IntoResponse {
+async fn set_repo_url(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<SetRepoUrlRequest>,
+) -> impl IntoResponse {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
     }
@@ -711,6 +804,9 @@ async fn set_repo_url(State(state): State<AppState>, AxPath(id): AxPath<String>,
         Ok(v) => v,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
     };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
     run_state.repo_url = if trimmed.is_empty() { None } else { Some(trimmed) };
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"repo_url": run_state.repo_url})).into_response(),
@@ -735,6 +831,7 @@ enum SetRoleFillModeRequest {
 async fn set_role_fill_mode(
     State(state): State<AppState>,
     AxPath((id, tag)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
     Json(body): Json<SetRoleFillModeRequest>,
 ) -> impl IntoResponse {
     if !valid_run_id(&id) {
@@ -754,6 +851,9 @@ async fn set_role_fill_mode(
         Ok(v) => v,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
     };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
     if !spec.roles.iter().any(|r| r.tag == tag) {
         return (StatusCode::BAD_REQUEST, format!("no role tagged {tag:?} in this run's live spec")).into_response();
     }
@@ -904,9 +1004,23 @@ struct AssistantAsk {
 /// operator has them, not necessarily co-located with this container). This
 /// handler never calls an LLM itself and never fabricates a response: with no
 /// bridge configured, or if the bridge is unreachable, it says so plainly.
-async fn ask_assistant(State(state): State<AppState>, AxPath(id): AxPath<String>, Json(body): Json<AssistantAsk>) -> impl IntoResponse {
+async fn ask_assistant(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<AssistantAsk>,
+) -> impl IntoResponse {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if run_exists(&state, &id) {
+        match load_or_init_run(&run_dir(&state, &id), &id) {
+            Ok((_spec, run_state)) if !owner_authorized(&headers, &run_state) => {
+                return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+            }
+            Ok(_) => {}
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+        }
     }
     if body.instruction.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "instruction is required"}))).into_response();
@@ -1140,6 +1254,87 @@ mod tests {
         let response = app.oneshot(Request::builder().uri("/api/runs/unowned-run").body(Body::empty()).unwrap()).await.unwrap();
         let body = body_json(response).await;
         assert!(body["state"]["owner_email"].is_null(), "no gate header present -- must not guess an owner");
+    }
+
+    fn gate_request(method: &str, uri: &str, email: &str, body: Option<serde_json::Value>) -> Request<Body> {
+        let mut builder = Request::builder().method(method).uri(uri).header("x-gate-email", email);
+        let body = match body {
+            Some(v) => {
+                builder = builder.header("content-type", "application/json");
+                Body::from(v.to_string())
+            }
+            None => Body::empty(),
+        };
+        builder.body(body).expect("build request")
+    }
+
+    #[tokio::test]
+    async fn a_different_signed_in_account_cannot_view_someone_elses_run() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "owner@example.com", Some(serde_json::json!({"run_id": "owned-view-run"}))))
+            .await
+            .unwrap();
+
+        // A different real, signed-in identity is turned away with a real 403.
+        let response = app.clone().oneshot(gate_request("GET", "/api/runs/owned-view-run", "someone-else@example.com", None)).await.unwrap();
+        assert_eq!(response.status(), SC::FORBIDDEN);
+
+        // The real owner still gets through.
+        let response = app.oneshot(gate_request("GET", "/api/runs/owned-view-run", "owner@example.com", None)).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+    }
+
+    #[tokio::test]
+    async fn a_headless_caller_with_no_gate_header_is_never_restricted_by_ownership() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "owner@example.com", Some(serde_json::json!({"run_id": "headless-access-run"}))))
+            .await
+            .unwrap();
+
+        // No x-gate-email at all -- devsystem_iterate/devsystem_checkin's own real
+        // calling shape, and CADS-Tunnel#388's headless offer-submission callers --
+        // must reach an owned run exactly as before this restriction existed.
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/headless-access-run").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+    }
+
+    #[tokio::test]
+    async fn any_signed_in_account_can_still_reach_an_unowned_run() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        // Created with no gate header -- a legacy/pre-existing run, owner_email stays None.
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "legacy-run"}))).await.unwrap();
+
+        let response = app.oneshot(gate_request("GET", "/api/runs/legacy-run", "anyone@example.com", None)).await.unwrap();
+        assert_eq!(response.status(), SC::OK, "an unowned run must stay open to any signed-in user, not lock everyone out");
+    }
+
+    #[tokio::test]
+    async fn a_different_account_cannot_mutate_someone_elses_run() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "owner@example.com", Some(serde_json::json!({"run_id": "owned-mutate-run"}))))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(gate_request(
+                "POST",
+                "/api/runs/owned-mutate-run/roles/plan/fill-mode",
+                "someone-else@example.com",
+                Some(serde_json::json!({"mode": "dedicated", "label": "X"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::FORBIDDEN);
     }
 
     #[tokio::test]
