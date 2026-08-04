@@ -13,6 +13,7 @@ use axum::routing::{get, post};
 use axum::Router;
 use devsystem_pipeline::checkin::render_plan_markdown;
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration};
+use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, RunOutcome};
 use devsystem_pipeline::{AbortCriteria, IterationRecord, StageProposal};
 use serde::{Deserialize, Serialize};
@@ -64,6 +65,7 @@ struct RunSummary {
     iterations: usize,
     roles: usize,
     added_stages: Vec<String>,
+    stalled_stages: Vec<String>,
 }
 
 async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
@@ -77,11 +79,13 @@ async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
             continue;
         }
         if let Ok((spec, run_state)) = load_or_init_run(&run_dir(&state, &id), &id) {
+            let stalled = stalled_stages(&run_state);
             runs.push(RunSummary {
                 run_id: id,
                 iterations: run_state.history.len(),
                 roles: spec.roles.len(),
                 added_stages: run_state.added_stages,
+                stalled_stages: stalled,
             });
         }
     }
@@ -117,7 +121,10 @@ async fn get_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> i
         return (StatusCode::NOT_FOUND, "no such run").into_response();
     }
     match load_or_init_run(&run_dir(&state, &id), &id) {
-        Ok((spec, run_state)) => Json(serde_json::json!({"spec": spec, "state": run_state})).into_response(),
+        Ok((spec, run_state)) => {
+            let stalled = stalled_stages(&run_state);
+            Json(serde_json::json!({"spec": spec, "state": run_state, "stalled_stages": stalled})).into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
     }
 }

@@ -25,6 +25,11 @@
  .run-item:hover{border-color:var(--accent)}
  .run-item.active{border-color:var(--accent2);background:rgba(95,184,171,.08)}
  .run-item .meta{color:var(--muted);font-size:.75rem;margin-top:.2rem}
+ .stalled-badge{float:right;font-size:.68rem;color:var(--accent);border:1px solid var(--accent);
+                border-radius:5px;padding:.05rem .35rem;font-weight:700}
+ .stalled-panel{margin-bottom:1rem;padding:.6rem .8rem;border:1px solid var(--accent);
+                 background:rgba(217,138,79,.08);border-radius:8px;font-size:.85rem}
+ .stalled-panel .title{font-family:var(--mono);font-size:.75rem;color:var(--accent);font-weight:700;margin-bottom:.3rem}
  form.inline{display:flex;gap:.4rem}
  input,textarea,select{background:#0d1117;border:1px solid var(--border);border-radius:6px;color:var(--text);
         padding:.45rem .6rem;font-family:var(--mono);font-size:.85rem;width:100%}
@@ -113,7 +118,9 @@ async function loadRuns() {
     for (const r of runs) {
       const btn = document.createElement('button');
       btn.className = 'run-item' + (r.run_id === currentRun ? ' active' : '');
-      btn.innerHTML = `${r.run_id}<div class="meta">${r.iterations} iteration(s) · ${r.roles} role(s)</div>`;
+      const stalledBadge = (r.stalled_stages && r.stalled_stages.length)
+        ? `<span class="stalled-badge">${r.stalled_stages.length} stalled</span>` : '';
+      btn.innerHTML = `${r.run_id}${stalledBadge}<div class="meta">${r.iterations} iteration(s) · ${r.roles} role(s)</div>`;
       btn.onclick = () => selectRun(r.run_id);
       el.appendChild(btn);
     }
@@ -154,9 +161,19 @@ function renderRunDetail(id, data) {
       ${renderProposals(h.proposals)}
     </div>`).join('') || '<span class="lede">No iterations yet.</span>';
 
+  const stalled = data.stalled_stages || [];
+  const stalledPanel = stalled.length ? `
+    <div class="stalled-panel">
+      <div class="title">⚠ ${stalled.length} stalled stage(s)</div>
+      Proposed and live in the spec, but no iteration has ever run <em>as</em> these stages --
+      likely blocked on a pending decision:
+      <div style="margin-top:.3rem">${stalled.map(s => `<span class="role">${escapeHtml(s)}</span>`).join(' ')}</div>
+    </div>` : '';
+
   detail.innerHTML = `
     <h2>${id}</h2>
     <div class="roles">${roles}</div>
+    ${stalledPanel}
 
     <label>New iteration -- stage (pick from this run's live roles, or type a new one)</label>
     <input id="it-stage" list="it-stage-list" value="devsystem.implement">
