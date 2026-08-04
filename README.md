@@ -31,7 +31,9 @@ design. Landed so far:
 - ✅ **This coordination repo**, with a real `PipelineSpec` for all seven
   stages (`pipeline/`) and a hermetically-tested proof that `convene()`
   clears a real auction for a devsystem-declared role — see
-  [`pipeline/src/lib.rs`](pipeline/src/lib.rs).
+  [`pipeline/src/lib.rs`](pipeline/src/lib.rs). 28 tests, continuously verified
+  on every push via [`.github/workflows/pipeline-ci.yml`](.github/workflows/pipeline-ci.yml)
+  (had none until this cycle — manual `cargo test` in Docker only, before).
 - ✅ **The `plan` stage's human-review gate**: ECC ([affaan-m/ECC](https://github.com/affaan-m/ECC),
   MIT, `npm i -g ecc-universal`) is a real, public, harness-agnostic package —
   its `ecc-plan-canvas` CLI is installed and used for real, not just verified
