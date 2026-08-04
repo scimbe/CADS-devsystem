@@ -56,6 +56,14 @@
       "units": 1,
       "tag": "android_native_build_ci",
       "selection_policy": null
+    },
+    {
+      "service": {
+        "Custom": "devsystem.assistant"
+      },
+      "units": 1,
+      "tag": "assistant",
+      "selection_policy": null
     }
   ],
   "operator_pubkey_hex": null,
