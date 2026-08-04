@@ -84,6 +84,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/backlog/{index}/toggle", post(toggle_backlog_item))
         .route("/api/runs/{id}/milestones", post(add_milestone))
         .route("/api/runs/{id}/milestones/{index}/toggle", post(toggle_milestone_handler))
+        .route("/api/runs/{id}/repo", post(set_repo_url))
         .route("/api/runs/{id}/offers/submit", post(submit_offer))
         .route("/api/runs/{id}/auction", get(view_auction))
         .with_state(state)
@@ -570,6 +571,41 @@ async fn toggle_milestone_handler(State(state): State<AppState>, AxPath((id, ind
     }
 }
 
+#[derive(Deserialize)]
+struct SetRepoUrlRequest {
+    repo_url: String,
+}
+
+/// Operator feedback: "ich möchte Zugang zu aktuellem Code." This is the one
+/// place a human tells the pipeline which real repository a run is actually
+/// building -- devsystem-web itself never infers or hardcodes one (#382's own
+/// project-agnostic promise). An empty `repo_url` clears it. Only a basic
+/// `https://` sanity check here; the GUI does the real work of talking to
+/// GitHub's API, client-side, against whatever URL a human actually confirms.
+async fn set_repo_url(State(state): State<AppState>, AxPath(id): AxPath<String>, Json(body): Json<SetRepoUrlRequest>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let trimmed = body.repo_url.trim().to_string();
+    if !trimmed.is_empty() && !trimmed.starts_with("https://") {
+        return (StatusCode::BAD_REQUEST, "repo_url must start with https:// (or be empty to clear it)").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    run_state.repo_url = if trimmed.is_empty() { None } else { Some(trimmed) };
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"repo_url": run_state.repo_url})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
 /// Real offer intake -- the counterpart to CADS-Tunnel core deliberately having no
 /// live bid-collection endpoint (verified directly against the checkout, not
 /// assumed). Any process, on any host, that holds a real ed25519 key can sign a
@@ -907,6 +943,53 @@ mod tests {
         let body = body_json(response).await;
         let risks = body["risks"].as_array().expect("risks is an array");
         assert!(risks.iter().any(|r| r["label"] == "touches auth/security"), "expected a real preflight finding, got {risks:?}");
+    }
+
+    #[tokio::test]
+    async fn repo_url_can_be_set_then_cleared_and_persists() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "repo-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/repo-run/repo", serde_json::json!({"repo_url": "https://github.com/scimbe/CADS-webconference-android"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let response = app.clone().oneshot(Request::builder().uri("/api/runs/repo-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["state"]["repo_url"], "https://github.com/scimbe/CADS-webconference-android");
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/repo-run/repo", serde_json::json!({"repo_url": ""})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let response = app.oneshot(Request::builder().uri("/api/runs/repo-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert!(body["state"]["repo_url"].is_null(), "an empty repo_url must clear it");
+    }
+
+    #[tokio::test]
+    async fn set_repo_url_rejects_a_non_https_value() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "repo-bad-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/repo-bad-run/repo", serde_json::json!({"repo_url": "javascript:alert(1)"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
     }
 
     #[tokio::test]

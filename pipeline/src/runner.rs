@@ -70,6 +70,15 @@ pub struct RunState {
     /// `#[serde(default)]` so pre-existing `state.json` files still load.
     #[serde(default)]
     pub milestones: Vec<Milestone>,
+    /// The real target repository this run is actually building, if the human has
+    /// told the pipeline -- operator feedback: "ich möchte Zugang zu aktuellem
+    /// Code." Nothing else in this crate infers or hardcodes a repo per run (the
+    /// whole point of #382: the pipeline mechanism stays project-agnostic); this
+    /// is the one place a human states it, and only the GUI (client-side, against
+    /// the real GitHub API) uses it, never devsystem-web itself guessing at
+    /// URLs. `#[serde(default)]` so pre-existing `state.json` files still load.
+    #[serde(default)]
+    pub repo_url: Option<String>,
 }
 
 impl RunState {
@@ -83,6 +92,7 @@ impl RunState {
             paused: false,
             backlog: Vec::new(),
             milestones: Vec::new(),
+            repo_url: None,
         }
     }
 }
