@@ -16,6 +16,12 @@
  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
  .topbar h1{font-size:1.05rem;margin:0;white-space:nowrap}
  .lede{color:var(--muted);max-width:60ch}
+ .prompt-wrap{display:flex;align-items:center;gap:.5rem;min-width:16rem}
+ .process-prompt{font-family:var(--mono);font-size:.8rem;background:#0d1117;border:1px solid var(--border);
+                  border-radius:6px;padding:.4rem .6rem;color:var(--text);width:16rem}
+ .process-prompt:focus{outline:none;border-color:var(--accent2)}
+ .prompt-status{font-family:var(--mono);font-size:.72rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:14rem}
+ .prompt-status.err{color:var(--danger)}
  .panel-toggles{display:flex;flex-wrap:wrap;gap:.35rem;flex:1}
  .panel-chip{font-family:var(--mono);font-size:.7rem;background:transparent;border:1px solid var(--border);
              color:var(--muted);border-radius:5px;padding:.2rem .55rem;cursor:pointer;font-weight:400}
@@ -135,6 +141,10 @@
  <div>
   <div class="eyebrow">CADS-Tunnel #382 · live control panel</div>
   <h1>The Development System</h1>
+ </div>
+ <div class="prompt-wrap">
+  <input id="process-prompt-input" class="process-prompt" placeholder="Command… (try: help)" autocomplete="off" spellcheck="false">
+  <span id="process-prompt-status" class="prompt-status"></span>
  </div>
  <div id="panel-toggles" class="panel-toggles"></div>
  <div class="topbar-links">
@@ -967,7 +977,158 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// -------------------- Process Prompt: persistent panel control + shortcuts --------------------
+// Operator feedback: "die 'Prozess Prompt' mit dem ich das gesamt steuern,
+// parametrieren, kontrollieren kann, wo ich Fenster anordne, Fenster einblende
+// und ausblende und auch für bestimmte Aktionen im Browser Shortcuts anlegen
+// kann." Lives in the topbar itself (not a panel), so it's always present and
+// can't be hidden/closed like everything else.
+
+const SHORTCUTS_KEY = 'devsystem-shortcuts-v1';
+let shortcuts = {};
+try { shortcuts = JSON.parse(localStorage.getItem(SHORTCUTS_KEY) || '{}'); } catch (e) { shortcuts = {}; }
+
+function saveShortcuts() {
+  try { localStorage.setItem(SHORTCUTS_KEY, JSON.stringify(shortcuts)); } catch (e) { /* storage unavailable */ }
+}
+
+function resolvePanelName(name) {
+  const q = (name || '').trim().toLowerCase();
+  if (!q) return { error: 'panel name required' };
+  if (PANEL_DEFAULTS[q]) return { id: q };
+  const ids = Object.keys(PANEL_DEFAULTS);
+  const matches = ids.filter(id => id.toLowerCase().includes(q) || PANEL_DEFAULTS[id].title.toLowerCase().includes(q));
+  if (matches.length === 1) return { id: matches[0] };
+  if (matches.length === 0) return { error: `no panel matches "${name}"` };
+  return { error: `ambiguous "${name}" -- matches: ${matches.map(id => PANEL_DEFAULTS[id].title).join(', ')}` };
+}
+
+function normalizeCombo(combo) {
+  return combo.toLowerCase().split('+').map(s => s.trim()).filter(Boolean).sort().join('+');
+}
+
+/// Parses and runs one command line. Returns {ok, message} -- never throws, so
+/// the prompt/shortcut caller can always show real feedback instead of a silent
+/// failure.
+function runCommand(cmdline) {
+  const trimmed = (cmdline || '').trim();
+  if (!trimmed) return { ok: true, message: '' };
+  const parts = trimmed.split(/\s+/);
+  const cmd = parts[0].toLowerCase();
+  const rest = parts.slice(1).join(' ');
+
+  const panelCmds = ['show', 'hide', 'toggle', 'max', 'maximize', 'min', 'minimize', 'restore'];
+  if (panelCmds.includes(cmd)) {
+    const r = resolvePanelName(rest);
+    if (r.error) return { ok: false, message: r.error };
+    const id = r.id;
+    const title = PANEL_DEFAULTS[id].title;
+    if (cmd === 'show') { showPanel(id); return { ok: true, message: `shown: ${title}` }; }
+    if (cmd === 'hide') { hidePanel(id); return { ok: true, message: `hidden: ${title}` }; }
+    if (cmd === 'toggle') {
+      const vis = panelRect(id).visible;
+      vis ? hidePanel(id) : showPanel(id);
+      return { ok: true, message: `${vis ? 'hidden' : 'shown'}: ${title}` };
+    }
+    if (cmd === 'max' || cmd === 'maximize') {
+      if (!panelRect(id).visible) showPanel(id);
+      if (!panelRect(id).maximized) toggleMaximize(id);
+      return { ok: true, message: `maximized: ${title}` };
+    }
+    if (cmd === 'min' || cmd === 'minimize') {
+      if (!panelRect(id).visible) showPanel(id);
+      if (!panelRect(id).minimized) toggleMinimize(id);
+      return { ok: true, message: `minimized: ${title}` };
+    }
+    if (cmd === 'restore') {
+      const r2 = panelRect(id);
+      if (r2.maximized) toggleMaximize(id);
+      if (r2.minimized) toggleMinimize(id);
+      return { ok: true, message: `restored: ${title}` };
+    }
+  }
+
+  if (cmd === 'reset') {
+    layout = {};
+    saveLayout();
+    location.reload();
+    return { ok: true, message: 'layout reset' };
+  }
+
+  if (cmd === 'bind') {
+    const m = rest.match(/^(\S+)\s+(.+)$/);
+    if (!m) return { ok: false, message: 'usage: bind <key-combo> <command>' };
+    const combo = normalizeCombo(m[1]);
+    shortcuts[combo] = m[2];
+    saveShortcuts();
+    return { ok: true, message: `bound ${combo} -> ${m[2]}` };
+  }
+
+  if (cmd === 'unbind') {
+    const combo = normalizeCombo(rest);
+    if (!shortcuts[combo]) return { ok: false, message: `no binding for ${combo}` };
+    delete shortcuts[combo];
+    saveShortcuts();
+    return { ok: true, message: `unbound ${combo}` };
+  }
+
+  if (cmd === 'shortcuts') {
+    const entries = Object.entries(shortcuts);
+    return { ok: true, message: entries.length ? entries.map(([k, v]) => `${k} -> ${v}`).join(', ') : 'no shortcuts bound' };
+  }
+
+  if (cmd === 'help') {
+    return { ok: true, message: 'show/hide/toggle/max/min/restore <panel> · reset · bind <combo> <cmd> · unbind <combo> · shortcuts' };
+  }
+
+  return { ok: false, message: `unknown command: ${cmd} (try: help)` };
+}
+
+function showPromptStatus(result) {
+  const status = document.getElementById('process-prompt-status');
+  if (!status) return;
+  status.textContent = result.message;
+  status.className = 'prompt-status' + (result.ok ? '' : ' err');
+}
+
+function comboFromEvent(e) {
+  const parts = [];
+  if (e.ctrlKey) parts.push('ctrl');
+  if (e.altKey) parts.push('alt');
+  if (e.shiftKey) parts.push('shift');
+  if (e.metaKey) parts.push('meta');
+  const key = e.key.toLowerCase();
+  if (!['control', 'alt', 'shift', 'meta'].includes(key)) parts.push(key === ' ' ? 'space' : key);
+  return parts.sort().join('+');
+}
+
+function initProcessPrompt() {
+  const input = document.getElementById('process-prompt-input');
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const result = runCommand(input.value);
+    showPromptStatus(result);
+    input.value = '';
+  });
+
+  // Global shortcuts fire only when nothing else is capturing keystrokes (no
+  // input/textarea/contenteditable focused, including this prompt itself) --
+  // never hijacks normal typing anywhere in the app.
+  document.addEventListener('keydown', (e) => {
+    const active = document.activeElement;
+    const typing = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
+    if (typing) return;
+    const combo = comboFromEvent(e);
+    const command = shortcuts[combo];
+    if (command) {
+      e.preventDefault();
+      showPromptStatus(runCommand(command));
+    }
+  });
+}
+
 initPanels();
+initProcessPrompt();
 loadRuns();
 for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'checkin', 'memory', 'auction']) {
   placeholderIfNoRun(id);
