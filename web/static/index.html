@@ -56,6 +56,8 @@
  .assistant-entry.pending{background:var(--panel2,#161b22);border:1px solid var(--border);opacity:.75}
  .assistant-role{display:block;font-family:var(--mono);font-size:.65rem;text-transform:uppercase;
                   letter-spacing:.05em;color:var(--muted);margin-bottom:.25rem}
+ .assistant-usage{font-family:var(--mono);font-size:.65rem;color:var(--muted);margin-top:.35rem;
+                   padding-top:.3rem;border-top:1px solid var(--border)}
  .assistant-text{white-space:pre-wrap;overflow-wrap:anywhere}
  /* Rendered-markdown variant (real LLM replies only) -- no pre-wrap here,
     the generated block elements (p/h4-6/ul/ol/pre) already carry their own
@@ -1691,7 +1693,12 @@ function resetAssistantTranscript(runId) {
   }
 }
 
-function appendAssistantEntry(role, text) {
+// usage is the real per-call token/cost accounting devsystem_assistant now
+// returns alongside the reply (operator: "am besten auch verbrauchte Token
+// bei der Anfrage und bei der Antwort") -- shown as a small real caption,
+// only when actually present (never fabricated for roles/replies that don't
+// carry it, e.g. "you"/"error"/pending).
+function appendAssistantEntry(role, text, usage) {
   const transcript = document.getElementById('assistant-transcript');
   if (!transcript) return null;
   const entry = document.createElement('div');
@@ -1702,7 +1709,13 @@ function appendAssistantEntry(role, text) {
   const bodyHtml = role === 'assistant'
     ? `<div class="assistant-text md">${renderMarkdown(text)}</div>`
     : `<div class="assistant-text">${escapeHtml(text)}</div>`;
-  entry.innerHTML = `<span class="assistant-role">${escapeHtml(role)}</span>${bodyHtml}`;
+  const usageHtml = usage
+    ? `<div class="assistant-usage">${usage.input_tokens ?? 0} in (+${usage.cache_read_input_tokens ?? 0} cached)`
+      + ` · ${usage.output_tokens ?? 0} out`
+      + (typeof usage.total_cost_usd === 'number' ? ` · $${usage.total_cost_usd.toFixed(4)}` : '')
+      + `</div>`
+    : '';
+  entry.innerHTML = `<span class="assistant-role">${escapeHtml(role)}</span>${bodyHtml}${usageHtml}`;
   transcript.appendChild(entry);
   transcript.scrollTop = transcript.scrollHeight;
   return entry;
@@ -1728,7 +1741,7 @@ async function askAssistant(instruction) {
       body: JSON.stringify({ instruction })
     });
     if (pending) pending.remove();
-    appendAssistantEntry('assistant', data.response || '(empty response)');
+    appendAssistantEntry('assistant', data.response || '(empty response)', data.usage);
     showPromptStatus({ ok: true, message: 'devsystem.assistant replied' });
   } catch (e) {
     if (pending) pending.remove();

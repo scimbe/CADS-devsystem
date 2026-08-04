@@ -96,13 +96,51 @@ fn build_system_prompt(context: &str) -> String {
     )
 }
 
-fn ask_llm(instruction: &str, system_prompt: &str) -> Result<String, String> {
+/// A real reply plus real token/cost accounting (operator: "am besten auch
+/// verbrauchte Token bei der Anfrage und bei der Antwort") -- both come from
+/// the exact same `--output-format json` call, not a second/estimated pass.
+#[derive(Debug)]
+struct LlmReply {
+    text: String,
+    usage: serde_json::Value,
+}
+
+/// Parses `claude --output-format json`'s real stdout shape (verified
+/// directly against this host: `{"result": "...", "is_error": bool,
+/// "usage": {"input_tokens", "output_tokens", "cache_creation_input_tokens",
+/// "cache_read_input_tokens", ...}, "total_cost_usd": f64, ...}`). Pulled out
+/// of `ask_llm` so the parsing itself -- the part that can actually be
+/// wrong -- is unit-testable without spawning a real subprocess.
+fn parse_llm_json_output(stdout: &str) -> Result<LlmReply, String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).map_err(|e| format!("could not parse LLM CLI's JSON output: {e} (raw: {stdout})"))?;
+    if parsed.get("is_error").and_then(|v| v.as_bool()) == Some(true) {
+        let msg = parsed.get("result").and_then(|v| v.as_str()).unwrap_or("LLM CLI reported an error with no message");
+        return Err(format!("LLM CLI reported an error: {msg}"));
+    }
+    let text = parsed
+        .get("result")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("LLM CLI's JSON output has no string \"result\" field (raw: {stdout})"))?
+        .to_string();
+    let tok = |field: &str| parsed.pointer(&format!("/usage/{field}")).and_then(|v| v.as_u64()).unwrap_or(0);
+    let usage = serde_json::json!({
+        "input_tokens": tok("input_tokens"),
+        "output_tokens": tok("output_tokens"),
+        "cache_creation_input_tokens": tok("cache_creation_input_tokens"),
+        "cache_read_input_tokens": tok("cache_read_input_tokens"),
+        "total_cost_usd": parsed.get("total_cost_usd").and_then(|v| v.as_f64()),
+    });
+    Ok(LlmReply { text, usage })
+}
+
+fn ask_llm(instruction: &str, system_prompt: &str) -> Result<LlmReply, String> {
     let llm = env::var("CT_LLM_CMD").unwrap_or_else(|_| "claude".to_string());
     let output = Command::new(&llm)
         .arg("-p")
         .arg(instruction)
         .arg("--output-format")
-        .arg("text")
+        .arg("json")
         .arg("--disallowedTools")
         .arg("Edit,Write,Bash,WebFetch,WebSearch,Agent")
         .arg("--append-system-prompt")
@@ -111,13 +149,13 @@ fn ask_llm(instruction: &str, system_prompt: &str) -> Result<String, String> {
         .output();
 
     match output {
-        Ok(out) if out.status.success() => Ok(String::from_utf8_lossy(&out.stdout).to_string()),
+        Ok(out) if out.status.success() => parse_llm_json_output(&String::from_utf8_lossy(&out.stdout)),
         Ok(out) => Err(format!("{llm} exited with {}: {}", out.status, String::from_utf8_lossy(&out.stderr))),
         Err(e) => Err(format!("could not run {llm}: {e} (set CT_LLM_CMD to point at a non-interactive LLM CLI)")),
     }
 }
 
-fn ask(api_base: &str, run_id: &str, instruction: &str) -> Result<String, String> {
+fn ask(api_base: &str, run_id: &str, instruction: &str) -> Result<LlmReply, String> {
     let context = fetch_context(api_base, run_id)?;
     ask_llm(instruction, &build_system_prompt(&context))
 }
@@ -150,8 +188,8 @@ fn main() -> ExitCode {
     }
 
     match ask(&api_base, &run_id, &instruction) {
-        Ok(response) => {
-            print!("{response}");
+        Ok(reply) => {
+            print!("{}", reply.text);
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -167,7 +205,7 @@ fn json_response(status: u16, body: &str) -> tiny_http::Response<std::io::Cursor
 }
 
 /// HTTP bridge for the GUI: `POST /ask {"run_id": "...", "instruction": "..."}` ->
-/// `{"response": "..."}`. Meant to sit behind the same reverse-proxy gate as
+/// `{"response": "...", "usage": {...}}`. Meant to sit behind the same reverse-proxy gate as
 /// devsystem-web itself (same-origin from the browser's perspective -- no CORS
 /// needed), on whatever host actually has a real LLM CLI available. Per-run rate
 /// limit (10s) is a deliberate safety backstop against a double-click or a stuck
@@ -224,8 +262,8 @@ fn serve(listen_addr: &str, api_base: &str) -> ExitCode {
         }
 
         match ask(api_base, &run_id, &instruction) {
-            Ok(response) => {
-                let _ = request.respond(json_response(200, &serde_json::json!({"response": response}).to_string()));
+            Ok(reply) => {
+                let _ = request.respond(json_response(200, &serde_json::json!({"response": reply.text, "usage": reply.usage}).to_string()));
             }
             Err(e) => {
                 let _ = request.respond(json_response(502, &serde_json::json!({"error": e}).to_string()));
@@ -238,6 +276,53 @@ fn serve(listen_addr: &str, api_base: &str) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Real captured shape from `claude -p "say hi in exactly one word"
+    // --output-format json ...`, run directly against this host -- not a
+    // hand-invented fixture (trimmed of fields this parser doesn't read).
+    const REAL_CLAUDE_JSON_OUTPUT: &str = r#"{"is_error":false,"duration_api_ms":1749,"num_turns":1,"stop_reason":"end_turn","session_id":"2d85529b","total_cost_usd":0.16173249999999997,"usage":{"input_tokens":2,"cache_creation_input_tokens":15451,"cache_read_input_tokens":14175,"output_tokens":5,"service_tier":"standard"},"result":"Hi","type":"result"}"#;
+
+    #[test]
+    fn parses_the_real_claude_cli_json_output_shape() {
+        let reply = parse_llm_json_output(REAL_CLAUDE_JSON_OUTPUT).expect("real captured output must parse");
+        assert_eq!(reply.text, "Hi");
+        assert_eq!(reply.usage["input_tokens"], 2);
+        assert_eq!(reply.usage["output_tokens"], 5);
+        assert_eq!(reply.usage["cache_creation_input_tokens"], 15451);
+        assert_eq!(reply.usage["cache_read_input_tokens"], 14175);
+        assert!((reply.usage["total_cost_usd"].as_f64().unwrap() - 0.16173249999999997).abs() < 1e-12);
+    }
+
+    #[test]
+    fn surfaces_a_real_is_error_result_as_an_error_not_a_fabricated_success() {
+        let output = r#"{"is_error":true,"result":"the model refused","usage":{"input_tokens":1,"output_tokens":1}}"#;
+        let err = parse_llm_json_output(output).expect_err("is_error:true must surface as Err");
+        assert!(err.contains("the model refused"), "the real error text must be preserved: {err}");
+    }
+
+    #[test]
+    fn missing_usage_fields_default_to_zero_not_a_parse_failure() {
+        // A future CLI version or a different provider might omit some usage
+        // sub-fields -- this must degrade to 0, not fail the whole response.
+        let output = r#"{"is_error":false,"result":"ok","usage":{"input_tokens":3}}"#;
+        let reply = parse_llm_json_output(output).expect("partial usage must still parse");
+        assert_eq!(reply.usage["input_tokens"], 3);
+        assert_eq!(reply.usage["output_tokens"], 0);
+        assert_eq!(reply.usage["cache_creation_input_tokens"], 0);
+    }
+
+    #[test]
+    fn malformed_json_output_is_a_real_error_not_a_panic() {
+        let err = parse_llm_json_output("not json").expect_err("garbage stdout must error, not panic");
+        assert!(err.contains("could not parse"));
+    }
+
+    #[test]
+    fn missing_result_field_is_a_real_error() {
+        let output = r#"{"is_error":false,"usage":{}}"#;
+        let err = parse_llm_json_output(output).expect_err("no result field must error");
+        assert!(err.contains("no string"));
+    }
 
     #[test]
     fn system_prompt_embeds_the_real_context_and_states_advice_only_scope() {
