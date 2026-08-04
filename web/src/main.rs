@@ -17,7 +17,9 @@ use devsystem_pipeline::checkin::render_plan_markdown;
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration, govern_memory_entry, read_memory_log};
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::preflight_annotations;
-use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, toggle_milestone, BacklogItem, CustomPanel, Milestone, RoleFillMode, RunOutcome};
+use devsystem_pipeline::runner::{
+    load_or_init_run, persist_run, run_iteration, toggle_milestone, BacklogItem, CustomPanel, Milestone, PendingPanelProposal, RoleFillMode, RunOutcome,
+};
 use devsystem_pipeline::{AbortCriteria, IterationRecord, StageProposal};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
 use ct_common::pipeline::SelectionState;
@@ -102,6 +104,9 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/rag/documents/{doc_id}/remove", post(remove_rag_document))
         .route("/api/runs/{id}/panels", post(add_custom_panel))
         .route("/api/runs/{id}/panels/{panel_id}/remove", post(remove_custom_panel))
+        .route("/api/runs/{id}/panels/propose", post(propose_custom_panel))
+        .route("/api/runs/{id}/panels/proposals/{proposal_id}/approve", post(approve_panel_proposal))
+        .route("/api/runs/{id}/panels/proposals/{proposal_id}/reject", post(reject_panel_proposal))
         .route("/api/runs/{id}/offers/submit", post(submit_offer))
         .route("/api/runs/{id}/offers/quick-submit", post(quick_submit_offer))
         .route("/api/runs/{id}/auction", get(view_auction))
@@ -1204,6 +1209,128 @@ async fn remove_custom_panel(
     }
 }
 
+#[derive(Deserialize)]
+struct ProposePanelRequest {
+    title: String,
+    html: String,
+}
+
+/// `POST /api/runs/{id}/panels/propose` -- the assistant-facing half of the
+/// operator's original trust-model decision for custom panels: "proposes, human
+/// clicks install," never assistant-installs-directly. Shape mirrors
+/// `add_custom_panel` exactly (same title/html/size validation), but writes to
+/// `pending_panel_proposals`, not the live `custom_panels` a run's GUI actually
+/// renders -- a proposal has zero effect on what anyone sees until a human
+/// approves it below. Same headless-caller-unrestricted `owner_authorized` as
+/// every other assistant-driven write (#35) -- the assistant bridge has no gate
+/// header and was never meant to.
+async fn propose_custom_panel(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ProposePanelRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let title = body.title.trim().to_string();
+    if title.is_empty() {
+        return (StatusCode::BAD_REQUEST, "title must not be empty").into_response();
+    }
+    if body.html.len() > MAX_CUSTOM_PANEL_HTML_BYTES {
+        return (StatusCode::BAD_REQUEST, format!("html must be under {MAX_CUSTOM_PANEL_HTML_BYTES} bytes")).into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let proposal = PendingPanelProposal { id: format!("{:016x}", rand::random::<u64>()), title, html: body.html, proposed_at: unix_now() };
+    run_state.pending_panel_proposals.push(proposal.clone());
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(proposal).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/panels/proposals/{proposal_id}/approve` -- the actual
+/// human-install step: moves a pending proposal into the real `custom_panels`
+/// list (`source: Some("assistant")`, honestly distinguishing it from a
+/// hand-written one), removing it from the pending list. Owner-restricted like
+/// every other real mutation.
+async fn approve_panel_proposal(
+    State(state): State<AppState>,
+    AxPath((id, proposal_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let Some(pos) = run_state.pending_panel_proposals.iter().position(|p| p.id == proposal_id) else {
+        return (StatusCode::NOT_FOUND, format!("no pending proposal with id {proposal_id:?}")).into_response();
+    };
+    let proposal = run_state.pending_panel_proposals.remove(pos);
+    let panel = CustomPanel { id: proposal.id, title: proposal.title, html: proposal.html, source: Some("assistant".to_string()), created_at: unix_now() };
+    run_state.custom_panels.push(panel.clone());
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(panel).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/panels/proposals/{proposal_id}/reject` -- discards a
+/// pending proposal outright; nothing was ever live, so there's nothing to undo
+/// beyond removing it from the pending list.
+async fn reject_panel_proposal(
+    State(state): State<AppState>,
+    AxPath((id, proposal_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let before = run_state.pending_panel_proposals.len();
+    run_state.pending_panel_proposals.retain(|p| p.id != proposal_id);
+    if run_state.pending_panel_proposals.len() == before {
+        return (StatusCode::NOT_FOUND, format!("no pending proposal with id {proposal_id:?}")).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"rejected": proposal_id})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
 /// Real offer intake -- the counterpart to CADS-Tunnel core deliberately having no
 /// live bid-collection endpoint (verified directly against the checkout, not
 /// assumed). Any process, on any host, that holds a real ed25519 key can sign a
@@ -2298,6 +2425,120 @@ mod tests {
 
         let response = app
             .oneshot(Request::builder().method("POST").uri("/api/runs/backlog-edge-run/backlog/9/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn proposed_panel_never_appears_in_custom_panels_until_a_human_approves_it() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "propose-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/propose-run/panels/propose",
+                serde_json::json!({"title": "Assistant idea", "html": "<h2>hi</h2>"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let proposed = body_json(response).await;
+        let proposal_id = proposed["id"].as_str().unwrap().to_string();
+
+        // The whole point: proposing must NOT make it live.
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/propose-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["custom_panels"].as_array().unwrap().len(), 0, "a proposal must never appear in custom_panels before approval");
+        assert_eq!(run["state"]["pending_panel_proposals"].as_array().unwrap().len(), 1);
+
+        // Approving moves it, for real, into custom_panels with an honest source.
+        let approve = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/propose-run/panels/proposals/{proposal_id}/approve")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(approve.status(), SC::OK);
+        let approved_panel = body_json(approve).await;
+        assert_eq!(approved_panel["source"], "assistant");
+        assert_eq!(approved_panel["title"], "Assistant idea");
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/propose-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["custom_panels"].as_array().unwrap().len(), 1, "approval must make it live");
+        assert_eq!(run["state"]["pending_panel_proposals"].as_array().unwrap().len(), 0, "approval must remove it from pending");
+    }
+
+    #[tokio::test]
+    async fn rejecting_a_panel_proposal_discards_it_without_ever_going_live() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "reject-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/reject-run/panels/propose", serde_json::json!({"title": "Bad idea", "html": "<p>no</p>"})))
+            .await
+            .unwrap();
+        let proposal_id = body_json(response).await["id"].as_str().unwrap().to_string();
+
+        let reject = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/reject-run/panels/proposals/{proposal_id}/reject")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(reject.status(), SC::OK);
+
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/reject-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["pending_panel_proposals"].as_array().unwrap().len(), 0);
+        assert_eq!(run["state"]["custom_panels"].as_array().unwrap().len(), 0, "a rejected proposal must never have gone live");
+
+        // Rejecting an id that no longer exists (already rejected) is a real 404, not silently OK.
+        let response = app
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/reject-run/panels/proposals/{proposal_id}/reject")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn propose_custom_panel_rejects_an_empty_title_and_oversized_html() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "propose-edge-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/propose-edge-run/panels/propose", serde_json::json!({"title": "  ", "html": "<p>x</p>"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/propose-edge-run/panels/propose",
+                serde_json::json!({"title": "ok", "html": "x".repeat(MAX_CUSTOM_PANEL_HTML_BYTES + 1)}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn approving_an_unknown_proposal_id_is_a_real_404() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "approve-404-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/approve-404-run/panels/proposals/doesnotexist/approve").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), SC::NOT_FOUND);

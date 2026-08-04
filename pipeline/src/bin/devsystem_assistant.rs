@@ -114,24 +114,29 @@ fn build_system_prompt(context: &str) -> String {
          when you are actually taking action; omit it entirely otherwise -- never emit \
          an empty or placeholder block):\n\
          {ACTIONS_FENCE_OPEN}\n\
-         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}}]\n\
+         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}}]\n\
          {ACTIONS_FENCE_CLOSE}\n\
          Indices refer to the real state.milestones/state.backlog arrays already shown \
          to you below -- never guess an index you can't see there. Never invent or add \
          a milestone/backlog item the operator didn't actually ask for, and never mark \
          one achieved/done unless the operator told you it's done or clearly confirmed \
-         it. If a request is ambiguous, or you're not confident it's safe to act on, \
-         say so in prose and ask instead of emitting an action. You have NO other tool \
-         or system access in this version -- only these four action types against \
-         these two kinds of data; for anything else (e.g. a code change, a GitHub \
-         issue, a different panel's data) tell the operator what you'd want to do and \
-         let them decide.\n\n\
+         it. `propose_custom_panel` is different from the other three: it does NOT go \
+         live by itself -- it only queues a real proposal (title + a self-contained \
+         HTML fragment, no <script src> to anything external, it runs sandboxed with no \
+         page/session access) for the operator to review and explicitly approve or \
+         reject in the Custom Panels panel. Use it when the operator actually asks for a \
+         new panel/dashboard/visualization, not speculatively. If a request is \
+         ambiguous, or you're not confident it's safe to act on, say so in prose and ask \
+         instead of emitting an action. You have NO other tool or system access in this \
+         version -- only these five action types against these three kinds of data; for \
+         anything else (e.g. a code change, a GitHub issue, a different panel's data) \
+         tell the operator what you'd want to do and let them decide.\n\n\
          Current real run state (JSON):\n{context}"
     )
 }
 
 /// One real, narrow action the assistant can take on the operator's behalf --
-/// deliberately just these two kinds of run state (see module doc). Anything
+/// deliberately just these three kinds of run state (see module doc). Anything
 /// the LLM asks for outside this shape simply fails to deserialize and is
 /// reported as a parse error, never silently ignored.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -141,6 +146,10 @@ enum Action {
     ToggleMilestone { index: usize },
     AddBacklogItem { text: String },
     ToggleBacklogItem { index: usize },
+    /// Deliberately the ONE action that does not take effect immediately -- see
+    /// the system prompt's own explanation and `RunState::pending_panel_proposals`'s
+    /// doc comment (`pipeline/src/runner.rs`) for the trust-model reasoning.
+    ProposeCustomPanel { title: String, html: String },
 }
 
 /// Pulls a trailing ` ```devsystem-actions ... ``` ` block out of the LLM's raw
@@ -176,16 +185,33 @@ fn extract_actions(reply_text: &str) -> (String, Vec<Action>, Option<String>) {
 /// success or failure, so the operator never has to guess.
 fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str, action: &Action) -> String {
     let base = api_base.trim_end_matches('/');
-    let (method_desc, url, body): (String, String, serde_json::Value) = match action {
-        Action::AddMilestone { description } => {
-            (format!("add milestone \"{description}\""), format!("{base}/api/runs/{run_id}/milestones"), serde_json::json!({"description": description}))
+    let (method_desc, url, body, success_verb): (String, String, serde_json::Value, &str) = match action {
+        Action::AddMilestone { description } => (
+            format!("add milestone \"{description}\""),
+            format!("{base}/api/runs/{run_id}/milestones"),
+            serde_json::json!({"description": description}),
+            "done",
+        ),
+        Action::ToggleMilestone { index } => {
+            (format!("toggle milestone #{index}"), format!("{base}/api/runs/{run_id}/milestones/{index}/toggle"), serde_json::json!({}), "done")
         }
-        Action::ToggleMilestone { index } => (format!("toggle milestone #{index}"), format!("{base}/api/runs/{run_id}/milestones/{index}/toggle"), serde_json::json!({})),
-        Action::AddBacklogItem { text } => (format!("add backlog item \"{text}\""), format!("{base}/api/runs/{run_id}/backlog"), serde_json::json!({"text": text})),
-        Action::ToggleBacklogItem { index } => (format!("toggle backlog item #{index}"), format!("{base}/api/runs/{run_id}/backlog/{index}/toggle"), serde_json::json!({})),
+        Action::AddBacklogItem { text } => {
+            (format!("add backlog item \"{text}\""), format!("{base}/api/runs/{run_id}/backlog"), serde_json::json!({"text": text}), "done")
+        }
+        Action::ToggleBacklogItem { index } => {
+            (format!("toggle backlog item #{index}"), format!("{base}/api/runs/{run_id}/backlog/{index}/toggle"), serde_json::json!({}), "done")
+        }
+        // Deliberately "proposed" not "done" -- this never takes effect on its own,
+        // see the system prompt's own explanation of the approval gate.
+        Action::ProposeCustomPanel { title, html } => (
+            format!("propose custom panel \"{title}\" (awaiting your approval in the Custom Panels panel)"),
+            format!("{base}/api/runs/{run_id}/panels/propose"),
+            serde_json::json!({"title": title, "html": html}),
+            "proposed",
+        ),
     };
     match client.post(&url).json(&body).send() {
-        Ok(resp) if resp.status().is_success() => format!("done: {method_desc}"),
+        Ok(resp) if resp.status().is_success() => format!("{success_verb}: {method_desc}"),
         Ok(resp) => {
             let status = resp.status();
             let text = resp.text().unwrap_or_default();
@@ -457,8 +483,12 @@ mod tests {
         assert!(prompt.contains("never invent data"), "the no-fabrication instruction must be explicit");
         assert!(prompt.contains("Markdown pipe table"), "structured-data replies should be steered toward real tables the GUI can actually render");
         assert!(prompt.contains(ACTIONS_FENCE_OPEN), "the prompt must teach the LLM the exact action-block contract");
-        assert!(prompt.contains("add_milestone") && prompt.contains("toggle_backlog_item"), "all four real action types must be documented");
-        assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these two data kinds");
+        assert!(
+            prompt.contains("add_milestone") && prompt.contains("toggle_backlog_item") && prompt.contains("propose_custom_panel"),
+            "all five real action types must be documented"
+        );
+        assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these three data kinds");
+        assert!(prompt.contains("does NOT go live by itself"), "the panel-proposal approval gate must be explicit, not implied");
     }
 
     #[test]
@@ -480,8 +510,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_actions_parses_all_four_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0}]\n```";
+    fn extract_actions_parses_all_five_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -491,6 +521,7 @@ mod tests {
                 Action::ToggleMilestone { index: 2 },
                 Action::AddBacklogItem { text: "write tests".to_string() },
                 Action::ToggleBacklogItem { index: 0 },
+                Action::ProposeCustomPanel { title: "Burndown".to_string(), html: "<h2>hi</h2>".to_string() },
             ]
         );
     }
@@ -561,6 +592,21 @@ mod tests {
         let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
         assert_eq!(method, "POST");
         assert_eq!(url, "/api/runs/my-run/backlog/3/toggle");
+    }
+
+    #[test]
+    fn apply_action_posts_the_real_propose_custom_panel_request_and_reports_proposed_not_done() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let result = apply_action(&client, &addr, "my-run", &Action::ProposeCustomPanel { title: "Burndown".to_string(), html: "<h2>hi</h2>".to_string() });
+        assert!(result.starts_with("proposed:"), "a panel proposal must never be reported as \"done\" -- it isn't live yet: {result}");
+        assert!(result.contains("awaiting your approval"), "the response must say a human still has to act: {result}");
+        let (method, url, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/panels/propose");
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
+        assert_eq!(parsed["title"], "Burndown");
+        assert_eq!(parsed["html"], "<h2>hi</h2>");
     }
 
     #[test]

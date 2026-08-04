@@ -230,6 +230,10 @@
        cursor:pointer}
  button.stalled-fill:hover{background:rgba(217,138,79,.22)}
  .role-card{border:1px solid var(--border);border-radius:8px;padding:.6rem .7rem;margin-bottom:.5rem}
+ .panel-proposal-html{background:#0d1117;border:1px solid var(--border);border-radius:6px;padding:.5rem .6rem;
+                       margin-top:.4rem;font-size:.72rem;white-space:pre-wrap;overflow-wrap:anywhere;max-height:6rem;overflow-y:auto}
+ .panel-proposal-approve-btn{background:var(--accent2);color:#08211d;border:none;border-radius:6px;
+                              padding:.35rem .7rem;font-family:var(--mono);font-size:.75rem;cursor:pointer}
  .role-card-head{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:.3rem;margin-bottom:.35rem}
  .role-meta{font-family:var(--mono);font-size:.68rem;color:var(--muted)}
  .role-latest{font-size:.8rem;padding-left:.5rem;border-left:2px solid var(--border)}
@@ -393,7 +397,14 @@ const PANEL_DEFAULTS = {
   support:    { title: 'Support',            x: 728,  y: 592, w: 320, h: 220 },
   rag:        { title: 'Docs Search',        x: 16,   y: 772, w: 400, h: 320 },
   panels:     { title: 'Custom Panels',       x: 1780, y: 772, w: 380, h: 320 },
-  flow:       { title: 'Flow',               x: 420,  y: 772, w: 620, h: 480 },
+  // A dedicated row below rag/panels rather than squeezed between them --
+  // ensurePanelVisible's clamp-then-diagonal-cascade can't resolve a real
+  // three-way conflict when a narrower viewport compresses all three of a
+  // row's x positions together (reproduced live via Playwright: the Approve
+  // button on a pending panel proposal was genuinely unclickable, Custom
+  // Panels sat underneath Flow). Starting below rag/panels' own y+h means no
+  // vertical overlap with either exists before any cascade even runs.
+  flow:       { title: 'Flow',               x: 16,   y: 1108, w: 620, h: 400 },
 };
 
 const LAYOUT_KEY = 'devsystem-panel-layout-v1';
@@ -648,6 +659,24 @@ function renderCustomPanels(runId, data) {
 function renderCustomPanelsManager(id, data) {
   const body = document.getElementById('body-panels');
   const panels = (data.state && data.state.custom_panels) || [];
+  const proposals = (data.state && data.state.pending_panel_proposals) || [];
+  // Assistant-proposed panels never render anywhere until a human approves them
+  // here -- the operator's own trust-model decision for anything that ends up as
+  // sandboxed HTML in the GUI (unlike milestones/backlog, which the assistant can
+  // act on directly). Shown above the live-panels list since it needs a decision.
+  const proposalsHtml = proposals.length
+    ? `<div class="arch-note" style="margin-bottom:.4rem">Proposed by devsystem.assistant -- review before it renders anywhere:</div>`
+      + proposals.map(p => `
+        <div class="role-card">
+          <div class="role-card-head"><span class="role">${escapeHtml(p.title)}</span></div>
+          <div class="role-meta">proposed ${escapeHtml(new Date(p.proposed_at * 1000).toLocaleString())}</div>
+          <pre class="panel-proposal-html">${escapeHtml(truncate(p.html, 300))}</pre>
+          <div style="margin-top:.4rem;display:flex;gap:.4rem">
+            <button type="button" class="panel-proposal-approve-btn" data-id="${p.id}">Approve &amp; install</button>
+            <button type="button" class="secondary panel-proposal-reject-btn" data-id="${p.id}">Reject</button>
+          </div>
+        </div>`).join('')
+    : '';
   const list = panels.length
     ? panels.map(p => `
         <div class="role-card">
@@ -659,6 +688,7 @@ function renderCustomPanelsManager(id, data) {
         </div>`).join('')
     : `<span class="lede">No custom panels yet -- write one below.</span>`;
   body.innerHTML = `
+    ${proposalsHtml ? `<div style="margin-bottom:.6rem">${proposalsHtml}</div>` : ''}
     <div style="margin-bottom:.6rem">${list}</div>
     <form id="add-custom-panel-form">
       <label>title<input id="cp-title" type="text" placeholder="My Panel" required></label>
@@ -668,6 +698,31 @@ function renderCustomPanelsManager(id, data) {
     </form>`;
   for (const btn of body.querySelectorAll('.custom-panel-open-btn')) {
     btn.onclick = () => showPanel(btn.dataset.id);
+  }
+  for (const btn of body.querySelectorAll('.panel-proposal-approve-btn')) {
+    btn.onclick = async () => {
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/panels/proposals/${encodeURIComponent(btn.dataset.id)}/approve`, { method: 'POST' });
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        renderCustomPanelsManager(id, fresh);
+        renderCustomPanels(id, fresh);
+      } catch (err) {
+        alert(`Could not approve proposal: ${err.message}`);
+      }
+    };
+  }
+  for (const btn of body.querySelectorAll('.panel-proposal-reject-btn')) {
+    btn.onclick = async () => {
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/panels/proposals/${encodeURIComponent(btn.dataset.id)}/reject`, { method: 'POST' });
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        renderCustomPanelsManager(id, fresh);
+      } catch (err) {
+        alert(`Could not reject proposal: ${err.message}`);
+      }
+    };
   }
   document.getElementById('add-custom-panel-form').addEventListener('submit', async (e) => {
     e.preventDefault();

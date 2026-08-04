@@ -162,6 +162,28 @@ pub struct RunState {
     /// still load.
     #[serde(default)]
     pub custom_panels: Vec<CustomPanel>,
+    /// A custom panel the assistant has proposed but a human hasn't approved yet --
+    /// the operator's own trust-model decision, confirmed before `custom_panels`
+    /// slice 1 was even built: the assistant stays advice-only for anything that
+    /// renders into the GUI ("proposes, human clicks install"), unlike milestones/
+    /// backlog which it can act on directly. Approving moves it into
+    /// `custom_panels` for real; rejecting just drops it. `#[serde(default)]` so
+    /// pre-existing `state.json` files (none proposed yet) still load.
+    #[serde(default)]
+    pub pending_panel_proposals: Vec<PendingPanelProposal>,
+}
+
+/// See [`RunState::pending_panel_proposals`]'s doc comment for why this is a
+/// separate, non-live shape from [`CustomPanel`] rather than just adding an
+/// `approved: bool` flag to it -- a pending proposal never renders in the GUI at
+/// all until a human approves it, so it deliberately can't be confused with a
+/// live one at the type level.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingPanelProposal {
+    pub id: String,
+    pub title: String,
+    pub html: String,
+    pub proposed_at: u64,
 }
 
 impl RunState {
@@ -179,6 +201,7 @@ impl RunState {
             owner_email: None,
             role_fill_modes: std::collections::HashMap::new(),
             custom_panels: Vec::new(),
+            pending_panel_proposals: Vec::new(),
         }
     }
 }
