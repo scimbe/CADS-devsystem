@@ -29,3 +29,26 @@ jobs:
       - name: cargo test (pipeline crate)
         working-directory: pipeline
         run: cargo test --all-targets --verbose
+
+  web:
+    # web/ (the real GUI backend, #382) had no CI either -- same class of gap as
+    # pipeline/ had until the job above. It's a path-dependent consumer of
+    # pipeline/, not tested by the job above at all.
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: web
+
+      - name: cargo build (web crate)
+        working-directory: web
+        run: cargo build --all-targets --verbose
+
+      - name: docker build (the actual image deployed live behind devsystem-demo.bunsenbrenner.org)
+        run: docker build -f web/Dockerfile -t devsystem-web:ci .
