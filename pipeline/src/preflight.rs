@@ -11,7 +11,7 @@ use crate::{STAGE_IMPLEMENT, STAGE_TEST};
 /// One real risk finding: a short label plus the concrete evidence that triggered it
 /// -- always traceable back to specific text/history, never asserted without a
 /// reason a human can immediately verify.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct RiskAnnotation {
     pub label: String,
     pub evidence: String,

@@ -14,6 +14,7 @@ use axum::Router;
 use devsystem_pipeline::checkin::render_plan_markdown;
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration};
 use devsystem_pipeline::improve::stalled_stages;
+use devsystem_pipeline::preflight::preflight_annotations;
 use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, RunOutcome};
 use devsystem_pipeline::{AbortCriteria, IterationRecord, StageProposal};
 use serde::{Deserialize, Serialize};
@@ -131,11 +132,13 @@ async fn get_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> i
         Ok((spec, run_state)) => {
             let stalled = stalled_stages(&run_state);
             let health = run_health(&run_state);
+            let risks = preflight_annotations(&run_state);
             Json(serde_json::json!({
                 "spec": spec,
                 "state": run_state,
                 "stalled_stages": stalled,
                 "health": health,
+                "risks": risks,
             }))
             .into_response()
         }
@@ -351,6 +354,37 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn get_run_surfaces_real_preflight_risk_findings() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "risk-run"})))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/risk-run/iterate",
+                serde_json::json!({
+                    "stage": "devsystem.implement",
+                    "feedback": "wired the real session handshake and key material",
+                    "succeeded": true
+                }),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/risk-run").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        let risks = body["risks"].as_array().expect("risks is an array");
+        assert!(risks.iter().any(|r| r["label"] == "touches auth/security"), "expected a real preflight finding, got {risks:?}");
     }
 
     #[tokio::test]

@@ -42,6 +42,11 @@
  .criteria-fields{display:flex;gap:.6rem;margin-top:.5rem;flex-wrap:wrap}
  .criteria-fields label{flex:1;min-width:8rem;margin:0}
  .criteria-fields input{margin-top:.25rem}
+ .risk-panel{margin-bottom:1rem;padding:.6rem .8rem;border:1px solid var(--danger);
+             background:rgba(229,83,75,.08);border-radius:8px;font-size:.85rem}
+ .risk-panel .title{font-family:var(--mono);font-size:.75rem;color:var(--danger);font-weight:700;margin-bottom:.3rem}
+ .risk-item{margin-top:.3rem}
+ .risk-item b{color:var(--danger)}
  form.inline{display:flex;gap:.4rem}
  input,textarea,select{background:#0d1117;border:1px solid var(--border);border-radius:6px;color:var(--text);
         padding:.45rem .6rem;font-family:var(--mono);font-size:.85rem;width:100%}
@@ -203,6 +208,14 @@ function renderRunDetail(id, data) {
       <div id="criteria-status" class="status-line"></div>
     </details>` : '';
 
+  const risks = data.risks || [];
+  const riskPanel = risks.length ? `
+    <div class="risk-panel">
+      <div class="title">⚠ ${risks.length} preflight risk finding(s)</div>
+      Mechanical checks over this run's history, not an LLM guess:
+      ${risks.map(r => `<div class="risk-item"><b>${escapeHtml(r.label)}</b> -- ${escapeHtml(r.evidence)}</div>`).join('')}
+    </div>` : '';
+
   const stalled = data.stalled_stages || [];
   const stalledPanel = stalled.length ? `
     <div class="stalled-panel">
@@ -219,6 +232,7 @@ function renderRunDetail(id, data) {
     <div class="roles">${roles}</div>
     ${healthPanel}
     ${criteriaDetails}
+    ${riskPanel}
     ${stalledPanel}
 
     <label>New iteration -- stage (pick from this run's live roles, or type a new one)</label>

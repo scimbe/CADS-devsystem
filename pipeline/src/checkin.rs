@@ -5,6 +5,7 @@
 //! something a hermetic `cargo test` should do.
 
 use crate::improve::stalled_stages;
+use crate::preflight::preflight_annotations;
 use crate::runner::RunState;
 use crate::IterationRecord;
 
@@ -106,6 +107,17 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
         md.push('\n');
     }
 
+    let risks = preflight_annotations(state);
+    if !risks.is_empty() {
+        md.push_str("## Risk annotations\n\n");
+        md.push_str("Mechanical checks over this run's history -- not an LLM judgment call, \
+            just patterns a human reviewer would otherwise have to spot by hand:\n\n");
+        for r in &risks {
+            md.push_str(&format!("- **{}**: {}\n", r.label, r.evidence));
+        }
+        md.push('\n');
+    }
+
     md.push_str("## Decision needed\n\n");
     md.push_str("Reply `approve` to accept this iteration's proposals as-is and let the next \
         iteration proceed, or `request-changes` with your answer/direction (this canvas \
@@ -179,6 +191,41 @@ mod tests {
         let md = render_plan_markdown(&state).unwrap();
         assert!(md.contains("## Stalled stages (devsystem.improve)"));
         assert!(md.contains("`devsystem.android_native_bridge`"));
+    }
+
+    #[test]
+    fn surfaces_a_real_preflight_finding_in_the_rendered_markdown() {
+        // preflight::preflight_annotations is real, tested governance logic that
+        // used to be computed but never rendered anywhere a human would see it --
+        // this proves the check-in markdown (the actual human-review gate) now
+        // carries it, not just the underlying pure function in isolation.
+        let mut state = RunState::new("run-security");
+        state.history.push(IterationRecord {
+            run_id: "run-security".into(),
+            stage: "devsystem.implement".into(),
+            iteration: 1,
+            feedback: "wired the real Noise_IK handshake and session key material".into(),
+            proposals: vec![],
+            succeeded: true,
+        });
+        let md = render_plan_markdown(&state).unwrap();
+        assert!(md.contains("## Risk annotations"));
+        assert!(md.contains("touches auth/security"));
+    }
+
+    #[test]
+    fn omits_the_risk_annotations_section_when_nothing_is_flagged() {
+        let mut state = RunState::new("run-clean");
+        state.history.push(IterationRecord {
+            run_id: "run-clean".into(),
+            stage: "devsystem.test".into(),
+            iteration: 1,
+            feedback: "added a Robolectric test, no proposals".into(),
+            proposals: vec![],
+            succeeded: true,
+        });
+        let md = render_plan_markdown(&state).unwrap();
+        assert!(!md.contains("## Risk annotations"));
     }
 
     #[test]
