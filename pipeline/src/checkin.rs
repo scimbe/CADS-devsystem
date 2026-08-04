@@ -135,6 +135,32 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
         md.push('\n');
     }
 
+    // Real gap found+fixed 2026-08-05: state.pending_*_proposals (queued via
+    // devsystem.assistant or a role-filler's own mid-iteration proposal --
+    // #38/#39/#45's own "propose, human approves" gate) are run-level and can
+    // sit unresolved across many iterations (the GUI's Runs-list badge and
+    // Pipeline panel already surface this -- see "Runs list: surface real
+    // pending proposals" earlier today), but the mandatory check-in artifact
+    // never mentioned them at all. A human could approve/request-changes on
+    // THIS iteration and never learn a real, possibly much older proposal was
+    // still waiting on them.
+    let pending_total = state.pending_stage_proposals.len() + state.pending_panel_proposals.len() + state.pending_issue_proposals.len();
+    if pending_total > 0 {
+        md.push_str("## Also awaiting your review\n\n");
+        md.push_str("Independent of this check-in's own decision -- queued separately (possibly \
+            several iterations ago) and still waiting on you:\n\n");
+        for p in &state.pending_stage_proposals {
+            md.push_str(&format!("- **Pipeline stage** `{}`: {}\n", p.proposal.stage_id, p.proposal.rationale));
+        }
+        for p in &state.pending_panel_proposals {
+            md.push_str(&format!("- **Custom panel** \"{}\"\n", p.title));
+        }
+        for p in &state.pending_issue_proposals {
+            md.push_str(&format!("- **GitHub issue** on `{}`: \"{}\"\n", p.repo, p.title));
+        }
+        md.push('\n');
+    }
+
     md.push_str("## Decision needed\n\n");
     md.push_str("Reply `approve` to accept this iteration's proposals as-is and let the next \
         iteration proceed, or `request-changes` with your answer/direction (this canvas \
@@ -223,6 +249,51 @@ mod tests {
         let state = state_with_one_iteration(vec![]);
         let md = render_plan_markdown(&state).unwrap();
         assert!(!md.contains("## Requirements addressed this iteration"));
+    }
+
+    #[test]
+    fn surfaces_real_run_level_pending_proposals_even_when_queued_iterations_ago() {
+        use crate::runner::{PendingIssueProposal, PendingPanelProposal, PendingStageProposal};
+        let mut state = state_with_one_iteration(vec![]);
+        // Real shape: these are queued independent of any specific iteration
+        // (via devsystem.assistant or a role-filler's own mid-iteration
+        // proposal), so this state deliberately has none of them attached to
+        // the CURRENT iteration's own `proposals` field.
+        state.pending_stage_proposals.push(PendingStageProposal {
+            id: "stage1".into(),
+            proposal: StageProposal {
+                proposed_by: "devsystem.assistant".into(),
+                stage_id: "devsystem.android_native_bridge".into(),
+                tag: "android_native_bridge".into(),
+                rationale: "real, already-landed native-bridge work should resume being auction-backed".into(),
+                use_existing_service: None,
+                units: 1,
+                price_ceiling: None,
+            },
+            proposed_at: 1,
+        });
+        state.pending_panel_proposals.push(PendingPanelProposal { id: "panel1".into(), title: "Burndown".into(), html: "<h2>hi</h2>".into(), proposed_at: 1 });
+        state.pending_issue_proposals.push(PendingIssueProposal {
+            id: "issue1".into(),
+            repo: "scimbe/CADS-webconference-demo".into(),
+            title: "Missing retry on flaky upload".into(),
+            body: "detail".into(),
+            proposed_at: 1,
+        });
+
+        let md = render_plan_markdown(&state).unwrap();
+        assert!(md.contains("## Also awaiting your review"));
+        assert!(md.contains("devsystem.android_native_bridge"));
+        assert!(md.contains("real, already-landed native-bridge work"));
+        assert!(md.contains("Burndown"));
+        assert!(md.contains("Missing retry on flaky upload"));
+    }
+
+    #[test]
+    fn omits_the_also_awaiting_section_when_nothing_is_pending() {
+        let state = state_with_one_iteration(vec![]);
+        let md = render_plan_markdown(&state).unwrap();
+        assert!(!md.contains("## Also awaiting your review"));
     }
 
     #[test]
