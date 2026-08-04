@@ -40,6 +40,10 @@
  .history{display:flex;flex-direction:column;gap:.6rem;max-height:22rem;overflow-y:auto}
  .iter{border:1px solid var(--border);border-radius:8px;padding:.65rem .8rem;font-size:.85rem}
  .iter .head{font-family:var(--mono);font-size:.75rem;color:var(--muted);display:flex;justify-content:space-between}
+ .proposal{margin-top:.5rem;padding:.4rem .6rem;border-left:2px solid var(--accent);background:rgba(217,138,79,.06);
+           border-radius:0 6px 6px 0}
+ .proposal-head{font-family:var(--mono);font-size:.75rem;color:var(--accent)}
+ .proposal-rationale{font-size:.8rem;color:var(--muted);margin-top:.15rem}
  .ok{color:var(--accent2)}
  .fail{color:var(--danger)}
  .status-line{font-family:var(--mono);font-size:.82rem;color:var(--muted);margin-top:.6rem;min-height:1.2em}
@@ -138,6 +142,7 @@ function renderRunDetail(id, data) {
       <div class="head"><span>iteration ${h.iteration} · ${h.stage}</span>
         <span class="${h.succeeded ? 'ok' : 'fail'}">${h.succeeded ? 'ok' : 'FAILED'}</span></div>
       <div>${escapeHtml(h.feedback)}</div>
+      ${renderProposals(h.proposals)}
     </div>`).join('') || '<span class="lede">No iterations yet.</span>';
 
   detail.innerHTML = `
@@ -249,6 +254,22 @@ async function viewCheckin(id) {
   } catch (e) {
     view.innerHTML = `<span class="status-line err">${e.message}</span>`;
   }
+}
+
+function renderProposals(proposals) {
+  if (!proposals || !proposals.length) return '';
+  return proposals.map(p => {
+    const reuse = p.use_existing_service
+      ? `reuses <code>${escapeHtml(p.use_existing_service)}</code>`
+      : 'needs a new service';
+    const price = (p.price_ceiling === null || p.price_ceiling === undefined)
+      ? '<span class="fail">no price ceiling</span>'
+      : `price ceiling ${p.price_ceiling}`;
+    return `<div class="proposal">
+      <div class="proposal-head">→ proposed <code>${escapeHtml(p.stage_id)}</code> (${escapeHtml(p.tag)}), ${reuse}, ${price}</div>
+      <div class="proposal-rationale">${escapeHtml(p.rationale)}</div>
+    </div>`;
+  }).join('');
 }
 
 function escapeHtml(s) {
