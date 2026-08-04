@@ -1481,10 +1481,13 @@ function openFillModePopover(id, data, anchorEl) {
 // bid form) lives on the Roles panel instead (operator: "die Auction mit dem
 // bid... bei den Rollen"), not duplicated here.
 //
-// Surfaces the real signed-in identity (GET /api/me) and says plainly that
-// account-scoped resource ownership isn't implemented -- the operator's own
-// sharp point: today, anyone who passes the site-wide login gate can use any
-// run's resources. This is not a permission system, just an honest label.
+// Surfaces the real signed-in identity (GET /api/me) and says plainly what
+// account scoping actually covers today -- the operator's own sharp point
+// (owner_authorized(), #28) restricted browser-authenticated writes and
+// devsystem.assistant to a run's own creator, but deliberately left bidding
+// itself open. Kept accurate as the real enforcement changes -- this note
+// was stale once already (claimed devsystem.assistant was unscoped after #28
+// had already fixed that) and got corrected here rather than left wrong.
 async function renderArchitecturePanel(id, data) {
   const body = document.getElementById('body-architecture');
   body.innerHTML = '<span class="lede">Loading…</span>';
@@ -1494,9 +1497,12 @@ async function renderArchitecturePanel(id, data) {
   const viewerHtml = `
     <div class="arch-viewer">
       Viewing/would-submit-offers as: <b>${whoami.email ? escapeHtml(whoami.email) : 'not signed in'}</b>
-      <div class="arch-note">Resource scoping by account is not implemented yet -- every account that
-        passes the site-wide login gate can currently submit offers and use devsystem.assistant for
-        <em>any</em> run. This line is informational only right now, not an enforced permission.</div>
+      <div class="arch-note">A run's own writes (milestones, backlog, repo_url, fill-mode, custom
+        panels, devsystem.assistant, ...) are scoped to the account that created it -- a different
+        signed-in account gets 403. Runs created before that scoping existed stay open to anyone.
+        Bidding itself (<code>offers/submit</code>, <code>auction</code>) is deliberately still open
+        to any signed offer, matching #388's "the signature is the authentication" -- no account
+        login is required to bid at all.</div>
     </div>`;
 
   const specHtml = `
