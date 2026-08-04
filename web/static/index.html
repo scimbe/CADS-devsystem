@@ -43,19 +43,15 @@
  .assistant-role{display:block;font-family:var(--mono);font-size:.65rem;text-transform:uppercase;
                   letter-spacing:.05em;color:var(--muted);margin-bottom:.25rem}
  .assistant-text{white-space:pre-wrap;overflow-wrap:anywhere}
- /* Process Prompt: freestanding and draggable (operator: "freistehend und
-    verschiebbar"), but position:fixed with the highest z-index in the app --
-    not part of the .win floating-panel stack at all, so no maximized/raised
-    panel can ever render above it ("das darf nicht ueberblendet werden").
-    Defaults to bottom-center like a chat input bar; dragging persists a new
-    fixed screen position via the grip handle. */
- .prompt-dock{position:fixed;left:50%;bottom:1rem;transform:translateX(-50%);z-index:100000;
-              width:min(56rem,calc(100vw - 2rem))}
- .prompt-dock-inner{display:flex;align-items:center;gap:.6rem;width:100%;
+ /* Process Prompt: docked statically at the bottom, part of the normal layout
+    (not a floating overlay) -- operator feedback: "ich will diese Leiste nicht"
+    ruled out the freestanding/draggable version tried earlier. */
+ .prompt-dock{flex-shrink:0;border-top:1px solid var(--border);background:var(--panel);
+              padding:.7rem 1rem;display:flex;justify-content:center}
+ .prompt-dock-inner{display:flex;align-items:center;gap:.6rem;width:100%;max-width:56rem;
                      background:#0d1117;border:1px solid var(--border);border-radius:10px;
-                     padding:.55rem .9rem;box-shadow:0 10px 30px rgba(0,0,0,.45);transition:border-color .15s}
+                     padding:.55rem .9rem;transition:border-color .15s}
  .prompt-dock-inner:focus-within{border-color:var(--accent2)}
- .prompt-dock-grip{cursor:move;color:var(--muted);flex-shrink:0;user-select:none;letter-spacing:-1px}
  .prompt-dock-icon{color:var(--accent2);font-family:var(--mono);font-weight:700;flex-shrink:0}
  .process-prompt{font-family:var(--mono);font-size:.85rem;background:transparent;border:none;
                   color:var(--text);flex:1;width:auto;padding:.2rem 0}
@@ -204,7 +200,6 @@
 </div>
 <div class="prompt-dock" id="prompt-dock">
  <div class="prompt-dock-inner">
-  <span class="prompt-dock-grip" id="prompt-dock-grip" title="drag to reposition">⠿</span>
   <span class="prompt-dock-icon">›</span>
   <input id="process-prompt-input" class="process-prompt" placeholder="Ask devsystem.assistant, or a panel command… (try: help)" autocomplete="off" spellcheck="false">
   <span id="process-prompt-status" class="prompt-status"></span>
@@ -345,20 +340,35 @@ function bringToFront(id) {
 
 function hidePanel(id) {
   document.getElementById(`win-${id}`).style.display = 'none';
-  layout[id] = { ...panelRect(id), visible: false };
+  layout[id] = { ...panelRect(id), visible: false, autoHidden: false };
   saveLayout();
   renderPanelToggleBar();
 }
 
+// Panels that got auto-hidden because they no longer fit the viewport (see
+// checkPanelsFitViewport) come back at their default position, not the stale
+// one that no longer fits -- operator: "beim einblenden werden sie wieder neu
+// positioniert." A manual hide/show keeps the user's own placement as before.
 function showPanel(id) {
   const win = document.getElementById(`win-${id}`);
+  const current = panelRect(id);
+  if (current.autoHidden) {
+    const d = PANEL_DEFAULTS[id];
+    applyRect(win, d);
+    layout[id] = { ...current, x: d.x, y: d.y, w: d.w, h: d.h, visible: true, autoHidden: false };
+  } else {
+    layout[id] = { ...current, visible: true };
+  }
   win.style.display = 'flex';
-  layout[id] = { ...panelRect(id), visible: true };
   saveLayout();
   bringToFront(id);
   renderPanelToggleBar();
 }
 
+// Windows may only move relative to each other within the visible desktop
+// area -- operator: "die Fenster durfen sich nur in den vorhandenen bereich
+// zueinander verschieben." Bounds are read live (not captured once) since the
+// desktop can itself be resized mid-drag.
 function wireDrag(win, id) {
   const header = win.querySelector('.win-header');
   header.addEventListener('mousedown', (e) => {
@@ -367,8 +377,11 @@ function wireDrag(win, id) {
     const startX = e.clientX, startY = e.clientY;
     const startLeft = win.offsetLeft, startTop = win.offsetTop;
     function onMove(ev) {
-      win.style.left = Math.max(0, startLeft + ev.clientX - startX) + 'px';
-      win.style.top = Math.max(0, startTop + ev.clientY - startY) + 'px';
+      const desktop = document.getElementById('desktop');
+      const maxLeft = Math.max(0, desktop.clientWidth - win.offsetWidth);
+      const maxTop = Math.max(0, desktop.clientHeight - win.offsetHeight);
+      win.style.left = Math.min(maxLeft, Math.max(0, startLeft + ev.clientX - startX)) + 'px';
+      win.style.top = Math.min(maxTop, Math.max(0, startTop + ev.clientY - startY)) + 'px';
     }
     function onUp() {
       document.removeEventListener('mousemove', onMove);
@@ -388,8 +401,11 @@ function wireResize(win, id) {
     const startX = e.clientX, startY = e.clientY;
     const startW = win.offsetWidth, startH = win.offsetHeight;
     function onMove(ev) {
-      win.style.width = Math.max(220, startW + ev.clientX - startX) + 'px';
-      win.style.height = Math.max(140, startH + ev.clientY - startY) + 'px';
+      const desktop = document.getElementById('desktop');
+      const maxW = Math.max(220, desktop.clientWidth - win.offsetLeft);
+      const maxH = Math.max(140, desktop.clientHeight - win.offsetTop);
+      win.style.width = Math.min(maxW, Math.max(220, startW + ev.clientX - startX)) + 'px';
+      win.style.height = Math.min(maxH, Math.max(140, startH + ev.clientY - startY)) + 'px';
     }
     function onUp() {
       document.removeEventListener('mousemove', onMove);
@@ -416,9 +432,42 @@ function renderPanelToggleBar() {
   }
 }
 
+// When the main window is resized (larger or smaller), any visible panel that
+// no longer fits inside the desktop area gets auto-hidden -- operator: "sollen
+// die Fenster dann automatisch ausgeblendet werden, die nicht mehr
+// hineinpassen." Panel state (not layout's stale x/y/w/h) drives the check so
+// it reflects whatever the panel's actual on-screen rect is right now.
+function checkPanelsFitViewport() {
+  const desktop = document.getElementById('desktop');
+  if (!desktop) return;
+  for (const id of Object.keys(PANEL_DEFAULTS)) {
+    const rect = panelRect(id);
+    if (!rect.visible) continue;
+    const win = document.getElementById(`win-${id}`);
+    if (!win) continue;
+    const fits = win.offsetLeft >= 0 && win.offsetTop >= 0 &&
+      win.offsetLeft + win.offsetWidth <= desktop.clientWidth &&
+      win.offsetTop + win.offsetHeight <= desktop.clientHeight;
+    if (!fits) {
+      win.style.display = 'none';
+      layout[id] = { ...rect, visible: false, autoHidden: true };
+    }
+  }
+  saveLayout();
+  renderPanelToggleBar();
+}
+
+let resizeCheckTimer = null;
+function scheduleViewportCheck() {
+  clearTimeout(resizeCheckTimer);
+  resizeCheckTimer = setTimeout(checkPanelsFitViewport, 150);
+}
+
 function initPanels() {
   for (const id of Object.keys(PANEL_DEFAULTS)) createPanel(id);
   renderPanelToggleBar();
+  checkPanelsFitViewport();
+  window.addEventListener('resize', scheduleViewportCheck);
 }
 
 // -------------------- data + rendering --------------------
@@ -1328,46 +1377,6 @@ function comboFromEvent(e) {
   return parts.sort().join('+');
 }
 
-const PROMPT_POS_KEY = 'devsystem-prompt-pos-v1';
-
-// Freestanding + draggable via the grip handle, but position:fixed with a
-// z-index above every .win (see CSS) -- it can move anywhere on screen, it
-// just can never end up BEHIND another panel. Position persists like window
-// layout does.
-function wireDockDrag() {
-  const dock = document.getElementById('prompt-dock');
-  const grip = document.getElementById('prompt-dock-grip');
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(PROMPT_POS_KEY) || 'null'); } catch (e) { saved = null; }
-  if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
-    dock.style.left = saved.x + 'px';
-    dock.style.top = saved.y + 'px';
-    dock.style.bottom = 'auto';
-    dock.style.transform = 'none';
-  }
-  grip.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    const rect = dock.getBoundingClientRect();
-    const startX = e.clientX, startY = e.clientY;
-    const startLeft = rect.left, startTop = rect.top;
-    dock.style.transform = 'none';
-    dock.style.bottom = 'auto';
-    function onMove(ev) {
-      const x = Math.max(0, Math.min(window.innerWidth - rect.width, startLeft + ev.clientX - startX));
-      const y = Math.max(0, Math.min(window.innerHeight - rect.height, startTop + ev.clientY - startY));
-      dock.style.left = x + 'px';
-      dock.style.top = y + 'px';
-    }
-    function onUp() {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      try { localStorage.setItem(PROMPT_POS_KEY, JSON.stringify({ x: dock.offsetLeft, y: dock.offsetTop })); } catch (e) { /* storage unavailable */ }
-    }
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  });
-}
-
 function initProcessPrompt() {
   const input = document.getElementById('process-prompt-input');
   input.addEventListener('keydown', (e) => {
@@ -1376,7 +1385,6 @@ function initProcessPrompt() {
     showPromptStatus(result);
     input.value = '';
   });
-  wireDockDrag();
 
   // Global shortcuts fire only when nothing else is capturing keystrokes (no
   // input/textarea/contenteditable focused, including this prompt itself) --
