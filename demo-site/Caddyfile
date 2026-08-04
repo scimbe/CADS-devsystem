@@ -29,8 +29,11 @@
 	forward_auth https://{$CT_GATE_UPSTREAM_HOST} {
 		uri /gate/check
 	}
-	root * /srv
-	file_server
+	# devsystem-web (a real axum backend, #382) replaces the plain file_server here --
+	# the page it serves is now a real control panel (list/view/drive pipeline runs),
+	# not a static status page. Confirmed 100% static with zero interactivity before
+	# this change; see the devsystem-web commit for how that was verified.
+	reverse_proxy devsystem-web:8790
 	encode gzip
 	header {
 		X-Content-Type-Options "nosniff"
