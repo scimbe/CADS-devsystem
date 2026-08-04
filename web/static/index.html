@@ -2805,6 +2805,18 @@ async function askAssistant(instruction) {
     if (pending) pending.remove();
     appendAssistantEntry('assistant', data.response || '(empty response)', data.usage);
     showPromptStatus({ ok: true, message: 'devsystem.assistant replied' });
+    // Real gap found+fixed 2026-08-05: the assistant can take real, direct
+    // action (add_milestone, toggle_requirement, propose_stage, set_repo_url,
+    // create_run, ...) but this handler only ever appended its confirmation
+    // TEXT to the chat -- the actual panels (and the Runs list, for
+    // create_run) stayed stale until something else happened to trigger a
+    // refresh. Directly undercuts the operator's own instruction: "Mehr tun,
+    // weniger reden... den Benutzer dadurch führen" -- the panels are
+    // supposed to BE the explanation, which only works if they're current.
+    // Same run id (not a real navigation), so this doesn't reset the
+    // transcript or lose scroll position -- selectRun() only does that when
+    // currentRun actually changes.
+    await selectRun(currentRun);
   } catch (e) {
     if (pending) pending.remove();
     appendAssistantEntry('error', e.message);
