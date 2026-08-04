@@ -5,9 +5,16 @@
 //! non-blocking start, deliberately never `await` (this runs from an autonomous loop
 //! firing; blocking on a human verdict here would hang the whole loop).
 //!
+//! Also seeds any real `preflight::preflight_annotations` findings into the
+//! session's chat *before* a human opens it (proposal §5's own documented "next
+//! slice", `docs/plan-stage.md`) -- via the canvas server's `/api/session/<key>/reply`
+//! endpoint directly, the same one `ecc-plan-canvas await --reply` posts to, but
+//! without ever calling the blocking `await`.
+//!
 //! Usage: `devsystem_checkin <run_id>`
 
 use devsystem_pipeline::checkin::render_plan_markdown;
+use devsystem_pipeline::preflight::preflight_annotations;
 use devsystem_pipeline::runner::RunState;
 use std::env;
 use std::fs;
@@ -33,10 +40,47 @@ fn main() {
     fs::write(&plan_path, &markdown).expect("write plan artifact");
     println!("wrote {}", plan_path.display());
 
-    let status = Command::new("ecc-plan-canvas").arg("open").arg(&plan_path).status();
-    match status {
-        Ok(s) if s.success() => println!("ecc-plan-canvas opened {} -- awaiting human review (not blocking this process).", plan_path.display()),
-        Ok(s) => println!("ecc-plan-canvas exited with {s} -- artifact is still written at {}.", plan_path.display()),
-        Err(e) => println!("could not run ecc-plan-canvas ({e}) -- artifact is still written at {}.", plan_path.display()),
+    let output = Command::new("ecc-plan-canvas").arg("open").arg(&plan_path).output();
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        Ok(o) => {
+            println!("ecc-plan-canvas exited with {} -- artifact is still written at {}.", o.status, plan_path.display());
+            return;
+        }
+        Err(e) => {
+            println!("could not run ecc-plan-canvas ({e}) -- artifact is still written at {}.", plan_path.display());
+            return;
+        }
+    };
+    println!("ecc-plan-canvas opened {} -- awaiting human review (not blocking this process).", plan_path.display());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let session: Result<serde_json::Value, _> = serde_json::from_str(stdout.trim());
+    let Some(url) = session.as_ref().ok().and_then(|v| v.get("url")).and_then(|v| v.as_str()) else {
+        println!("could not parse a session url from `open`'s output -- skipping pre-flight annotations.");
+        return;
+    };
+    // `open`'s JSON carries no separate session-key field -- it's the last path
+    // segment of `url` (e.g. "http://127.0.0.1:4517/canvas/<key>"), the same key
+    // `ecc-plan-canvas end`/`await` derive internally from the artifact path.
+    let (Some(key), Some(origin)) =
+        (url.rsplit('/').next().filter(|s| !s.is_empty()), url.split('/').take(3).collect::<Vec<_>>().get(0..3).map(|p| p.join("/")))
+    else {
+        println!("could not derive a session key/origin from {url:?} -- skipping pre-flight annotations.");
+        return;
+    };
+
+    for annotation in preflight_annotations(&state) {
+        let text = format!("Pre-flight: {} — {}", annotation.label, annotation.evidence);
+        let body = serde_json::json!({ "text": text }).to_string();
+        let result = Command::new("curl")
+            .args(["-sS", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST", "-H", "content-type: application/json", "-d", &body])
+            .arg(format!("{origin}/api/session/{key}/reply"))
+            .output();
+        match result {
+            Ok(o) if o.status.success() => println!("seeded pre-flight annotation: {text} (HTTP {})", String::from_utf8_lossy(&o.stdout)),
+            Ok(o) => println!("pre-flight annotation POST failed: {}", String::from_utf8_lossy(&o.stderr)),
+            Err(e) => println!("could not run curl to seed pre-flight annotation: {e}"),
+        }
     }
 }
