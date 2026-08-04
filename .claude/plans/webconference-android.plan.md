@@ -1,8 +1,8 @@
-# Check-in: `webconference-android` -- iteration 10
+# Check-in: `webconference-android` -- iteration 15
 
 ## Run summary
 
-10 iteration(s) so far, 7 role(s) currently in the live spec.
+15 iteration(s) so far, 8 role(s) currently in the live spec.
 
 - iteration 1 (`devsystem.implement`, ok): Inspected the scaffold (CADS-webconference-android@4ea9b88) and CADS-Tunnel's crates: MainActivity is a placeholder TextView, matching the f...
 - iteration 2 (`devsystem.test`, ok): The run's spec had no devsystem.test role yet, and the Android repo had zero tests -- assembleDebug only proved the scaffold compiles, not t...
@@ -14,12 +14,17 @@
 - iteration 8 (`devsystem.improve`, ok): real API smoke test: submitted via the new devsystem-web GUI backend, not the CLI -- proving the browser-driven path actually mutates the li...
 - iteration 9 (`devsystem.review`, ok): Real Playwright UI test: submitted through the actual rendered page, not curl -- proving a human can drive the pipeline through this GUI.
 - iteration 10 (`devsystem.web_gui`, ok): web/ (the GUI backend serving devsystem-demo.bunsenbrenner.org) had grown through 9+ real feature commits across many loop firings with zero...
+- iteration 11 (`devsystem.implement`, ok): continue alles fein. Create the apk
+- iteration 12 (`devsystem.android_native_build_ci`, ok): Closed the real supply-chain gap flagged since iteration 7: native-bridge/'s committed .so files and generated Kotlin bindings had no CI ver...
+- iteration 13 (`devsystem.web_gui`, ok): Wired devsystem.assistant into the GUI as the real anchor for the Process Prompt: free-text input that is not a panel command now goes to a ...
+- iteration 14 (`devsystem.android_native_bridge`, ok): Wired a real Noise_IK public-key generation call into the native bridge: generate_noise_public_key_hex() calls ct_common::noise::generate_st...
+- iteration 15 (`devsystem.web_gui`, ok): Closed the tool-registry gap the operator flagged (Roles panel task 4/4): the GUI now honestly answers "which ct-agent-connected tools does ...
 
 **Stage:** `devsystem.web_gui`
 
 ## What this stage found
 
-web/ (the GUI backend serving devsystem-demo.bunsenbrenner.org) had grown through 9+ real feature commits across many loop firings with zero automated tests of its own -- every prior verification was external (curl, Playwright), never committed as regression protection, while pipeline/ carries 43 real unit tests. Refactored the inline axum Router construction out of main() into api_router(AppState) and added 5 real integration tests driven via tower::ServiceExt::oneshot against the exact same router main() serves: empty-dir list, create (success + 409 duplicate + 400 invalid chars), get 404 for a nonexistent run, and a full iterate round-trip asserting state.json actually changes on disk. Verified hermetically in rust:1-slim with RUSTFLAGS=-D warnings (clean build, 5/5 passed), committed as 0f50e70, CI green on push. No route/handler logic changed -- test-only commit, no redeploy needed.
+Closed the tool-registry gap the operator flagged (Roles panel task 4/4): the GUI now honestly answers "which ct-agent-connected tools does devsystem.assistant have" -- none, its real disallowed-tools list (Edit, Write, Bash, WebFetch, WebSearch, Agent), sourced from one shared constant (ASSISTANT_DISALLOWED_TOOLS in devsystem-pipeline) used by both the assistant bridge's real claude -p invocation and the web API, so the two cannot drift. Rendered on the assistant role card in the Roles panel. Verified: hermetic cargo test (pipeline 61 + web 44, all green), rebuilt and redeployed devsystem-web, confirmed live via a real Playwright run against the actual rendered page. Also corrected a stale operator-priority claim this loop: verified live that devsystem-demo.bunsenbrenner.org already serves the real interactive devsystem-web backend (not static HTML) -- did not rebuild a duplicate backend.
 
 ## Proposals
 
@@ -33,13 +38,19 @@ None this iteration.
 - `devsystem.review`
 - `devsystem.improve`
 - `devsystem.android_native_build_ci`
+- `devsystem.assistant`
 
 ## Stalled stages (devsystem.improve)
 
 Proposed and live in the spec, but no iteration has run *as* these stages yet -- likely blocked on a pending human decision:
 
-- `devsystem.android_native_bridge`
-- `devsystem.android_native_build_ci`
+- `devsystem.assistant`
+
+## Risk annotations
+
+Mechanical checks over this run's history -- not an LLM judgment call, just patterns a human reviewer would otherwise have to spot by hand:
+
+- **no test stage before implement**: devsystem.implement first ran at iteration 1, with no devsystem.test iteration before it
 
 ## Decision needed
 
