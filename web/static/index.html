@@ -275,6 +275,20 @@
  .status-line.ok{color:var(--accent2)}
  .status-line.err{color:var(--danger)}
  .status-line.warn{color:var(--accent);font-weight:700}
+ /* Operator ask: a real setup dialog for creating a new project/run, not just
+    the bare run-id-only inline form -- prompted directly by wanting to
+    re-test the whole pipeline setup flow after deleting webconference-android. */
+ .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300000;
+                 display:flex;align-items:center;justify-content:center}
+ .modal{background:var(--panel);border:1px solid var(--border);border-radius:12px;
+        box-shadow:0 20px 60px rgba(0,0,0,.5);padding:1.2rem 1.4rem;width:min(30rem,92vw);
+        max-height:88vh;overflow:auto}
+ .modal h3{margin:0 0 .3rem;font-size:1rem}
+ .modal .lede{margin-bottom:.9rem}
+ .modal label{display:block;margin-bottom:.8rem;font-family:var(--mono);font-size:.75rem;color:var(--muted)}
+ .modal input{width:100%;margin-top:.3rem;background:#0d1117;border:1px solid var(--border);
+              color:var(--text);border-radius:6px;padding:.45rem .6rem;font-family:var(--mono);font-size:.85rem}
+ .modal-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:.4rem}
  pre.checkin{white-space:pre-wrap;font-family:var(--mono);font-size:.8rem;background:#0d1117;
              border:1px solid var(--border);border-radius:8px;padding:1rem;overflow:auto}
  .memory-list{display:flex;flex-direction:column;gap:.5rem;margin-top:.5rem}
@@ -919,31 +933,65 @@ async function loadRuns() {
   const el = document.getElementById('body-runs');
   el.innerHTML = `
     <div id="runs" class="runs"><span class="lede">Loading…</span></div>
-    <label>New run id</label>
-    <form class="inline" id="create-form">
-     <input id="new-run-id" placeholder="e.g. my-other-project" pattern="[A-Za-z0-9_\\-]+" required>
-     <button type="submit">+</button>
-    </form>
-    <div id="create-status" class="status-line"></div>
+    <button type="button" id="open-new-project-btn" style="margin-top:.5rem;width:100%">+ New Project</button>
   `;
-  document.getElementById('create-form').addEventListener('submit', async (e) => {
+  document.getElementById('open-new-project-btn').addEventListener('click', openNewProjectDialog);
+  await refreshRunsList();
+}
+
+// Real setup dialog (#382): run id + repo url in one guided step, rather than
+// the run-id-only inline form this replaced. create_run then set_repo_url in
+// sequence -- the same two real API calls a human would otherwise make
+// separately (create, then find the Pipeline panel, then set the repo).
+function closeNewProjectDialog() {
+  const overlay = document.getElementById('new-project-overlay');
+  if (overlay) overlay.remove();
+}
+
+function openNewProjectDialog() {
+  closeNewProjectDialog();
+  const overlay = document.createElement('div');
+  overlay.id = 'new-project-overlay';
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>New Project</h3>
+      <p class="lede" style="font-size:.8rem">Creates a real run with the generic 7-stage pipeline template -- roles get added as the run self-optimizes, same as every other project here.</p>
+      <form id="new-project-form">
+        <label>Project id<input id="np-run-id" placeholder="e.g. my-other-project" pattern="[A-Za-z0-9_\\-]+" required autofocus></label>
+        <label>GitHub repo URL <span style="opacity:.7">(optional -- powers the Pipeline panel and Docs Search sync)</span>
+          <input id="np-repo-url" type="url" placeholder="https://github.com/owner/repo"></label>
+        <div id="new-project-status" class="status-line"></div>
+        <div class="modal-actions">
+          <button type="button" class="secondary" id="np-cancel">Cancel</button>
+          <button type="submit">Create</button>
+        </div>
+      </form>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeNewProjectDialog(); });
+  document.getElementById('np-cancel').onclick = closeNewProjectDialog;
+  document.getElementById('new-project-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const status = document.getElementById('create-status');
-    const run_id = document.getElementById('new-run-id').value.trim();
+    const status = document.getElementById('new-project-status');
+    const run_id = document.getElementById('np-run-id').value.trim();
+    const repoUrl = document.getElementById('np-repo-url').value.trim();
     status.textContent = 'Creating…'; status.className = 'status-line';
     try {
-      await fetchJSON(`${API}/runs`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ run_id })
-      });
-      status.textContent = `Created ${run_id}.`; status.className = 'status-line ok';
-      document.getElementById('new-run-id').value = '';
+      await fetchJSON(`${API}/runs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ run_id }) });
+      if (repoUrl) {
+        status.textContent = 'Setting repo…';
+        await fetchJSON(`${API}/runs/${encodeURIComponent(run_id)}/repo`, {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ repo_url: repoUrl }),
+        });
+      }
+      closeNewProjectDialog();
+      await refreshRunsList();
       await selectRun(run_id);
     } catch (err) {
       status.textContent = err.message; status.className = 'status-line err';
     }
   });
-  await refreshRunsList();
 }
 
 async function refreshRunsList() {
