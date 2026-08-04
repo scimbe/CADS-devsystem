@@ -44,11 +44,45 @@ fn fetch_context(api_base: &str, run_id: &str) -> Result<String, String> {
     match reqwest::blocking::get(&url) {
         Ok(resp) if resp.status().is_success() => resp
             .text()
-            .map(|body| condense_history(&body))
+            .map(|body| condense_context(&body))
             .map_err(|e| format!("could not read response body from {url}: {e}")),
         Ok(resp) => Err(format!("could not fetch run context from {url}: HTTP {}", resp.status())),
         Err(e) => Err(format!("could not reach {url}: {e}")),
     }
+}
+
+/// Real speed lever, not just a style choice (operator: response latency is
+/// too slow): every real assistant call re-sends the *entire* run context on
+/// every turn, and larger input measurably costs more time+tokens regardless
+/// of prompt caching. `condense_history` already fixed the unbounded-history
+/// case; this fixes the other real offender found by actually reading what
+/// `GET /api/runs/{id}` returns -- `state.custom_panels[].html` and
+/// `state.pending_panel_proposals[].html` can each carry up to
+/// `MAX_CUSTOM_PANEL_HTML_BYTES` (100,000) of raw markup the assistant has no
+/// real use for (it advises on run state, it doesn't need to re-read a
+/// panel's markup to do that) -- a run with even a few real panels was paying
+/// that cost on every single call, forever. Replaces each with a byte count
+/// the LLM can mention honestly, keeping title/id/source/created_at intact.
+fn condense_context(body: &str) -> String {
+    condense_large_html_fields(&condense_history(body))
+}
+
+fn condense_large_html_fields(body: &str) -> String {
+    let Ok(mut root) = serde_json::from_str::<serde_json::Value>(body) else {
+        return body.to_string();
+    };
+    for pointer in ["/state/custom_panels", "/state/pending_panel_proposals"] {
+        if let Some(items) = root.pointer_mut(pointer).and_then(|v| v.as_array_mut()) {
+            for item in items {
+                let Some(obj) = item.as_object_mut() else { continue };
+                if let Some(html) = obj.get("html").and_then(|v| v.as_str()) {
+                    let len = html.len();
+                    obj.insert("html".to_string(), serde_json::json!(format!("<{len} bytes -- see the real panel in the GUI, not repeated here>")));
+                }
+            }
+        }
+    }
+    serde_json::to_string(&root).unwrap_or_else(|_| body.to_string())
 }
 
 /// A real run's `history` grows one full-prose feedback entry per iteration
@@ -100,12 +134,25 @@ fn build_system_prompt(context: &str) -> String {
          run without them having to hand-edit raw state directly. Give concrete, \
          grounded advice based ONLY on the real current run state given below -- never \
          invent data that isn't there, and say plainly if the state doesn't contain \
-         enough information to answer. Be concise and reference real field values from \
-         the state. When presenting structured data with more than two real fields (a \
-         status summary, a comparison, a per-iteration/per-role breakdown), use a real \
-         Markdown pipe table (`| Field | Value |` with a `|---|---|` separator row) \
-         instead of an inline arrow-chain or a loose list -- the GUI renders real \
-         tables properly, not ad-hoc formatting.\n\n\
+         enough information to answer.\n\n\
+         BE TERSE. DO, DON'T NARRATE. The operator's own instruction: \"mehr tun, \
+         weniger reden\" (more doing, less talking). Default to 1-3 short sentences. \
+         If the operator's request is clear and actionable, take the action (emit the \
+         action block) and confirm in ONE short line -- don't first explain what \
+         you're about to do, don't restate the state back to them, don't pad with \
+         caveats they didn't ask for. The GUI's own panels (Milestones, Backlog, \
+         Pipeline, Custom Panels, Flow) already show the real, live result of any \
+         action you take -- that IS the explanation; you don't need to also describe \
+         it in prose. Only go longer when the operator asks a real question that \
+         needs it (e.g. \"explain why X failed\") -- and even then, lead with the \
+         answer in the first sentence, don't build up to it. Reference real field \
+         values from the state, never invented ones. When presenting structured data \
+         with more than two real fields (a status summary, a comparison, a \
+         per-iteration/per-role breakdown), use a real Markdown pipe table \
+         (`| Field | Value |` with a `|---|---|` separator row) instead of an inline \
+         arrow-chain or a loose list -- the GUI renders real tables properly, not \
+         ad-hoc formatting -- but a table is still not an excuse to also write a \
+         paragraph around it.\n\n\
          You CAN take real action on exactly two kinds of run state: milestones and \
          backlog items. When the operator asks you to add a milestone, check one off, \
          add a backlog item, or mark one done -- and their intent is clear and \
@@ -528,6 +575,7 @@ mod tests {
         );
         assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these four data kinds");
         assert!(prompt.contains("neither takes effect by itself"), "the panel/stage-proposal approval gate must be explicit, not implied");
+        assert!(prompt.contains("BE TERSE") && prompt.contains("mehr tun, weniger reden"), "the operator's own terseness instruction must be explicit, not just implied by 'be concise'");
     }
 
     #[test]
@@ -745,5 +793,46 @@ mod tests {
         assert_eq!(condense_history(not_json), not_json);
         let no_history = r#"{"state":{"run_id":"x"}}"#;
         assert_eq!(condense_history(no_history), no_history);
+    }
+
+    #[test]
+    fn condense_context_replaces_large_panel_html_with_a_byte_count_not_the_raw_markup() {
+        // Real shape: a run with even a couple of real custom panels was paying
+        // to re-send their full HTML on every single assistant call, forever.
+        let big_html = "<div>".repeat(5000); // a real, substantial payload
+        let body = serde_json::json!({
+            "state": {
+                "custom_panels": [{"id": "p1", "title": "Burndown", "html": big_html, "source": "assistant", "created_at": 100}],
+                "pending_panel_proposals": [{"id": "p2", "title": "Proposed", "html": "<h2>x</h2>", "proposed_at": 200}],
+            }
+        })
+        .to_string();
+        let condensed = condense_context(&body);
+        assert!(!condensed.contains("<div>"), "the raw HTML must not survive into the prompt");
+        assert!(condensed.contains("bytes"), "a byte count must replace it");
+        assert!(condensed.contains("Burndown"), "the real title must still be there -- the assistant can still refer to the panel by name");
+        assert!(condensed.contains("\"source\":\"assistant\""), "non-HTML fields must survive untouched");
+
+        let parsed: serde_json::Value = serde_json::from_str(&condensed).expect("condensed output must still be valid JSON");
+        assert_eq!(parsed["state"]["custom_panels"][0]["title"], "Burndown");
+    }
+
+    #[test]
+    fn condense_context_leaves_small_html_and_missing_fields_alone_where_theres_nothing_to_condense() {
+        let body = r#"{"state":{"custom_panels":[],"pending_panel_proposals":[]}}"#;
+        assert_eq!(condense_context(body), body);
+        let no_panels_at_all = r#"{"state":{"run_id":"x"}}"#;
+        assert_eq!(condense_context(no_panels_at_all), no_panels_at_all);
+    }
+
+    #[test]
+    fn condense_context_still_applies_history_condensing_too() {
+        // Proves condense_context actually composes both fixes, not just one --
+        // same fixture shape as a_long_history_keeps_the_most_recent_entries_full_and_condenses_the_rest.
+        let paragraph = "a real, long, verbose feedback paragraph describing exactly what was built, how it was verified hermetically, and what commit it landed as, repeated to resemble a genuine multi-sentence iteration report. ".repeat(15);
+        let entries: Vec<_> = (1..=13).map(|i| history_entry(i, &paragraph)).collect();
+        let body = serde_json::json!({"state": {"history": entries, "custom_panels": []}}).to_string();
+        let condensed = condense_context(&body);
+        assert!(condensed.len() < body.len() / 2, "history condensing must still happen via condense_context");
     }
 }
