@@ -142,6 +142,16 @@
  .role-latest.ok{border-left-color:var(--accent2)}
  .role-latest.fail{border-left-color:var(--danger)}
  .role-count{font-size:.7rem;margin-top:.2rem}
+ .arch-viewer{font-family:var(--mono);font-size:.78rem;padding:.5rem .65rem;border:1px solid var(--border);
+              border-radius:8px;margin-bottom:.6rem}
+ .arch-note{font-size:.72rem;color:var(--muted);margin-top:.3rem}
+ .arch-spec{font-size:.75rem;color:var(--muted);margin-bottom:.6rem}
+ .arch-badge{font-family:var(--mono);font-size:.66rem;border-radius:5px;padding:.1rem .4rem;
+             font-weight:700;white-space:nowrap}
+ .arch-badge.ok{color:var(--accent2);border:1px solid var(--accent2)}
+ .arch-badge.warn{color:var(--accent);border:1px solid var(--accent)}
+ .arch-badge.err{color:var(--danger);border:1px solid var(--danger)}
+ .arch-badge.unknown{color:var(--muted);border:1px solid var(--border)}
  .backlog-list{display:flex;flex-direction:column;gap:.4rem}
  .backlog-item{display:flex;align-items:flex-start;gap:.5rem;font-size:.85rem;cursor:pointer}
  .backlog-item input{width:auto;margin-top:.2rem}
@@ -242,6 +252,7 @@ const PANEL_DEFAULTS = {
   memory:     { title: 'Memory Log',         x: 1780, y: 16,  w: 360, h: 300 },
   auction:    { title: 'Auction',            x: 1064, y: 592, w: 340, h: 300 },
   code:       { title: 'Code',               x: 1420, y: 592, w: 340, h: 300 },
+  architecture: { title: 'Architecture',     x: 1780, y: 332, w: 380, h: 420 },
 };
 
 const LAYOUT_KEY = 'devsystem-panel-layout-v1';
@@ -575,7 +586,7 @@ async function selectRun(id) {
   currentRun = id;
   if (switching) resetAssistantTranscript(id);
   await refreshRunsList();
-  for (const panelId of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code']) {
+  for (const panelId of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture']) {
     document.getElementById(`body-${panelId}`).innerHTML = '<span class="lede">Loading…</span>';
   }
   try {
@@ -594,8 +605,9 @@ async function selectRun(id) {
     document.getElementById('view-memory').onclick = () => viewMemory(id);
     renderAuctionPanel(id);
     renderCodePanel(id, data);
+    renderArchitecturePanel(id, data);
   } catch (e) {
-    for (const panelId of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code']) {
+    for (const panelId of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture']) {
       document.getElementById(`body-${panelId}`).innerHTML = `<span class="status-line err">${e.message}</span>`;
     }
   }
@@ -673,6 +685,96 @@ function renderRolesPanel(data) {
       auction selection policy are real data today. Flagged for a future
       increment, not fabricated here.
     </div>`;
+}
+
+// Real "how is this pipeline actually structured, and what's really backing
+// it" view -- operator ask: a status window over the live PipelineSpec plus
+// who's actually looking at it. Complements Roles (which shows each role's
+// latest iteration outcome) with a different real question per role: is
+// anything genuinely online behind it right now?
+//
+//  - devsystem.assistant is special-cased for real: it's the one role this
+//    deployment doesn't reach through the crew auction at all (ask_assistant
+//    proxies straight to a single operator-configured bridge), so its status
+//    comes from a live probe (GET /api/assistant/status).
+//  - Every other role is only knowable through the real crew auction
+//    (GET /api/runs/{id}/auction) -- and that auction, by CADS-Tunnel's own
+//    design, only reports per-role winners once EVERY role has a currently
+//    valid signed offer (auction_view fails closed on the first unfilled
+//    role). This panel does not paper over that: when the auction call
+//    errors, every non-assistant role is shown as honestly unknown, with the
+//    real error surfaced, rather than guessing per-role status the API
+//    genuinely cannot give yet.
+//
+// Also surfaces the real signed-in identity (GET /api/me) and says plainly
+// that account-scoped resource ownership isn't implemented -- the operator's
+// own sharp point: today, anyone who passes the site-wide login gate can use
+// any run's resources. This is not a permission system, just an honest label.
+async function renderArchitecturePanel(id, data) {
+  const body = document.getElementById('body-architecture');
+  body.innerHTML = '<span class="lede">Loading…</span>';
+
+  const [whoamiRes, assistantRes, auctionRes] = await Promise.allSettled([
+    fetchJSON(`${API}/me`),
+    fetchJSON(`${API}/assistant/status`),
+    fetchJSON(`${API}/runs/${encodeURIComponent(id)}/auction`),
+  ]);
+  const whoami = whoamiRes.status === 'fulfilled' ? whoamiRes.value : { email: null };
+  const assistantStatus = assistantRes.status === 'fulfilled' ? assistantRes.value : { configured: false, reachable: null };
+  const auction = auctionRes.status === 'fulfilled' ? auctionRes.value : { error: 'could not reach the auction endpoint' };
+  const auctionRoles = auction && Array.isArray(auction.roles) ? auction.roles : null;
+  const auctionError = auction && auction.error;
+
+  const viewerHtml = `
+    <div class="arch-viewer">
+      Viewing/would-submit-offers as: <b>${whoami.email ? escapeHtml(whoami.email) : 'not signed in'}</b>
+      <div class="arch-note">Resource scoping by account is not implemented yet -- every account that
+        passes the site-wide login gate can currently submit offers and use devsystem.assistant for
+        <em>any</em> run. This line is informational only right now, not an enforced permission.</div>
+    </div>`;
+
+  const specHtml = `
+    <div class="arch-spec">
+      pipeline <code>${escapeHtml(data.spec.id)}</code> · default selection policy
+      <code>${escapeHtml(String(data.spec.selection_policy))}</code> · operator key
+      <code>${data.spec.operator_pubkey_hex ? escapeHtml(data.spec.operator_pubkey_hex) : 'none set'}</code>
+    </div>`;
+
+  const auctionNoteHtml = auctionError
+    ? `<div class="arch-note" style="margin-bottom:.5rem">Real crew auction: <b>${escapeHtml(String(auctionError))}</b>
+        -- CADS-Tunnel's auction only reports per-role winners once every role in the spec has a
+        currently valid signed offer, so per-role live-backing status below is honestly unknown
+        until then, not guessed.</div>`
+    : '';
+
+  const roleRows = data.spec.roles.map(r => {
+    const stageId = r.service && r.service.Custom;
+    const isAssistant = stageId === 'devsystem.assistant';
+    let badge;
+    if (isAssistant) {
+      if (!assistantStatus.configured) badge = `<span class="arch-badge warn">not configured on this deployment</span>`;
+      else if (assistantStatus.reachable) badge = `<span class="arch-badge ok">configured &amp; reachable</span>`;
+      else badge = `<span class="arch-badge err">configured, but unreachable right now</span>`;
+    } else if (auctionRoles) {
+      const view = auctionRoles.find(v => v.role === r.tag);
+      const win = view && view.bids.find(b => b.win);
+      badge = win
+        ? `<span class="arch-badge ok">live offer: ${escapeHtml(win.who)} @ ${win.price}</span>`
+        : `<span class="arch-badge unknown">no winning offer</span>`;
+    } else {
+      badge = `<span class="arch-badge unknown">unknown -- auction unavailable</span>`;
+    }
+    const policy = r.selection_policy || data.spec.selection_policy || 'default';
+    return `<div class="role-card">
+      <div class="role-card-head">
+        <span class="role">${escapeHtml(r.tag)}</span>
+        ${badge}
+      </div>
+      <div class="role-meta">${escapeHtml(stageId)} · units ${r.units} · policy ${escapeHtml(String(policy))}</div>
+    </div>`;
+  }).join('');
+
+  body.innerHTML = viewerHtml + specHtml + auctionNoteHtml + roleRows;
 }
 
 function renderHealthCriteriaPanel(id, data) {
@@ -1489,7 +1591,7 @@ initPanels();
 initProcessPrompt();
 loadRuns();
 loadWhoami();
-for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'checkin', 'memory', 'auction']) {
+for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'checkin', 'memory', 'auction', 'architecture']) {
   placeholderIfNoRun(id);
 }
 </script>

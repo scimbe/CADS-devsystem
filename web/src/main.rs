@@ -96,6 +96,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/offers/submit", post(submit_offer))
         .route("/api/runs/{id}/auction", get(view_auction))
         .route("/api/runs/{id}/assistant", post(ask_assistant))
+        .route("/api/assistant/status", get(assistant_status))
         .route("/api/me", get(whoami))
         .with_state(state)
 }
@@ -109,6 +110,33 @@ fn api_router(state: AppState) -> Router {
 async fn whoami(headers: axum::http::HeaderMap) -> impl IntoResponse {
     let email = headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
     Json(serde_json::json!({ "email": email }))
+}
+
+/// Real, live status of the `devsystem.assistant` role's bridge -- the one role
+/// in every run's spec that this deployment actually knows how to check, because
+/// (unlike every other stage, which is only ever "backed" through the real
+/// crew auction) `ask_assistant` talks to a single operator-configured process
+/// directly. `configured` is just whether `DEVSYSTEM_ASSISTANT_URL` was set at
+/// startup; `reachable` is a genuine live probe (a short-timeout GET against the
+/// bridge's own base URL -- any HTTP response at all, even a 404, proves the
+/// process is up, without spending real LLM cost on a `/ask` call). `reachable`
+/// is `null`, not `false`, when nothing is configured: "unreachable" would imply
+/// a real attempt was made. The bridge's own URL is deliberately never returned
+/// here -- this endpoint is reachable by anyone who passes the site-wide login
+/// gate (the exact "no per-account scoping yet" gap #382 raised), so this stays
+/// the minimum honest signal rather than handing out internal network topology.
+async fn assistant_status(State(state): State<AppState>) -> impl IntoResponse {
+    let Some(url) = state.assistant_url.clone() else {
+        return Json(serde_json::json!({"configured": false, "reachable": null})).into_response();
+    };
+    let reachable = state
+        .http_client
+        .get(url.as_ref())
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await
+        .is_ok();
+    Json(serde_json::json!({"configured": true, "reachable": reachable})).into_response()
 }
 
 #[tokio::main]
@@ -1701,5 +1729,50 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_GATEWAY);
+    }
+
+    #[tokio::test]
+    async fn assistant_status_reports_unconfigured_honestly_with_a_null_not_a_false_reachable() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        let response = app.oneshot(Request::builder().uri("/api/assistant/status").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["configured"], false);
+        assert!(body["reachable"].is_null(), "reachable must be null (not attempted), not a fabricated false, when nothing is configured");
+    }
+
+    #[tokio::test]
+    async fn assistant_status_reports_a_real_live_bridge_as_reachable() {
+        let (port, _rx) = spawn_mock_assistant(StatusCode::OK, serde_json::json!({"response": "ok"})).await;
+        let (state, _dir) = test_state_with_assistant(Some(&format!("http://127.0.0.1:{port}")));
+        let app = api_router(state);
+        let response = app.oneshot(Request::builder().uri("/api/assistant/status").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["configured"], true);
+        assert_eq!(body["reachable"], true, "a real TCP-reachable mock bridge, even answering 404 on GET /, must report reachable");
+    }
+
+    #[tokio::test]
+    async fn assistant_status_reports_a_configured_but_unreachable_bridge_honestly() {
+        // Port 1 is privileged and unassigned -- nothing is listening, connection fails reliably.
+        let (state, _dir) = test_state_with_assistant(Some("http://127.0.0.1:1"));
+        let app = api_router(state);
+        let response = app.oneshot(Request::builder().uri("/api/assistant/status").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["configured"], true);
+        assert_eq!(body["reachable"], false, "configured but genuinely unreachable must be reported as such, not silently true");
+    }
+
+    #[tokio::test]
+    async fn assistant_status_never_leaks_the_bridges_internal_url() {
+        let (state, _dir) = test_state_with_assistant(Some("http://127.0.0.1:1"));
+        let app = api_router(state);
+        let response = app.oneshot(Request::builder().uri("/api/assistant/status").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        let text = body.to_string();
+        assert!(!text.contains("127.0.0.1"), "the bridge's internal address must not be exposed to any logged-in caller: {body}");
     }
 }
