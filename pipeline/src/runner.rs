@@ -28,6 +28,16 @@ pub struct RunState {
     /// run used to be hardcoded to.
     #[serde(default)]
     pub criteria: AbortCriteria,
+    /// Explicit human "stop, let me correct something" -- operator feedback: "ich
+    /// weiss nicht... wie ich es anhalten kann um es zu korrigieren." Distinct from
+    /// `CheckinDue`/`Abort` (which the run reaches on its own bounded-loop cadence):
+    /// this is set/cleared only by a human action (the GUI's Pause/Resume button or
+    /// the equivalent API calls), never by `run_iteration` itself. While `true`,
+    /// `iterate_run` refuses new iterations with a clear error instead of silently
+    /// accepting them. `#[serde(default)]` so pre-existing `state.json` files (none
+    /// paused, obviously) still load.
+    #[serde(default)]
+    pub paused: bool,
 }
 
 impl RunState {
@@ -38,6 +48,7 @@ impl RunState {
             history: Vec::new(),
             added_stages: Vec::new(),
             criteria: AbortCriteria::default(),
+            paused: false,
         }
     }
 }

@@ -48,6 +48,9 @@
                 border-radius:5px;padding:.05rem .35rem;font-weight:700;margin-left:.3rem}
  .risk-badge{float:right;font-size:.68rem;color:var(--danger);border:1px solid var(--danger);
                 border-radius:5px;padding:.05rem .35rem;font-weight:700}
+ .paused-banner{background:rgba(217,138,79,.15);border:1px solid var(--accent);color:var(--accent);
+                border-radius:8px;padding:.5rem .7rem;font-family:var(--mono);font-size:.78rem;
+                font-weight:700;margin-bottom:.6rem}
  .health{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:.8rem;font-family:var(--mono);font-size:.75rem}
  .health .stat{border:1px solid var(--border);border-radius:6px;padding:.3rem .55rem;color:var(--muted)}
  .health .stat b{color:var(--text)}
@@ -425,7 +428,18 @@ function renderHealthCriteriaPanel(id, data) {
   const body = document.getElementById('body-healthcrit');
   const h = data.health;
   if (!h) { body.innerHTML = '<span class="lede">No health data.</span>'; return; }
+  const paused = !!data.state.paused;
+  // Explicit human stop/correct control -- operator feedback: "ich weiss nicht...
+  // wie ich es anhalten kann um es zu korrigieren." Distinct from CheckinDue/Abort,
+  // which the run reaches on its own; this is only ever set by a human here.
+  const pauseBanner = paused
+    ? `<div class="paused-banner">⏸ paused -- no new iterations are accepted until resumed</div>`
+    : '';
   body.innerHTML = `
+    ${pauseBanner}
+    <div style="margin-bottom:.6rem">
+      <button type="button" class="secondary" id="pause-toggle">${paused ? 'Resume run' : 'Pause run (to correct something)'}</button>
+    </div>
     <div class="health">
       <span class="stat${h.consecutive_failures >= h.criteria.max_consecutive_failures - 1 ? ' danger' : ''}">
         consecutive failures: <b>${h.consecutive_failures}</b> / ${h.criteria.max_consecutive_failures}</span>
@@ -448,9 +462,20 @@ function renderHealthCriteriaPanel(id, data) {
       <div id="criteria-status" class="status-line"></div>
     </details>
   `;
+  document.getElementById('pause-toggle').onclick = () => togglePause(id, !paused);
   document.getElementById('save-criteria').onclick = () => saveCriteria(id);
   const criteriaEl = body.querySelector('details.criteria');
   criteriaEl.ontoggle = (e) => { criteriaOpen = e.target.open; };
+}
+
+async function togglePause(id, pause) {
+  try {
+    await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/${pause ? 'pause' : 'resume'}`, { method: 'POST' });
+    await selectRun(id);
+  } catch (e) {
+    const body = document.getElementById('body-healthcrit');
+    body.insertAdjacentHTML('afterbegin', `<div class="status-line err">${escapeHtml(e.message)}</div>`);
+  }
 }
 
 function renderRisksPanel(data) {
@@ -476,24 +501,30 @@ function renderRisksPanel(data) {
 
   body.innerHTML = (riskPanel + stalledPanel) || '<span class="lede">Nothing flagged right now.</span>';
   for (const btn of body.querySelectorAll('.stalled-fill')) {
-    btn.onclick = () => {
-      const stageInput = document.getElementById('it-stage');
-      if (stageInput) { stageInput.value = btn.dataset.stage; stageInput.focus(); }
-    };
+    btn.onclick = () => setSelectedStage(btn.dataset.stage);
   }
 }
 
 function renderNewIterationPanel(id, data) {
   const body = document.getElementById('body-newiter');
-  const stageOptions = data.spec.roles
+  const paused = !!data.state.paused;
+  // Real <select> instead of a plain <input list=...> -- operator feedback: "ich
+  // kann im Moment auch nur eine devsystem.implement auswählen" (the datalist
+  // affordance was invisible/non-discoverable). Every live role is a real,
+  // labeled option; "other / new stage id" covers a genuinely new/stalled stage.
+  const roleOptions = data.spec.roles
     .map(r => r.service && r.service.Custom)
     .filter(Boolean)
-    .map(s => `<option value="${escapeHtml(s)}">`)
+    .map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`)
     .join('');
   body.innerHTML = `
-    <label>Stage (pick from this run's live roles, or type a new one)</label>
-    <input id="it-stage" list="it-stage-list" value="devsystem.implement">
-    <datalist id="it-stage-list">${stageOptions}</datalist>
+    ${paused ? `<div class="paused-banner">⏸ this run is paused -- resume it (Health &amp; Criteria panel) before submitting</div>` : ''}
+    <label>Stage (pick from this run's live roles)</label>
+    <select id="it-stage-select">
+      ${roleOptions}
+      <option value="__custom__">other / new stage id…</option>
+    </select>
+    <input id="it-stage-custom" placeholder="e.g. devsystem.my_new_stage" style="display:none;margin-top:.4rem">
     <label>Feedback (what this stage found)</label>
     <textarea id="it-feedback" placeholder="Real, honest account of what happened this iteration…"></textarea>
     <label><input type="checkbox" id="it-succeeded" checked style="width:auto"> succeeded</label>
@@ -518,14 +549,42 @@ function renderNewIterationPanel(id, data) {
     </div>
 
     <div style="margin-top:.6rem;display:flex;gap:.5rem">
-      <button id="submit-iter">Submit iteration</button>
+      <button id="submit-iter" ${paused ? 'disabled title="resume the run first"' : ''}>Submit iteration</button>
     </div>
     <div id="iter-status" class="status-line"></div>
   `;
+  const select = document.getElementById('it-stage-select');
+  const implementOption = Array.from(select.options).find(o => o.value === 'devsystem.implement');
+  if (implementOption) select.value = 'devsystem.implement';
+  select.onchange = () => {
+    document.getElementById('it-stage-custom').style.display = select.value === '__custom__' ? 'block' : 'none';
+  };
   document.getElementById('submit-iter').onclick = () => submitIteration(id);
   document.getElementById('it-has-proposal').onchange = (e) => {
     document.getElementById('proposal-fields').style.display = e.target.checked ? 'block' : 'none';
   };
+}
+
+function getSelectedStage() {
+  const select = document.getElementById('it-stage-select');
+  if (select.value === '__custom__') return document.getElementById('it-stage-custom').value.trim();
+  return select.value;
+}
+
+function setSelectedStage(stageId) {
+  const select = document.getElementById('it-stage-select');
+  if (!select) return;
+  const match = Array.from(select.options).find(o => o.value === stageId);
+  if (match) {
+    select.value = stageId;
+    document.getElementById('it-stage-custom').style.display = 'none';
+  } else {
+    select.value = '__custom__';
+    const custom = document.getElementById('it-stage-custom');
+    custom.style.display = 'block';
+    custom.value = stageId;
+    custom.focus();
+  }
 }
 
 function renderHistoryPanel(data) {
@@ -542,9 +601,10 @@ function renderHistoryPanel(data) {
 
 async function submitIteration(id) {
   const status = document.getElementById('iter-status');
-  const stage = document.getElementById('it-stage').value;
+  const stage = getSelectedStage();
   const feedback = document.getElementById('it-feedback').value.trim();
   const succeeded = document.getElementById('it-succeeded').checked;
+  if (!stage) { status.textContent = 'Stage id is required.'; status.className = 'status-line err'; return; }
   if (!feedback) { status.textContent = 'Feedback is required.'; status.className = 'status-line err'; return; }
 
   const proposals = [];

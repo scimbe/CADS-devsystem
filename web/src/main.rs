@@ -58,6 +58,8 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/iterate", post(iterate_run))
         .route("/api/runs/{id}/checkin", get(checkin_run))
         .route("/api/runs/{id}/criteria", post(update_criteria))
+        .route("/api/runs/{id}/pause", post(pause_run))
+        .route("/api/runs/{id}/resume", post(resume_run))
         .route("/api/runs/{id}/memory", get(memory_run))
         .route("/api/runs/{id}/memory/{index}/govern", post(govern_memory))
         .with_state(state)
@@ -110,6 +112,7 @@ struct RunSummary {
     stalled_stages: Vec<String>,
     risk_count: usize,
     needs_attention: bool,
+    paused: bool,
 }
 
 /// True when a run is close enough to its own bound that a human should notice it
@@ -136,6 +139,7 @@ async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
             let risk_count = preflight_annotations(&run_state).len();
             let health = run_health(&run_state);
             let alert = needs_attention(&health);
+            let paused = run_state.paused;
             runs.push(RunSummary {
                 run_id: id,
                 iterations: run_state.history.len(),
@@ -144,6 +148,7 @@ async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
                 stalled_stages: stalled,
                 risk_count,
                 needs_attention: alert,
+                paused,
             });
         }
     }
@@ -255,6 +260,9 @@ async fn iterate_run(State(state): State<AppState>, AxPath(id): AxPath<String>, 
         Ok(v) => v,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
     };
+    if run_state.paused {
+        return (StatusCode::CONFLICT, "run is paused -- resume it first (POST /api/runs/{id}/resume)").into_response();
+    }
 
     let iteration = run_state.history.len() as u32 + 1;
     let record = IterationRecord {
@@ -384,6 +392,37 @@ async fn update_criteria(
     };
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"criteria": run_state.criteria})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// Real "stop, let me correct something" control -- operator feedback: "ich weiss
+/// nicht... wie ich es anhalten kann um es zu korrigieren." Sets `RunState::paused`;
+/// `iterate_run` refuses new iterations while it's set.
+async fn pause_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> impl IntoResponse {
+    set_paused(state, id, true).await
+}
+
+async fn resume_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> impl IntoResponse {
+    set_paused(state, id, false).await
+}
+
+async fn set_paused(state: AppState, id: String, paused: bool) -> axum::response::Response {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    run_state.paused = paused;
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"paused": run_state.paused})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
     }
 }
@@ -651,6 +690,57 @@ mod tests {
         let body = body_json(response).await;
         let risks = body["risks"].as_array().expect("risks is an array");
         assert!(risks.iter().any(|r| r["label"] == "touches auth/security"), "expected a real preflight finding, got {risks:?}");
+    }
+
+    #[tokio::test]
+    async fn pausing_a_run_blocks_new_iterations_until_resumed() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "pause-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/pause-run/pause").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/pause-run/iterate",
+                serde_json::json!({"stage": "devsystem.implement", "feedback": "should be refused while paused", "succeeded": true}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::CONFLICT, "a paused run must refuse new iterations");
+
+        // list_runs surfaces the paused flag too, not just get_run.
+        let response = app.clone().oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body[0]["paused"], true);
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/pause-run/resume").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/pause-run/iterate",
+                serde_json::json!({"stage": "devsystem.implement", "feedback": "allowed after resume", "succeeded": true}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "iterations must be accepted again after resume");
     }
 
     #[tokio::test]
