@@ -21,6 +21,26 @@ pub struct BacklogItem {
     pub done: bool,
 }
 
+/// How one role's status is determined and (eventually) filled -- operator feedback
+/// (#382 Roles panel ask 1/4): "Umschalten von Auktion zu einem dezidierten LLM
+/// Agenten." `Auction` is today's only real behavior, unchanged: the role's status
+/// comes from CADS-Tunnel's real crew auction (`GET /api/runs/{id}/auction`).
+/// `Dedicated` is a devsystem-web-level bookkeeping concept, NOT a change to
+/// `ct_common::pipeline::RequiredRole`/`convene()` themselves (those are CADS-Tunnel's
+/// shared core primitives, used by every pipeline in this ecosystem -- extending them
+/// for this one pipeline's GUI convenience would be a materially bigger, cross-repo
+/// change than this ask needs). A `Dedicated` role's `label` is a plain human-chosen
+/// identifier, not yet backed by a real reachability check the way
+/// `devsystem.assistant`'s hardcoded probe is -- there is no general registry of
+/// addressable LLM agents to check against yet (the real gap task #27/#29 already
+/// found), so this deliberately doesn't fabricate one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum RoleFillMode {
+    Auction,
+    Dedicated { label: String },
+}
+
 /// A real completion/abort checkpoint, distinct from [`BacklogItem`] (informational
 /// todo) and `AbortCriteria` (mechanical iteration/failure counts): operator
 /// feedback: "ich möchte nicht nur Iterationen, sondern auch Milestones als
@@ -89,6 +109,12 @@ pub struct RunState {
     /// pre-existing `state.json` files (no owner recorded) still load.
     #[serde(default)]
     pub owner_email: Option<String>,
+    /// Per-role tag -> [`RoleFillMode`] override. A tag absent from this map means
+    /// `Auction` (today's only behavior) -- so every pre-existing `state.json` loads
+    /// with every role still auction-filled, unchanged. `#[serde(default)]` for the
+    /// same reason.
+    #[serde(default)]
+    pub role_fill_modes: std::collections::HashMap<String, RoleFillMode>,
 }
 
 impl RunState {
@@ -104,6 +130,7 @@ impl RunState {
             milestones: Vec::new(),
             repo_url: None,
             owner_email: None,
+            role_fill_modes: std::collections::HashMap::new(),
         }
     }
 }

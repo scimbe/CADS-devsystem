@@ -144,6 +144,14 @@
               font-size:.75rem;font-weight:400;padding:.3rem .4rem;border-radius:5px;cursor:pointer}
  .refresh-opt:hover{background:rgba(95,184,171,.12)}
  .refresh-opt.active{color:var(--accent2);font-weight:700}
+ .fillmode-menu-btn{cursor:pointer;color:var(--muted);font-size:.8rem;padding:0 .2rem;user-select:none}
+ .fillmode-menu-btn:hover{color:var(--text)}
+ .fillmode-popover{position:fixed;z-index:200000;background:#0d1117;border:1px solid var(--border);
+                    border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.45);padding:.4rem;
+                    display:flex;flex-direction:column;gap:.3rem;min-width:11rem}
+ .fillmode-popover input{background:var(--panel-bg,#161b22);border:1px solid var(--border);color:var(--text);
+                          border-radius:5px;padding:.3rem .4rem;font-family:var(--mono);font-size:.72rem;width:100%}
+ .arch-badge.dedicated{background:rgba(95,184,171,.15);color:var(--accent2)}
  .win-btn{width:.8rem;height:.8rem;border-radius:50%;border:none;cursor:pointer;padding:0;
           font-size:0;flex-shrink:0}
  .win-btn.win-close{background:#e5534b}
@@ -859,11 +867,18 @@ async function renderRolesPanel(id, data) {
       each submission generates a fresh, throwaway signing identity server-side (like running
       <code>devsystem_offer --seed N</code> by hand). Not a persistent account/identity yet.</div>`;
 
+  const fillModes = data.state.role_fill_modes || {};
   const cards = data.spec.roles.map(r => {
     const stageId = r.service && r.service.Custom;
     const isAssistant = stageId === 'devsystem.assistant';
+    const fillMode = fillModes[r.tag];
     let badge;
-    if (isAssistant) {
+    if (fillMode && fillMode.mode === 'dedicated') {
+      // Honest, not fabricated: there's no general reachability check for an
+      // arbitrary dedicated-agent label yet (only devsystem.assistant has a real
+      // probe endpoint) -- this just states the mode + label, nothing more.
+      badge = `<span class="arch-badge dedicated">dedicated: ${escapeHtml(fillMode.label)}</span>`;
+    } else if (isAssistant) {
       if (!assistantStatus.configured) badge = `<span class="arch-badge warn">not configured on this deployment</span>`;
       else if (assistantStatus.reachable) {
         const ms = typeof assistantStatus.response_time_ms === 'number' ? ` (${assistantStatus.response_time_ms}ms)` : '';
@@ -897,6 +912,7 @@ async function renderRolesPanel(id, data) {
       <div class="role-card-head">
         <span class="role">${escapeHtml(r.tag)}</span>
         ${badge}
+        <span class="fillmode-menu-btn" data-tag="${escapeHtml(r.tag)}" data-mode="${fillMode ? fillMode.mode : 'auction'}" data-label="${escapeHtml(fillMode && fillMode.label || '')}" title="fill mode: ${fillMode ? escapeHtml(fillMode.mode) : 'auction'}">&ctdot;</span>
       </div>
       <div class="role-meta">${escapeHtml(stageId)} · units ${r.units} · policy ${escapeHtml(String(policy))}</div>
       ${toolsHtml}
@@ -937,6 +953,72 @@ async function renderRolesPanel(id, data) {
       status.textContent = err.message; status.className = 'status-line err';
     }
   });
+
+  for (const btn of body.querySelectorAll('.fillmode-menu-btn')) {
+    btn.onclick = (e) => { e.stopPropagation(); openFillModePopover(id, data, btn); };
+  }
+}
+
+function closeFillModePopover() {
+  const pop = document.getElementById('fillmode-popover');
+  if (pop) pop.remove();
+}
+
+// Real toggle for #382's Roles-panel ask 1/4: auction vs. a dedicated, human-labeled
+// agent. Posts to /api/runs/{id}/roles/{tag}/fill-mode and re-renders on success --
+// no optimistic UI, since the server validates the tag against the real live spec.
+function openFillModePopover(id, data, anchorEl) {
+  closeFillModePopover();
+  closeRefreshPopover();
+  const tag = anchorEl.dataset.tag;
+  const currentMode = anchorEl.dataset.mode;
+  const currentLabel = anchorEl.dataset.label;
+  const rect = anchorEl.getBoundingClientRect();
+  const pop = document.createElement('div');
+  pop.id = 'fillmode-popover';
+  pop.className = 'fillmode-popover';
+  pop.style.top = `${rect.bottom + 4}px`;
+  pop.style.left = `${Math.max(4, rect.left - 120)}px`;
+  pop.innerHTML = `
+    <div class="refresh-popover-label">fill mode -- ${escapeHtml(tag)}</div>
+    <button class="refresh-opt${currentMode === 'auction' ? ' active' : ''}" data-action="auction">Auction (default)</button>
+    <input id="fillmode-label-input" type="text" placeholder="dedicated agent label" value="${currentMode === 'dedicated' ? escapeHtml(currentLabel) : ''}">
+    <button class="refresh-opt${currentMode === 'dedicated' ? ' active' : ''}" data-action="dedicated">Set as dedicated</button>
+    <span id="fillmode-popover-status" class="status-line"></span>`;
+  document.body.appendChild(pop);
+
+  const apply = async (body) => {
+    const statusEl = document.getElementById('fillmode-popover-status');
+    try {
+      await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/roles/${encodeURIComponent(tag)}/fill-mode`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      });
+      closeFillModePopover();
+      // Re-fetch fresh, rather than re-render with the stale `data` this popover
+      // closed over -- role_fill_modes lives on the snapshot passed into
+      // renderRolesPanel, not re-fetched internally the way the auction view is.
+      const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+      if (id === currentRun) currentRunData = fresh;
+      await renderRolesPanel(id, fresh);
+    } catch (err) {
+      if (statusEl) { statusEl.textContent = err.message; statusEl.className = 'status-line err'; }
+    }
+  };
+  pop.querySelector('[data-action="auction"]').onclick = () => apply({ mode: 'auction' });
+  pop.querySelector('[data-action="dedicated"]').onclick = () => {
+    const label = document.getElementById('fillmode-label-input').value.trim();
+    if (!label) {
+      const statusEl = document.getElementById('fillmode-popover-status');
+      statusEl.textContent = 'label required'; statusEl.className = 'status-line err';
+      return;
+    }
+    apply({ mode: 'dedicated', label });
+  };
+  setTimeout(() => {
+    document.addEventListener('click', function onDocClick(e) {
+      if (!pop.contains(e.target)) { closeFillModePopover(); document.removeEventListener('click', onDocClick); }
+    });
+  }, 0);
 }
 
 // Real "how is this pipeline actually structured" view -- operator ask: a

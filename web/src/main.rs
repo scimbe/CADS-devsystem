@@ -15,7 +15,7 @@ use devsystem_pipeline::checkin::render_plan_markdown;
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration, govern_memory_entry, read_memory_log};
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::preflight_annotations;
-use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, toggle_milestone, BacklogItem, Milestone, RunOutcome};
+use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, toggle_milestone, BacklogItem, Milestone, RoleFillMode, RunOutcome};
 use devsystem_pipeline::{AbortCriteria, IterationRecord, StageProposal};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
 use ct_common::pipeline::SelectionState;
@@ -93,6 +93,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/milestones", post(add_milestone))
         .route("/api/runs/{id}/milestones/{index}/toggle", post(toggle_milestone_handler))
         .route("/api/runs/{id}/repo", post(set_repo_url))
+        .route("/api/runs/{id}/roles/{tag}/fill-mode", post(set_role_fill_mode))
         .route("/api/runs/{id}/offers/submit", post(submit_offer))
         .route("/api/runs/{id}/offers/quick-submit", post(quick_submit_offer))
         .route("/api/runs/{id}/auction", get(view_auction))
@@ -717,6 +718,66 @@ async fn set_repo_url(State(state): State<AppState>, AxPath(id): AxPath<String>,
     }
 }
 
+#[derive(Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+enum SetRoleFillModeRequest {
+    Auction,
+    Dedicated { label: String },
+}
+
+/// `POST /api/runs/{id}/roles/{tag}/fill-mode` (#382 Roles panel ask 1/4): switch one
+/// role between `Auction` (today's default, unchanged) and `Dedicated` (a plain,
+/// human-chosen label -- not yet a real reachability-checked identity; see
+/// [`RoleFillMode`]'s own doc comment for why this stops short of a fuller registry).
+/// `:tag` is validated against the run's real live spec, not accepted blindly -- an
+/// unknown role tag is a real `400`, not silently stored as dead data nobody's
+/// `spec.roles` will ever match.
+async fn set_role_fill_mode(
+    State(state): State<AppState>,
+    AxPath((id, tag)): AxPath<(String, String)>,
+    Json(body): Json<SetRoleFillModeRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    if let SetRoleFillModeRequest::Dedicated { label } = &body {
+        if label.trim().is_empty() {
+            return (StatusCode::BAD_REQUEST, "label must be non-empty for a dedicated role").into_response();
+        }
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !spec.roles.iter().any(|r| r.tag == tag) {
+        return (StatusCode::BAD_REQUEST, format!("no role tagged {tag:?} in this run's live spec")).into_response();
+    }
+    let mode = match body {
+        SetRoleFillModeRequest::Auction => RoleFillMode::Auction,
+        SetRoleFillModeRequest::Dedicated { label } => RoleFillMode::Dedicated { label: label.trim().to_string() },
+    };
+    // `Auction` is the implicit default for a tag absent from the map -- storing it
+    // explicitly would just be dead weight that never affects behavior, so switching
+    // back to auction removes the entry instead.
+    match &mode {
+        RoleFillMode::Auction => {
+            run_state.role_fill_modes.remove(&tag);
+        }
+        RoleFillMode::Dedicated { .. } => {
+            run_state.role_fill_modes.insert(tag.clone(), mode);
+        }
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"tag": tag, "fill_mode": run_state.role_fill_modes.get(&tag)})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
 /// Real offer intake -- the counterpart to CADS-Tunnel core deliberately having no
 /// live bid-collection endpoint (verified directly against the checkout, not
 /// assumed). Any process, on any host, that holds a real ed25519 key can sign a
@@ -1265,6 +1326,82 @@ mod tests {
 
         let response = app
             .oneshot(json_request("POST", "/api/runs/repo-bad-run/repo", serde_json::json!({"repo_url": "javascript:alert(1)"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn role_fill_mode_defaults_to_auction_and_can_switch_to_dedicated_and_back() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "fillmode-run"}))).await.unwrap();
+
+        // Default: no entry in the map at all -- Auction is implicit, not a fabricated explicit value.
+        let response = app.clone().oneshot(Request::builder().uri("/api/runs/fillmode-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert!(body["state"]["role_fill_modes"].as_object().unwrap().is_empty());
+
+        // Switch the real "plan" role (present in the default spec) to Dedicated.
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/fillmode-run/roles/plan/fill-mode",
+                serde_json::json!({"mode": "dedicated", "label": "Compass-1"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["fill_mode"]["mode"], "dedicated");
+        assert_eq!(body["fill_mode"]["label"], "Compass-1");
+
+        let response = app.clone().oneshot(Request::builder().uri("/api/runs/fillmode-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["state"]["role_fill_modes"]["plan"]["mode"], "dedicated");
+
+        // Switch back to Auction -- the entry is removed, not stored as an explicit "auction" value.
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/fillmode-run/roles/plan/fill-mode", serde_json::json!({"mode": "auction"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let response = app.oneshot(Request::builder().uri("/api/runs/fillmode-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert!(body["state"]["role_fill_modes"].as_object().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn role_fill_mode_rejects_an_unknown_role_tag() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "fillmode-bad-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/fillmode-bad-run/roles/not-a-real-role/fill-mode",
+                serde_json::json!({"mode": "dedicated", "label": "X"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn role_fill_mode_rejects_an_empty_dedicated_label() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "fillmode-empty-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/fillmode-empty-run/roles/plan/fill-mode",
+                serde_json::json!({"mode": "dedicated", "label": "   "}),
+            ))
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST);
