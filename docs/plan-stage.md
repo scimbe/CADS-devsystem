@@ -44,15 +44,20 @@ This maps directly onto the zylos envelope: the plan artifact **is** the
 the next `RequiredRole` in the pipeline, not just the role-filler's own
 self-assessment.
 
-## Pre-flight risk annotation (proposal §5, not yet built)
+## Pre-flight risk annotation (proposal §5)
 
 The proposal also asks for a lightweight review agent that pre-populates
-canvas annotations for known risk patterns ("touches auth," "no test stage
-before implement," "external-partner role with no price ceiling") before a
-human ever opens the canvas. Plan Canvas's `await --reply` and annotation
-JSON shape support this (an agent could seed the session with `chat`/
-`annotation` items before the human looks), but the seeding mechanism itself
-is not implemented here yet — next slice.
+canvas annotations for known risk patterns before a human ever opens the
+canvas. Built in [`pipeline/src/preflight.rs`](../pipeline/src/preflight.rs):
+two real, mechanical checks over a run's actual history — "touches auth"
+(a security keyword in the latest iteration's feedback or a proposal's
+rationale) and "no test stage before implement" (a real `devsystem.implement`
+iteration with no `devsystem.test` before it in history). `devsystem_checkin`
+seeds any findings into the session's chat via the canvas server's
+`POST /api/session/<key>/reply` endpoint directly — the same one
+`await --reply` posts to internally, called without ever invoking the
+blocking `await` itself. Not yet built: "external-partner role with no price
+ceiling" — `StageProposal` has no price-ceiling field yet to check against.
 
 ## What's still open
 
