@@ -42,6 +42,9 @@
  .roles{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:1rem}
  .role{font-family:var(--mono);font-size:.75rem;background:rgba(95,184,171,.12);color:var(--accent2);
        border-radius:5px;padding:.15rem .5rem}
+ button.stalled-fill{border:1px solid var(--accent);background:rgba(217,138,79,.12);color:var(--accent);
+       cursor:pointer}
+ button.stalled-fill:hover{background:rgba(217,138,79,.22)}
  .history{display:flex;flex-direction:column;gap:.6rem;max-height:22rem;overflow-y:auto}
  .iter{border:1px solid var(--border);border-radius:8px;padding:.65rem .8rem;font-size:.85rem}
  .iter .head{font-family:var(--mono);font-size:.75rem;color:var(--muted);display:flex;justify-content:space-between}
@@ -167,7 +170,9 @@ function renderRunDetail(id, data) {
       <div class="title">⚠ ${stalled.length} stalled stage(s)</div>
       Proposed and live in the spec, but no iteration has ever run <em>as</em> these stages --
       likely blocked on a pending decision:
-      <div style="margin-top:.3rem">${stalled.map(s => `<span class="role">${escapeHtml(s)}</span>`).join(' ')}</div>
+      <div style="margin-top:.3rem">${stalled.map(s =>
+        `<button type="button" class="role stalled-fill" data-stage="${escapeHtml(s)}" title="Use this stage for the iteration below">${escapeHtml(s)}</button>`
+      ).join(' ')}</div>
     </div>` : '';
 
   detail.innerHTML = `
@@ -217,6 +222,12 @@ function renderRunDetail(id, data) {
   document.getElementById('it-has-proposal').onchange = (e) => {
     document.getElementById('proposal-fields').style.display = e.target.checked ? 'block' : 'none';
   };
+  for (const btn of document.querySelectorAll('.stalled-fill')) {
+    btn.onclick = () => {
+      document.getElementById('it-stage').value = btn.dataset.stage;
+      document.getElementById('it-feedback').focus();
+    };
+  }
 }
 
 async function submitIteration(id) {
