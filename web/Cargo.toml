@@ -9,10 +9,14 @@ name = "devsystem-web"
 path = "src/main.rs"
 
 [dependencies]
-# No direct ct-common dep -- it was never actually used here (verified by grepping
-# src/main.rs), only needed transitively via devsystem-pipeline. Removing it closes
-# the root cause of a real Dependabot false-downgrade (see #382 history) rather than
-# just declining the PR each time it reappears.
+# Direct dep again (was removed earlier when genuinely unused -- see #382 history
+# for the Dependabot false-downgrade that motivated removing it then). Now
+# genuinely needed: the real offer-collection endpoints construct/verify
+# ct_common::channel::CapacityOffer and run ct_common::pipeline's real
+# auction_view directly, not just via devsystem-pipeline's re-exports. Pinned to
+# the exact same tag devsystem-pipeline uses so both crates always agree on the
+# wire-compatible CapacityOffer/PipelineSpec shapes.
+ct-common = { git = "https://github.com/scimbe/CADS-Tunnel", tag = "v0.4.13" }
 devsystem-pipeline = { path = "../pipeline" }
 axum = "0.8"
 serde = { version = "1", features = ["derive"] }
@@ -25,3 +29,6 @@ tower-http = { version = "0.7", features = ["fs"] }
 # socket, no fixture data, exercises the exact handlers `main()` serves.
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
+# Signs real CapacityOffers in tests -- the exact constructor devsystem-pipeline's
+# own tests use, not a hand-rolled fixture.
+ed25519-dalek = { version = "2", features = ["rand_core"] }

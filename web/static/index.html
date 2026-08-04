@@ -25,13 +25,19 @@
  #desktop{position:relative;width:100%;height:calc(100vh - 48px);overflow:auto}
  .win{position:absolute;background:var(--panel);border:1px solid var(--border);border-radius:10px;
       box-shadow:0 10px 30px rgba(0,0,0,.45);display:flex;flex-direction:column;min-width:220px;min-height:140px}
- .win-header{cursor:move;display:flex;justify-content:space-between;align-items:center;
+ .win.minimized{height:auto !important;min-height:0 !important}
+ .win.minimized .win-body,.win.minimized .win-resize{display:none}
+ .win-header{cursor:move;display:flex;align-items:center;gap:.6rem;
              padding:.4rem .6rem;border-bottom:1px solid var(--border);font-family:var(--mono);
              font-size:.72rem;color:var(--muted);letter-spacing:.03em;text-transform:uppercase;
              border-radius:10px 10px 0 0;user-select:none}
- .win-close{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:1rem;
-            line-height:1;padding:0 .2rem;font-weight:400}
- .win-close:hover{color:var(--danger)}
+ .win-controls{display:flex;gap:.4rem;flex-shrink:0}
+ .win-btn{width:.8rem;height:.8rem;border-radius:50%;border:none;cursor:pointer;padding:0;
+          font-size:0;flex-shrink:0}
+ .win-btn.win-close{background:#e5534b}
+ .win-btn.win-min{background:#d98a4f}
+ .win-btn.win-max{background:#5fb8ab}
+ .win-btn:hover{filter:brightness(1.25)}
  .win-body{padding:.8rem;overflow:auto;flex:1;font-size:.85rem}
  .win-resize{position:absolute;right:2px;bottom:2px;width:14px;height:14px;cursor:nwse-resize;
              border-right:2px solid var(--border);border-bottom:2px solid var(--border)}
@@ -95,6 +101,10 @@
  .backlog-item{display:flex;align-items:flex-start;gap:.5rem;font-size:.85rem;cursor:pointer}
  .backlog-item input{width:auto;margin-top:.2rem}
  .backlog-item.done span{color:var(--muted);text-decoration:line-through}
+ .auction-role{border:1px solid var(--border);border-radius:8px;padding:.5rem .7rem;margin-bottom:.5rem;font-size:.82rem}
+ .auction-role-head{font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:.3rem}
+ .auction-bid{display:flex;justify-content:space-between;font-family:var(--mono);font-size:.78rem;padding:.15rem 0;color:var(--muted)}
+ .auction-bid.win{color:var(--accent2);font-weight:700}
  .history{display:flex;flex-direction:column;gap:.6rem}
  .iter{border:1px solid var(--border);border-radius:8px;padding:.65rem .8rem;font-size:.85rem}
  .iter .head{font-family:var(--mono);font-size:.75rem;color:var(--muted);display:flex;justify-content:space-between}
@@ -153,9 +163,11 @@ const PANEL_DEFAULTS = {
   risks:      { title: 'Risks & Stalled',    x: 312,  y: 332, w: 400, h: 240 },
   newiter:    { title: 'New Iteration',      x: 1064, y: 16,  w: 340, h: 556 },
   history:    { title: 'History',            x: 728,  y: 332, w: 320, h: 480 },
-  backlog:    { title: 'Backlog',            x: 1420, y: 16,  w: 340, h: 340 },
+  backlog:    { title: 'Backlog',            x: 1420, y: 16,  w: 340, h: 300 },
+  milestones: { title: 'Milestones',         x: 1420, y: 332, w: 340, h: 240 },
   checkin:    { title: 'Check-in',           x: 16,   y: 452, w: 280, h: 300 },
-  memory:     { title: 'Memory Log',         x: 1420, y: 372, w: 380, h: 300 },
+  memory:     { title: 'Memory Log',         x: 1780, y: 16,  w: 360, h: 300 },
+  auction:    { title: 'Auction',            x: 1064, y: 592, w: 340, h: 300 },
 };
 
 const LAYOUT_KEY = 'devsystem-panel-layout-v1';
@@ -173,25 +185,39 @@ function panelRect(id) {
   return {
     x: saved.x ?? d.x, y: saved.y ?? d.y, w: saved.w ?? d.w, h: saved.h ?? d.h,
     visible: saved.visible ?? true, z: saved.z ?? (zTop++),
+    minimized: saved.minimized ?? false, maximized: saved.maximized ?? false, preMax: saved.preMax ?? null,
   };
+}
+
+function applyRect(win, r) {
+  win.style.left = r.x + 'px';
+  win.style.top = r.y + 'px';
+  win.style.width = r.w + 'px';
+  win.style.height = r.h + 'px';
 }
 
 function createPanel(id) {
   const d = PANEL_DEFAULTS[id];
   const r = panelRect(id);
   const win = document.createElement('div');
-  win.className = 'win';
+  win.className = 'win' + (r.minimized ? ' minimized' : '');
   win.id = `win-${id}`;
-  win.style.left = r.x + 'px';
-  win.style.top = r.y + 'px';
-  win.style.width = r.w + 'px';
-  win.style.height = r.h + 'px';
+  applyRect(win, r);
   win.style.zIndex = r.z;
   win.style.display = r.visible ? 'flex' : 'none';
+  // Traffic-light order/coloring (macOS convention): close=red, minimize=yellow,
+  // maximize=green -- operator feedback: "nicht nur schliessen, auch max und
+  // minimieren." Minimize collapses to just the header (state preserved, not
+  // destroyed); maximize fills the desktop and remembers the pre-maximize rect
+  // to restore on a second click.
   win.innerHTML = `
     <div class="win-header" data-panel="${id}">
+      <span class="win-controls">
+        <button type="button" class="win-btn win-close" data-panel="${id}" title="Close">×</button>
+        <button type="button" class="win-btn win-min" data-panel="${id}" title="Minimize">–</button>
+        <button type="button" class="win-btn win-max" data-panel="${id}" title="Maximize">▢</button>
+      </span>
       <span>${d.title}</span>
-      <button type="button" class="win-close" data-panel="${id}" title="Hide">×</button>
     </div>
     <div class="win-body" id="body-${id}"></div>
     <div class="win-resize" data-panel="${id}"></div>
@@ -201,7 +227,37 @@ function createPanel(id) {
   wireResize(win, id);
   win.addEventListener('mousedown', () => bringToFront(id));
   win.querySelector('.win-close').onclick = (e) => { e.stopPropagation(); hidePanel(id); };
+  win.querySelector('.win-min').onclick = (e) => { e.stopPropagation(); toggleMinimize(id); };
+  win.querySelector('.win-max').onclick = (e) => { e.stopPropagation(); toggleMaximize(id); };
   return win;
+}
+
+function toggleMinimize(id) {
+  const win = document.getElementById(`win-${id}`);
+  const minimized = !win.classList.contains('minimized');
+  win.classList.toggle('minimized', minimized);
+  layout[id] = { ...panelRect(id), minimized };
+  saveLayout();
+}
+
+function toggleMaximize(id) {
+  const win = document.getElementById(`win-${id}`);
+  const current = panelRect(id);
+  const desktop = document.getElementById('desktop');
+  if (!current.maximized) {
+    const preMax = { x: win.offsetLeft, y: win.offsetTop, w: win.offsetWidth, h: win.offsetHeight };
+    win.style.left = '8px';
+    win.style.top = '8px';
+    win.style.width = (desktop.clientWidth - 16) + 'px';
+    win.style.height = (desktop.clientHeight - 16) + 'px';
+    layout[id] = { ...current, maximized: true, preMax };
+  } else {
+    const pre = current.preMax || PANEL_DEFAULTS[id];
+    applyRect(win, pre);
+    layout[id] = { ...current, maximized: false, x: pre.x, y: pre.y, w: pre.w, h: pre.h, preMax: null };
+  }
+  saveLayout();
+  bringToFront(id);
 }
 
 function bringToFront(id) {
@@ -231,7 +287,7 @@ function showPanel(id) {
 function wireDrag(win, id) {
   const header = win.querySelector('.win-header');
   header.addEventListener('mousedown', (e) => {
-    if (e.target.classList.contains('win-close')) return;
+    if (e.target.classList.contains('win-btn')) return;
     e.preventDefault();
     const startX = e.clientX, startY = e.clientY;
     const startLeft = win.offsetLeft, startTop = win.offsetTop;
@@ -365,7 +421,7 @@ async function refreshRunsList() {
 async function selectRun(id) {
   currentRun = id;
   await refreshRunsList();
-  for (const panelId of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog']) {
+  for (const panelId of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones']) {
     document.getElementById(`body-${panelId}`).innerHTML = '<span class="lede">Loading…</span>';
   }
   try {
@@ -377,12 +433,14 @@ async function selectRun(id) {
     renderNewIterationPanel(id, data);
     renderHistoryPanel(data);
     renderBacklogPanel(id, data);
+    renderMilestonesPanel(id, data);
     document.getElementById('body-checkin').innerHTML = `<button class="secondary" id="view-checkin">View check-in</button><div id="checkin-view"></div>`;
     document.getElementById('view-checkin').onclick = () => viewCheckin(id);
     document.getElementById('body-memory').innerHTML = `<button class="secondary" id="view-memory">View memory log</button><div id="memory-view"></div>`;
     document.getElementById('view-memory').onclick = () => viewMemory(id);
+    renderAuctionPanel(id);
   } catch (e) {
-    for (const panelId of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog']) {
+    for (const panelId of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones']) {
       document.getElementById(`body-${panelId}`).innerHTML = `<span class="status-line err">${e.message}</span>`;
     }
   }
@@ -392,6 +450,38 @@ function placeholderIfNoRun(panelId) {
   const el = document.getElementById(`body-${panelId}`);
   if (!currentRun) { el.innerHTML = '<span class="lede">Select a run in the Runs panel.</span>'; return true; }
   return false;
+}
+
+// The real auction, not a fixture: whatever devsystem_offer (or any process that
+// signs a real CapacityOffer) has actually submitted for this run's roles. A role
+// with no qualifying offer shows the real PipelineError, not a fabricated empty
+// bid list -- "no bids yet" is the honest state most runs start in.
+async function renderAuctionPanel(id) {
+  const body = document.getElementById('body-auction');
+  body.innerHTML = '<span class="lede">Loading…</span>';
+  try {
+    const data = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/auction`);
+    if (data.error) {
+      body.innerHTML = `<span class="lede">${escapeHtml(data.error)}</span>`;
+      return;
+    }
+    const roles = data.roles || [];
+    if (!roles.length) {
+      body.innerHTML = '<span class="lede">No roles.</span>';
+      return;
+    }
+    body.innerHTML = roles.map(r => `
+      <div class="auction-role">
+        <div class="auction-role-head">${escapeHtml(r.role)}</div>
+        ${r.bids.length ? r.bids.map(b => `
+          <div class="auction-bid${b.win ? ' win' : ''}">
+            <span>${b.win ? '★' : '–'} ${escapeHtml(b.who)}</span>
+            <span>${b.units} unit(s) @ ${b.price}</span>
+          </div>`).join('') : '<div class="lede" style="font-size:.78rem">no bids yet</div>'}
+      </div>`).join('');
+  } catch (e) {
+    body.innerHTML = `<span class="status-line err">${e.message}</span>`;
+  }
 }
 
 // Real per-role status view (operator feedback: "die einzelnen Rollen sehen, was
@@ -528,6 +618,59 @@ async function toggleBacklogItem(id, index) {
     await selectRun(id);
   } catch (e) {
     const status = document.getElementById('backlog-status');
+    if (status) { status.textContent = e.message; status.className = 'status-line err'; }
+  }
+}
+
+// Real completion/abort checkpoints -- operator feedback: "ich möchte nicht nur
+// Iterationen, sondern auch Milestones als Abbruchkriterium definieren können."
+// Achieving one auto-pauses the run (RunState::paused, the same mechanism the
+// Pause button uses) -- shown here so it's not a silent side effect.
+function renderMilestonesPanel(id, data) {
+  const body = document.getElementById('body-milestones');
+  const milestones = data.state.milestones || [];
+  const items = milestones.length
+    ? milestones.map((m, i) => `
+        <label class="backlog-item${m.achieved ? ' done' : ''}">
+          <input type="checkbox" class="milestone-toggle" data-index="${i}" ${m.achieved ? 'checked' : ''}>
+          <span>${escapeHtml(m.description)}</span>
+        </label>`).join('')
+    : '<span class="lede">No milestones yet.</span>';
+  body.innerHTML = `
+    <div class="backlog-list">${items}</div>
+    <div class="lede" style="font-size:.72rem;margin-top:.4rem">Checking one off pauses the run for review.</div>
+    <form class="inline" id="milestone-form" style="margin-top:.6rem">
+      <input id="milestone-text" placeholder="Add a milestone…">
+      <button type="submit">+</button>
+    </form>
+    <div id="milestone-status" class="status-line"></div>
+  `;
+  for (const cb of body.querySelectorAll('.milestone-toggle')) {
+    cb.onchange = () => toggleMilestone(id, parseInt(cb.dataset.index, 10));
+  }
+  document.getElementById('milestone-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const status = document.getElementById('milestone-status');
+    const description = document.getElementById('milestone-text').value.trim();
+    if (!description) { status.textContent = 'Description is required.'; status.className = 'status-line err'; return; }
+    try {
+      await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/milestones`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ description })
+      });
+      await selectRun(id);
+    } catch (err) {
+      status.textContent = err.message; status.className = 'status-line err';
+    }
+  });
+}
+
+async function toggleMilestone(id, index) {
+  try {
+    await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/milestones/${index}/toggle`, { method: 'POST' });
+    await selectRun(id);
+  } catch (e) {
+    const status = document.getElementById('milestone-status');
     if (status) { status.textContent = e.message; status.className = 'status-line err'; }
   }
 }
@@ -826,7 +969,7 @@ function escapeHtml(s) {
 
 initPanels();
 loadRuns();
-for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'checkin', 'memory']) {
+for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'checkin', 'memory', 'auction']) {
   placeholderIfNoRun(id);
 }
 </script>

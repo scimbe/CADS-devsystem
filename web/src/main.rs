@@ -15,12 +15,16 @@ use devsystem_pipeline::checkin::render_plan_markdown;
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration, govern_memory_entry, read_memory_log};
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::preflight_annotations;
-use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, BacklogItem, RunOutcome};
+use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, toggle_milestone, BacklogItem, Milestone, RunOutcome};
 use devsystem_pipeline::{AbortCriteria, IterationRecord, StageProposal};
+use ct_common::channel::CapacityOffer;
+use ct_common::pipeline::SelectionState;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tower_http::services::ServeDir;
 
 #[derive(Clone)]
@@ -36,6 +40,20 @@ struct AppState {
     /// sub-millisecond, so serializing them costs nothing a human submitting one
     /// form at a time would ever notice.
     write_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Real signed `CapacityOffer`s submitted for a run's roles (run_id -> one
+    /// current offer per holder pubkey), in-memory only -- deliberately not
+    /// persisted to `state.json`: these are live market data with their own
+    /// `expires_at`, the same reason CADS-Tunnel core itself never persists
+    /// `CapacityOffer`s (see `auction_view`'s doc comment). Follows the proven
+    /// CADS-auction-demo pattern: devsystem-web collects real offers itself and
+    /// runs the real `PipelineSpec::auction_view` in-process -- CADS-Tunnel's
+    /// control plane has no live bid-collection endpoint to call instead
+    /// (verified directly against the current checkout, not assumed).
+    offers: Arc<tokio::sync::Mutex<HashMap<String, Vec<CapacityOffer>>>>,
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock before 1970").as_secs()
 }
 
 /// The real API router, no static-file fallback -- separated out so tests can
@@ -64,6 +82,10 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/memory/{index}/govern", post(govern_memory))
         .route("/api/runs/{id}/backlog", post(add_backlog_item))
         .route("/api/runs/{id}/backlog/{index}/toggle", post(toggle_backlog_item))
+        .route("/api/runs/{id}/milestones", post(add_milestone))
+        .route("/api/runs/{id}/milestones/{index}/toggle", post(toggle_milestone_handler))
+        .route("/api/runs/{id}/offers/submit", post(submit_offer))
+        .route("/api/runs/{id}/auction", get(view_auction))
         .with_state(state)
 }
 
@@ -71,7 +93,7 @@ fn api_router(state: AppState) -> Router {
 async fn main() {
     let runs_dir = PathBuf::from(std::env::var("DEVSYSTEM_RUNS_DIR").unwrap_or_else(|_| "runs".to_string()));
     fs::create_dir_all(&runs_dir).expect("create runs dir");
-    let state = AppState { runs_dir: Arc::new(runs_dir), write_lock: Arc::new(tokio::sync::Mutex::new(())) };
+    let state = AppState { runs_dir: Arc::new(runs_dir), write_lock: Arc::new(tokio::sync::Mutex::new(())), offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())) };
 
     let static_dir = std::env::var("DEVSYSTEM_STATIC_DIR").unwrap_or_else(|_| "web/static".to_string());
 
@@ -489,6 +511,122 @@ async fn toggle_backlog_item(State(state): State<AppState>, AxPath((id, index)):
     }
 }
 
+#[derive(Deserialize)]
+struct AddMilestoneRequest {
+    description: String,
+}
+
+/// Operator feedback: "ich möchte nicht nur Iterationen, sondern auch Milestones
+/// als Abbruchkriterium definieren können." See `Milestone`/`toggle_milestone` in
+/// devsystem-pipeline for the real semantics (the achieved transition auto-pauses
+/// the run).
+async fn add_milestone(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    Json(body): Json<AddMilestoneRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let description = body.description.trim().to_string();
+    if description.is_empty() {
+        return (StatusCode::BAD_REQUEST, "description must not be empty").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    run_state.milestones.push(Milestone { description, achieved: false });
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"milestones": run_state.milestones})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+async fn toggle_milestone_handler(State(state): State<AppState>, AxPath((id, index)): AxPath<(String, usize)>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if let Err(e) = toggle_milestone(&mut run_state, index) {
+        return (StatusCode::NOT_FOUND, e).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"milestones": run_state.milestones, "paused": run_state.paused})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// Real offer intake -- the counterpart to CADS-Tunnel core deliberately having no
+/// live bid-collection endpoint (verified directly against the checkout, not
+/// assumed). Any process, on any host, that holds a real ed25519 key can sign a
+/// `CapacityOffer` (`ct_common::channel::CapacityOffer::sign_new_with_services`,
+/// the exact same constructor `devsystem-pipeline`'s own tests use) and POST it
+/// here -- that's the whole "minimum agent": no channel/network infra of its own,
+/// just this one HTTP call. Rejects an invalid signature or an already-expired
+/// offer outright (`CapacityOffer::is_valid`, real cryptographic verification, not
+/// a shape check) rather than silently accepting garbage. One current offer per
+/// holder pubkey per run -- a resubmission replaces the holder's prior offer.
+async fn submit_offer(State(state): State<AppState>, AxPath(id): AxPath<String>, Json(offer): Json<CapacityOffer>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    if !offer.is_valid(unix_now()) {
+        return (StatusCode::BAD_REQUEST, "offer signature is invalid or it is already expired").into_response();
+    }
+    let mut offers = state.offers.lock().await;
+    let run_offers = offers.entry(id).or_default();
+    run_offers.retain(|o| o.holder_pubkey != offer.holder_pubkey);
+    run_offers.push(offer);
+    (StatusCode::OK, Json(serde_json::json!({"accepted": true}))).into_response()
+}
+
+/// The real auction, not a fixture: runs `PipelineSpec::auction_view` (the same
+/// primitive CADS-auction-demo proves out) over whatever real, currently-valid
+/// offers have been submitted for this run's roles. Expired offers are excluded by
+/// `auction_view` itself (`is_valid(now)`); a role with no qualifying offer makes
+/// the whole call fail with `PipelineError::UnfilledRole` -- surfaced as a real,
+/// honest per-role "no offers yet" rather than a fabricated empty bid list.
+async fn view_auction(State(state): State<AppState>, AxPath(id): AxPath<String>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let (spec, _run_state) = match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    };
+    let offers = state.offers.lock().await;
+    let run_offers = offers.get(&id).cloned().unwrap_or_default();
+    let mut selection_state = SelectionState::default();
+    // No real identity-resolution registry is wired up yet (a real, honest gap,
+    // not fabricated) -- label by a short hex prefix of the holder pubkey so bids
+    // from different holders are at least distinguishable.
+    let label = |holder: &[u8; 32]| holder.iter().take(4).map(|b| format!("{b:02x}")).collect::<String>();
+    match spec.auction_view(&run_offers, unix_now(), spec.selection_policy, &mut selection_state, label) {
+        Ok(views) => Json(serde_json::json!({"roles": views})).into_response(),
+        Err(e) => (StatusCode::OK, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,8 +636,25 @@ mod tests {
 
     fn test_state() -> (AppState, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let state = AppState { runs_dir: Arc::new(dir.path().to_path_buf()), write_lock: Arc::new(tokio::sync::Mutex::new(())) };
+        let state = AppState { runs_dir: Arc::new(dir.path().to_path_buf()), write_lock: Arc::new(tokio::sync::Mutex::new(())), offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())) };
         (state, dir)
+    }
+
+    /// A real signed CapacityOffer -- the exact constructor devsystem-pipeline's own
+    /// tests use (`pipeline/src/lib.rs`), not a hand-rolled fixture.
+    fn real_offer(seed: u8, service: &str, price: u64) -> CapacityOffer {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+        CapacityOffer::sign_new_with_services(
+            &sk,
+            ct_common::channel::CapacityKind::CloudApiQuota,
+            vec!["claude".into()],
+            1,
+            price,
+            "usd".into(),
+            0,
+            u64::MAX,
+            vec![ct_common::channel::ServiceType::Custom(service.to_string())],
+        )
     }
 
     async fn body_json(response: axum::response::Response) -> serde_json::Value {
@@ -755,6 +910,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn achieving_a_milestone_via_the_api_auto_pauses_the_run() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "milestone-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/milestone-run/milestones", serde_json::json!({"description": "APK builds and installs"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["milestones"][0]["achieved"], false);
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/milestone-run/milestones/0/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["milestones"][0]["achieved"], true);
+        assert_eq!(body["paused"], true, "achieving a milestone must auto-pause the run");
+
+        // Independently confirms it actually persisted and that iterate_run now
+        // really refuses, not just that the toggle response claimed paused.
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/milestone-run/iterate",
+                serde_json::json!({"stage": "devsystem.plan", "feedback": "should be refused", "succeeded": true}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn toggling_an_out_of_range_milestone_404s() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "milestone-oob-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/milestone-oob-run/milestones/9/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
     async fn backlog_items_can_be_added_and_toggled_and_persist() {
         let (state, _dir) = test_state();
         let app = api_router(state);
@@ -963,7 +1176,7 @@ mod tests {
         fs::create_dir_all(&runs_dir).unwrap();
         fs::write(dir.path().join("state.json"), r#"{"run_id":"OUTSIDE","consecutive_failures":0,"history":[],"added_stages":[],"criteria":{"max_iterations":20,"max_consecutive_failures":3,"checkin_every":5}}"#).unwrap();
 
-        let state = AppState { runs_dir: Arc::new(runs_dir), write_lock: Arc::new(tokio::sync::Mutex::new(())) };
+        let state = AppState { runs_dir: Arc::new(runs_dir), write_lock: Arc::new(tokio::sync::Mutex::new(())), offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())) };
         let app = api_router(state);
 
         for uri in ["/api/runs/..", "/api/runs/../checkin", "/api/runs/../memory"] {
@@ -1054,5 +1267,78 @@ mod tests {
         let mut iteration_numbers: Vec<u64> = history.iter().map(|r| r["iteration"].as_u64().unwrap()).collect();
         iteration_numbers.sort_unstable();
         assert_eq!(iteration_numbers, (1..=N as u64).collect::<Vec<_>>(), "iteration numbers must be exactly 1..=N, no duplicates or gaps");
+    }
+
+    #[tokio::test]
+    async fn auction_view_reports_unfilled_role_honestly_when_no_offers_submitted() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "auction-empty-run"}))).await.unwrap();
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/auction-empty-run/auction").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), SC::OK, "an unfilled role is reported in the body, not an HTTP error");
+        let body = body_json(response).await;
+        assert!(body["error"].as_str().unwrap().contains("plan"), "the real PipelineError should name the unfilled role");
+    }
+
+    #[tokio::test]
+    async fn a_real_signed_offer_is_accepted_and_wins_its_role_in_the_real_auction() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "auction-run"}))).await.unwrap();
+
+        let offer = real_offer(1, "devsystem.plan", 42);
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/auction-run/offers/submit", serde_json::to_value(&offer).unwrap()))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/auction-run/auction").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        let roles = body["roles"].as_array().expect("a real auction_view result, not an error");
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0]["role"], "plan");
+        let bids = roles[0]["bids"].as_array().unwrap();
+        assert_eq!(bids.len(), 1);
+        assert_eq!(bids[0]["price"], 42);
+        assert_eq!(bids[0]["win"], true, "the only qualifying offer must win its role");
+    }
+
+    #[tokio::test]
+    async fn submit_offer_rejects_a_tampered_signature() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "auction-tamper-run"}))).await.unwrap();
+
+        let mut offer = serde_json::to_value(real_offer(2, "devsystem.plan", 10)).unwrap();
+        offer["min_price"] = serde_json::json!(999_999); // mutate a signed field after signing
+        let response = app.oneshot(json_request("POST", "/api/runs/auction-tamper-run/offers/submit", offer)).await.unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a tampered signed field must fail real signature verification");
+    }
+
+    #[tokio::test]
+    async fn resubmitting_from_the_same_holder_replaces_the_prior_offer() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "auction-resubmit-run"}))).await.unwrap();
+
+        for price in [10, 20] {
+            let offer = real_offer(3, "devsystem.plan", price);
+            let response = app
+                .clone()
+                .oneshot(json_request("POST", "/api/runs/auction-resubmit-run/offers/submit", serde_json::to_value(&offer).unwrap()))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::OK);
+        }
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/auction-resubmit-run/auction").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        let bids = body["roles"][0]["bids"].as_array().unwrap();
+        assert_eq!(bids.len(), 1, "the same holder resubmitting must replace, not accumulate, its offer");
+        assert_eq!(bids[0]["price"], 20, "the latest resubmission's price must be the one in effect");
     }
 }
