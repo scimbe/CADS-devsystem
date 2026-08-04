@@ -1365,6 +1365,20 @@ async function renderRolesPanel(id, data) {
         ? ` (accepted bid ${escapeHtml(fillMode.accepted_bid.holder_label)} @ ${fillMode.accepted_bid.price}, at accept time)`
         : '';
       badge = `<span class="arch-badge dedicated">dedicated: ${escapeHtml(fillMode.label)}${acceptedNote}</span>`;
+      // Operator ask: flag an unresponsive directly-accepted bidder. Deliberately
+      // NO configurable "acceptable time" threshold here -- rather than guess a
+      // number, this reuses #40's real freshness data as a plain existence check:
+      // does the accepted holder_label currently have ANY valid, unexpired offer
+      // at all for this role? A stopped-resubmitting bidder (the established
+      // pattern real bidders use to stay live) simply falls out of the current
+      // bids list on its own -- no threshold to pick, no guessing.
+      if (fillMode.accepted_bid && auctionRoles) {
+        const view = auctionRoles.find(v => v.role === r.tag);
+        const stillBidding = view && view.bids.some(b => b.who === fillMode.accepted_bid.holder_label);
+        badge += stillBidding
+          ? ` <span class="arch-badge ok">still bidding</span>`
+          : ` <span class="arch-badge err">⚠ no current offer from this bidder -- may be unresponsive</span>`;
+      }
     } else if (isAssistant) {
       if (!assistantStatus.configured) badge = `<span class="arch-badge warn">not configured on this deployment</span>`;
       else if (assistantStatus.reachable) {
