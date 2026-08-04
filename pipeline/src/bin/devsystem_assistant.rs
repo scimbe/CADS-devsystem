@@ -6,14 +6,24 @@
 //! ...`, verified directly against this host, not assumed), grounded in a run's
 //! real current state fetched from devsystem-web -- never invented data.
 //!
-//! v1 scope is deliberately ADVICE ONLY: it never executes an action itself. This
-//! matches the operator's own framing directly -- "Die Task sollen eigentlich nur
-//! im absoluten Notfall vom Menschen angepasst werden... Ein 'Assistent' hilft mir
-//! primär die Pipeline zu steuern... so dass ich nicht etwas in den grundsätzlich
-//! formalisierten Requirement- und Organisationsprozess negativ eingreife." A
-//! later increment can let it PROPOSE structured actions for a human to review and
-//! apply through the real API; this one only talks, exactly like art-handler.sh's
-//! "isolated, no tool access -- pure generation" role.
+//! v1 was deliberately ADVICE ONLY, matching the operator's original framing --
+//! "Die Task sollen eigentlich nur im absoluten Notfall vom Menschen angepasst
+//! werden... so dass ich nicht etwas in den grundsätzlich formalisierten
+//! Requirement- und Organisationsprozess negativ eingreife." The operator later
+//! reversed that explicitly: told the assistant "Eintragen musst du M1-M3 selbst
+//! im Milestones-Panel" and pushed back -- "der Sinn soll sein, das der
+//! Devsystem Assistent alles fuer mich eintragen und alles fuer mich ueberpruefen
+//! kann." This v2 slice gives it real, narrow write access to exactly two kinds
+//! of run state (milestones, backlog items) it can act on directly, still via
+//! pure text generation -- the LLM itself keeps zero tool access
+//! (`ASSISTANT_DISALLOWED_TOOLS` disallows Edit/Write/Bash/WebFetch/WebSearch/
+//! Agent, same as art-handler.sh's isolated role). It signals intent to act by
+//! emitting a structured `devsystem-actions` JSON block in its own reply text;
+//! this trusted Rust bridge (never the LLM) is what actually calls back into
+//! devsystem-web's real API and reports honestly what happened. Anything beyond
+//! these two data kinds (e.g. filing a GitHub feature request) is deliberately
+//! out of scope for this slice -- the operator wants that kind of
+//! externally-visible action discussed first, not auto-executed.
 //!
 //! Usage:
 //!   devsystem_assistant <api-base-url> <run-id> <instruction...>   (one-shot CLI)
@@ -79,26 +89,132 @@ fn condense_history(body: &str) -> String {
     serde_json::to_string(&root).unwrap_or_else(|_| body.to_string())
 }
 
+const ACTIONS_FENCE_OPEN: &str = "```devsystem-actions";
+const ACTIONS_FENCE_CLOSE: &str = "```";
+
 fn build_system_prompt(context: &str) -> String {
     format!(
-        "You are devsystem.assistant, a specialized advisory role in The Development \
-         System -- a real, self-optimizing, agent-driven pipeline (CADS-Tunnel#382). \
-         Your job is to help the human operator understand, control, and optimize a \
-         real pipeline run without them having to hand-edit raw state directly. Give \
-         concrete, grounded advice based ONLY on the real current run state given \
-         below -- never invent data that isn't there, and say plainly if the state \
-         doesn't contain enough information to answer. You do NOT execute any action \
-         yourself in this version; you only advise what the operator could do next \
-         (e.g. which stage to iterate on, whether a risk finding needs attention, \
-         whether a milestone looks achievable, whether the run needs a check-in). Be \
-         concise and reference real field values from the state. When presenting \
-         structured data with more than two real fields (a status summary, a \
-         comparison, a per-iteration/per-role breakdown), use a real Markdown pipe \
-         table (`| Field | Value |` with a `|---|---|` separator row) instead of an \
-         inline arrow-chain or a loose list -- the GUI renders real tables properly, \
-         not ad-hoc formatting.\n\n\
+        "You are devsystem.assistant, a specialized role in The Development System -- \
+         a real, self-optimizing, agent-driven pipeline (CADS-Tunnel#382). Your job is \
+         to help the human operator understand, control, and optimize a real pipeline \
+         run without them having to hand-edit raw state directly. Give concrete, \
+         grounded advice based ONLY on the real current run state given below -- never \
+         invent data that isn't there, and say plainly if the state doesn't contain \
+         enough information to answer. Be concise and reference real field values from \
+         the state. When presenting structured data with more than two real fields (a \
+         status summary, a comparison, a per-iteration/per-role breakdown), use a real \
+         Markdown pipe table (`| Field | Value |` with a `|---|---|` separator row) \
+         instead of an inline arrow-chain or a loose list -- the GUI renders real \
+         tables properly, not ad-hoc formatting.\n\n\
+         You CAN take real action on exactly two kinds of run state: milestones and \
+         backlog items. When the operator asks you to add a milestone, check one off, \
+         add a backlog item, or mark one done -- and their intent is clear and \
+         unambiguous -- do it yourself instead of telling them to enter it by hand. To \
+         act, end your reply with a fenced block exactly like this (include it ONLY \
+         when you are actually taking action; omit it entirely otherwise -- never emit \
+         an empty or placeholder block):\n\
+         {ACTIONS_FENCE_OPEN}\n\
+         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}}]\n\
+         {ACTIONS_FENCE_CLOSE}\n\
+         Indices refer to the real state.milestones/state.backlog arrays already shown \
+         to you below -- never guess an index you can't see there. Never invent or add \
+         a milestone/backlog item the operator didn't actually ask for, and never mark \
+         one achieved/done unless the operator told you it's done or clearly confirmed \
+         it. If a request is ambiguous, or you're not confident it's safe to act on, \
+         say so in prose and ask instead of emitting an action. You have NO other tool \
+         or system access in this version -- only these four action types against \
+         these two kinds of data; for anything else (e.g. a code change, a GitHub \
+         issue, a different panel's data) tell the operator what you'd want to do and \
+         let them decide.\n\n\
          Current real run state (JSON):\n{context}"
     )
+}
+
+/// One real, narrow action the assistant can take on the operator's behalf --
+/// deliberately just these two kinds of run state (see module doc). Anything
+/// the LLM asks for outside this shape simply fails to deserialize and is
+/// reported as a parse error, never silently ignored.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Action {
+    AddMilestone { description: String },
+    ToggleMilestone { index: usize },
+    AddBacklogItem { text: String },
+    ToggleBacklogItem { index: usize },
+}
+
+/// Pulls a trailing ` ```devsystem-actions ... ``` ` block out of the LLM's raw
+/// reply text. Returns the text with that block removed (what the human should
+/// actually see) plus the parsed actions. If no block is present, the text and
+/// an empty action list come back untouched -- the common case, a purely
+/// advisory reply. If a block is present but malformed (unclosed or not valid
+/// JSON), the ORIGINAL text is returned untouched (nothing silently hidden)
+/// together with an explicit parse-error message the caller must surface, not
+/// swallow.
+fn extract_actions(reply_text: &str) -> (String, Vec<Action>, Option<String>) {
+    let Some(start) = reply_text.find(ACTIONS_FENCE_OPEN) else {
+        return (reply_text.to_string(), Vec::new(), None);
+    };
+    let after_open = &reply_text[start + ACTIONS_FENCE_OPEN.len()..];
+    let Some(close_rel) = after_open.find(ACTIONS_FENCE_CLOSE) else {
+        return (reply_text.to_string(), Vec::new(), Some("a devsystem-actions block was opened but never closed -- no actions were taken".to_string()));
+    };
+    let json_block = after_open[..close_rel].trim();
+    match serde_json::from_str::<Vec<Action>>(json_block) {
+        Ok(actions) => {
+            let display = format!("{}{}", &reply_text[..start], &after_open[close_rel + ACTIONS_FENCE_CLOSE.len()..]);
+            (display.trim().to_string(), actions, None)
+        }
+        Err(e) => (reply_text.to_string(), Vec::new(), Some(format!("the devsystem-actions block did not parse as valid JSON ({e}) -- no actions were taken"))),
+    }
+}
+
+/// Actually performs one action against devsystem-web's real, already-existing
+/// milestone/backlog API (the exact endpoints the human-driven panels use) --
+/// this is the one place the LLM's stated intent turns into a real write.
+/// Always returns a human-readable line describing what really happened,
+/// success or failure, so the operator never has to guess.
+fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str, action: &Action) -> String {
+    let base = api_base.trim_end_matches('/');
+    let (method_desc, url, body): (String, String, serde_json::Value) = match action {
+        Action::AddMilestone { description } => {
+            (format!("add milestone \"{description}\""), format!("{base}/api/runs/{run_id}/milestones"), serde_json::json!({"description": description}))
+        }
+        Action::ToggleMilestone { index } => (format!("toggle milestone #{index}"), format!("{base}/api/runs/{run_id}/milestones/{index}/toggle"), serde_json::json!({})),
+        Action::AddBacklogItem { text } => (format!("add backlog item \"{text}\""), format!("{base}/api/runs/{run_id}/backlog"), serde_json::json!({"text": text})),
+        Action::ToggleBacklogItem { index } => (format!("toggle backlog item #{index}"), format!("{base}/api/runs/{run_id}/backlog/{index}/toggle"), serde_json::json!({})),
+    };
+    match client.post(&url).json(&body).send() {
+        Ok(resp) if resp.status().is_success() => format!("done: {method_desc}"),
+        Ok(resp) => {
+            let status = resp.status();
+            let text = resp.text().unwrap_or_default();
+            format!("FAILED to {method_desc}: HTTP {status}: {text}")
+        }
+        Err(e) => format!("FAILED to {method_desc}: could not reach {url}: {e}"),
+    }
+}
+
+fn apply_actions(api_base: &str, run_id: &str, actions: &[Action]) -> Vec<String> {
+    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().expect("build blocking http client");
+    actions.iter().map(|a| apply_action(&client, api_base, run_id, a)).collect()
+}
+
+/// Renders the human-visible reply: the LLM's own (action-block-stripped)
+/// prose, plus an honest "Actions taken" section listing exactly what was
+/// attempted and whether it really succeeded -- present only when there was
+/// something to report, never fabricated.
+fn render_reply_with_action_results(display_text: &str, results: &[String], parse_error: Option<&str>) -> String {
+    let mut out = display_text.to_string();
+    if let Some(err) = parse_error {
+        out.push_str(&format!("\n\n---\n_(tried to take an action but it failed: {err})_"));
+    } else if !results.is_empty() {
+        out.push_str("\n\n---\n**Actions taken:**\n");
+        for r in results {
+            out.push_str(&format!("- {r}\n"));
+        }
+    }
+    out
 }
 
 /// A real reply plus real token/cost accounting (operator: "am besten auch
@@ -162,7 +278,11 @@ fn ask_llm(instruction: &str, system_prompt: &str) -> Result<LlmReply, String> {
 
 fn ask(api_base: &str, run_id: &str, instruction: &str) -> Result<LlmReply, String> {
     let context = fetch_context(api_base, run_id)?;
-    ask_llm(instruction, &build_system_prompt(&context))
+    let mut reply = ask_llm(instruction, &build_system_prompt(&context))?;
+    let (display_text, actions, parse_error) = extract_actions(&reply.text);
+    let results = apply_actions(api_base, run_id, &actions);
+    reply.text = render_reply_with_action_results(&display_text, &results, parse_error.as_deref());
+    Ok(reply)
 }
 
 fn main() -> ExitCode {
@@ -330,13 +450,143 @@ mod tests {
     }
 
     #[test]
-    fn system_prompt_embeds_the_real_context_and_states_advice_only_scope() {
+    fn system_prompt_embeds_the_real_context_and_states_the_narrow_action_boundary() {
         let context = r#"{"state":{"run_id":"test-run","paused":false}}"#;
         let prompt = build_system_prompt(context);
         assert!(prompt.contains(context), "the real fetched context must appear verbatim in the prompt");
-        assert!(prompt.contains("do NOT execute any action"), "the advice-only boundary must be explicit");
         assert!(prompt.contains("never invent data"), "the no-fabrication instruction must be explicit");
         assert!(prompt.contains("Markdown pipe table"), "structured-data replies should be steered toward real tables the GUI can actually render");
+        assert!(prompt.contains(ACTIONS_FENCE_OPEN), "the prompt must teach the LLM the exact action-block contract");
+        assert!(prompt.contains("add_milestone") && prompt.contains("toggle_backlog_item"), "all four real action types must be documented");
+        assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these two data kinds");
+    }
+
+    #[test]
+    fn extract_actions_leaves_a_purely_advisory_reply_completely_untouched() {
+        let text = "You should iterate on the plan stage next.";
+        let (display, actions, err) = extract_actions(text);
+        assert_eq!(display, text);
+        assert!(actions.is_empty());
+        assert!(err.is_none());
+    }
+
+    #[test]
+    fn extract_actions_parses_a_real_action_block_and_strips_it_from_the_display_text() {
+        let text = "Done -- I've added the milestone.\n\n```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1: ship the APK\"}]\n```";
+        let (display, actions, err) = extract_actions(text);
+        assert_eq!(display, "Done -- I've added the milestone.");
+        assert_eq!(actions, vec![Action::AddMilestone { description: "M1: ship the APK".to_string() }]);
+        assert!(err.is_none());
+    }
+
+    #[test]
+    fn extract_actions_parses_all_four_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0}]\n```";
+        let (_, actions, err) = extract_actions(text);
+        assert!(err.is_none());
+        assert_eq!(
+            actions,
+            vec![
+                Action::AddMilestone { description: "M1".to_string() },
+                Action::ToggleMilestone { index: 2 },
+                Action::AddBacklogItem { text: "write tests".to_string() },
+                Action::ToggleBacklogItem { index: 0 },
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_actions_on_malformed_json_reports_the_error_and_takes_no_action() {
+        let text = "```devsystem-actions\nnot valid json at all\n```";
+        let (display, actions, err) = extract_actions(text);
+        assert_eq!(display, text, "malformed block must leave the original text untouched, nothing silently hidden");
+        assert!(actions.is_empty());
+        assert!(err.unwrap().contains("did not parse"));
+    }
+
+    #[test]
+    fn extract_actions_on_an_unclosed_block_reports_the_error_and_takes_no_action() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"x\"}]";
+        let (display, actions, err) = extract_actions(text);
+        assert_eq!(display, text);
+        assert!(actions.is_empty());
+        assert!(err.unwrap().contains("never closed"));
+    }
+
+    #[test]
+    fn action_serde_rejects_an_unknown_action_type_instead_of_silently_dropping_it() {
+        let block = r#"[{"type":"delete_everything","index":0}]"#;
+        let err = serde_json::from_str::<Vec<Action>>(block).expect_err("an unknown action type must fail to deserialize");
+        assert!(!err.to_string().is_empty());
+    }
+
+    /// A tiny real HTTP server standing in for devsystem-web -- proves the
+    /// exact method/path/body apply_action sends, not just that it compiles.
+    fn spawn_capturing_server() -> (String, std::sync::mpsc::Receiver<(String, String, String)>) {
+        let server = tiny_http::Server::http("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = format!("http://{}", server.server_addr());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for mut req in server.incoming_requests() {
+                let method = req.method().to_string();
+                let url = req.url().to_string();
+                let mut body = String::new();
+                let _ = req.as_reader().read_to_string(&mut body);
+                let _ = tx.send((method, url, body));
+                let _ = req.respond(tiny_http::Response::from_string("{}").with_status_code(200));
+            }
+        });
+        (addr, rx)
+    }
+
+    #[test]
+    fn apply_action_posts_the_real_add_milestone_request_devsystem_web_actually_expects() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let result = apply_action(&client, &addr, "my-run", &Action::AddMilestone { description: "M1: ship it".to_string() });
+        assert!(result.starts_with("done:"), "a 200 response must be reported as success: {result}");
+        let (method, url, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/milestones");
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
+        assert_eq!(parsed["description"], "M1: ship it");
+    }
+
+    #[test]
+    fn apply_action_posts_the_real_toggle_backlog_item_request() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let result = apply_action(&client, &addr, "my-run", &Action::ToggleBacklogItem { index: 3 });
+        assert!(result.starts_with("done:"));
+        let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/backlog/3/toggle");
+    }
+
+    #[test]
+    fn apply_action_surfaces_a_real_backend_failure_honestly_not_as_a_fabricated_success() {
+        // Nothing listening on this port -- a real, reproducible connection failure.
+        let client = reqwest::blocking::Client::builder().timeout(Duration::from_millis(500)).build().unwrap();
+        let result = apply_action(&client, "http://127.0.0.1:1", "my-run", &Action::AddMilestone { description: "x".to_string() });
+        assert!(result.starts_with("FAILED"), "an unreachable backend must be reported as a failure: {result}");
+    }
+
+    #[test]
+    fn render_reply_with_action_results_lists_every_result_and_a_purely_advisory_reply_gets_no_actions_section() {
+        let advisory = render_reply_with_action_results("just advice, no action taken", &[], None);
+        assert_eq!(advisory, "just advice, no action taken");
+
+        let with_actions = render_reply_with_action_results("Added it.", &["done: add milestone \"M1\"".to_string(), "FAILED to toggle milestone #9: HTTP 404 Not Found: no such milestone".to_string()], None);
+        assert!(with_actions.contains("Actions taken"));
+        assert!(with_actions.contains("done: add milestone \"M1\""));
+        assert!(with_actions.contains("FAILED to toggle milestone #9"), "a real failure must be visible to the operator, never hidden");
+    }
+
+    #[test]
+    fn render_reply_with_action_results_surfaces_a_parse_error_instead_of_silently_dropping_it() {
+        let rendered = render_reply_with_action_results("some reply", &[], Some("the devsystem-actions block did not parse as valid JSON"));
+        assert!(rendered.contains("tried to take an action but it failed"));
+        assert!(rendered.contains("did not parse as valid JSON"));
     }
 
     fn history_entry(iteration: u32, feedback: &str) -> serde_json::Value {
