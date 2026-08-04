@@ -27,7 +27,10 @@ tower-http = { version = "0.7", features = ["fs"] }
 # (a separate process, possibly a separate host -- "every component should be
 # runnable on a different host" per operator direction). Async client, not the
 # pipeline crate's blocking one: this runs inside axum's tokio runtime.
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# "multipart" added for rag::parse_with_unstructured -- the Unstructured API's
+# /general/v0/general endpoint takes a real multipart/form-data file upload,
+# not JSON (CADS-devsystem#7).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
 # Real, not a dev-only fixture anymore: /api/runs/{id}/offers/quick-submit signs
 # a real CapacityOffer server-side with a fresh, ephemeral, real ed25519 key per
 # submission -- the browser-driven equivalent of running `devsystem_offer

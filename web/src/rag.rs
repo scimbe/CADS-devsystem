@@ -457,6 +457,88 @@ pub async fn embed_texts(client: &reqwest::Client, api_base: &str, api_key: &str
     ordered.into_iter().collect::<Option<Vec<_>>>().ok_or_else(|| "embedding API response was missing an index".to_string())
 }
 
+/// One extracted element from an Unstructured `/general/v0/general` response
+/// -- real OCR/vision text for an image, real parsed text for a PDF/DOCX
+/// paragraph, etc. `element_type` (e.g. `"Title"`, `"NarrativeText"`,
+/// `"Image"`) is Unstructured's own classification, kept rather than
+/// discarded so a caller can decide whether to weight titles differently --
+/// v1 here just concatenates every element's text, a deliberately simple
+/// first cut matching this module's own "don't overbuild ahead of a real
+/// need" pattern elsewhere.
+#[derive(Debug, Clone, Deserialize)]
+pub struct UnstructuredElement {
+    pub text: String,
+    #[serde(rename = "type")]
+    pub element_type: String,
+}
+
+/// Real Unstructured API call — hosted `api.unstructured.io`, not self-hosted
+/// (per CADS-devsystem#7's "moves the resource cost off this host" constraint).
+/// `/general/v0/general` handles PDF/DOCX/HTML and — the operator's explicit
+/// ask — images (real OCR/vision extraction) in one endpoint; which real
+/// capability is used is Unstructured's own server-side strategy selection,
+/// not something this client picks. `api_base` is parameterized the same way
+/// `embed_texts`'s is, so this stays hermetically testable against a local
+/// mock multipart-accepting server, never a real network call in a test.
+/// Returns the real extracted elements in the order Unstructured returned
+/// them; an empty result (e.g. a genuinely blank image) is `Ok(vec![])`, not
+/// an error -- "found nothing to extract" is a real, valid outcome, distinct
+/// from "the call itself failed."
+pub async fn parse_with_unstructured(
+    client: &reqwest::Client,
+    api_base: &str,
+    api_key: &str,
+    filename: &str,
+    bytes: Vec<u8>,
+) -> Result<Vec<UnstructuredElement>, String> {
+    let part = reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string());
+    let form = reqwest::multipart::Form::new().part("files", part);
+    let resp = client
+        .post(format!("{}/general/v0/general", api_base.trim_end_matches('/')))
+        .header("unstructured-api-key", api_key)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("could not reach the Unstructured API: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Unstructured API rejected the request ({status}): {body}"));
+    }
+    resp.json::<Vec<UnstructuredElement>>().await.map_err(|e| format!("could not parse the Unstructured API response: {e}"))
+}
+
+/// Real, honest cap on what an image/document upload becomes as RAG text --
+/// the requirements doc's own ask ("an image file needs its own real, stated
+/// size cap"). Applied to the *extracted text*, not the original file bytes
+/// (a large scanned PDF might extract to far less text than its byte size, or
+/// a dense one to more per page than expected -- the actual downstream cost
+/// this codebase cares about, chunk/embedding volume, tracks the text, not
+/// the upload size).
+pub const MAX_UNSTRUCTURED_EXTRACTED_CHARS: usize = 200_000;
+
+/// Concatenates real Unstructured elements into one text blob for the
+/// existing `chunk_text`/embedding pipeline, applying
+/// [`MAX_UNSTRUCTURED_EXTRACTED_CHARS`] honestly -- truncates and says so via
+/// the returned `bool` (`true` = truncated) rather than silently dropping the
+/// tail, matching `sync_repo`'s own `files_seen`-vs-`files_indexed` honesty
+/// precedent.
+pub fn elements_to_text(elements: &[UnstructuredElement]) -> (String, bool) {
+    let mut text = String::new();
+    for el in elements {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(el.text.trim());
+    }
+    if text.chars().count() > MAX_UNSTRUCTURED_EXTRACTED_CHARS {
+        let truncated: String = text.chars().take(MAX_UNSTRUCTURED_EXTRACTED_CHARS).collect();
+        (truncated, true)
+    } else {
+        (text, false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -700,5 +782,84 @@ mod tests {
         let result = embed_texts(&client, &base, "bad-key", &["text".to_string()]).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("401"));
+    }
+
+    #[test]
+    fn elements_to_text_joins_real_elements_with_newlines() {
+        let elements = vec![
+            UnstructuredElement { text: "Title Here".into(), element_type: "Title".into() },
+            UnstructuredElement { text: "Body text extracted from the image.".into(), element_type: "NarrativeText".into() },
+        ];
+        let (text, truncated) = elements_to_text(&elements);
+        assert_eq!(text, "Title Here\nBody text extracted from the image.");
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn elements_to_text_reports_truncation_honestly_rather_than_silently_dropping_the_tail() {
+        let long_text = "x".repeat(MAX_UNSTRUCTURED_EXTRACTED_CHARS + 500);
+        let elements = vec![UnstructuredElement { text: long_text, element_type: "NarrativeText".into() }];
+        let (text, truncated) = elements_to_text(&elements);
+        assert_eq!(text.chars().count(), MAX_UNSTRUCTURED_EXTRACTED_CHARS);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn elements_to_text_of_no_elements_is_empty_not_an_error() {
+        let (text, truncated) = elements_to_text(&[]);
+        assert_eq!(text, "");
+        assert!(!truncated);
+    }
+
+    async fn spawn_mock_unstructured_server(status: axum::http::StatusCode, response_body: serde_json::Value) -> String {
+        use axum::{routing::post, Router};
+        let mock_app = Router::new().route(
+            "/general/v0/general",
+            post(move || {
+                let status = status;
+                let response_body = response_body.clone();
+                async move { (status, axum::Json(response_body)) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind mock listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, mock_app).await.expect("serve mock");
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn parse_with_unstructured_returns_real_extracted_elements() {
+        let base = spawn_mock_unstructured_server(
+            axum::http::StatusCode::OK,
+            serde_json::json!([
+                {"text": "A scanned title", "type": "Title"},
+                {"text": "Body text a real OCR pass extracted from the image", "type": "NarrativeText"}
+            ]),
+        )
+        .await;
+        let client = reqwest::Client::new();
+        let elements = parse_with_unstructured(&client, &base, "fake-key", "scan.png", b"fake-png-bytes".to_vec()).await.unwrap();
+        assert_eq!(elements.len(), 2);
+        assert_eq!(elements[0].element_type, "Title");
+        assert_eq!(elements[1].text, "Body text a real OCR pass extracted from the image");
+    }
+
+    #[tokio::test]
+    async fn parse_with_unstructured_reports_a_real_provider_error_honestly() {
+        let base = spawn_mock_unstructured_server(axum::http::StatusCode::UNPROCESSABLE_ENTITY, serde_json::json!({"detail": "unsupported file type"})).await;
+        let client = reqwest::Client::new();
+        let result = parse_with_unstructured(&client, &base, "fake-key", "weird.xyz", b"bytes".to_vec()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("422"));
+    }
+
+    #[tokio::test]
+    async fn parse_with_unstructured_of_a_genuinely_empty_result_is_ok_not_an_error() {
+        let base = spawn_mock_unstructured_server(axum::http::StatusCode::OK, serde_json::json!([])).await;
+        let client = reqwest::Client::new();
+        let elements = parse_with_unstructured(&client, &base, "fake-key", "blank.png", b"bytes".to_vec()).await.unwrap();
+        assert!(elements.is_empty());
     }
 }
