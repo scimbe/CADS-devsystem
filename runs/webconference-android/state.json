@@ -141,6 +141,14 @@
       "feedback": "web/ (the GUI backend serving devsystem-demo.bunsenbrenner.org) had grown through 9+ real feature commits across many loop firings with zero automated tests of its own -- every prior verification was external (curl, Playwright), never committed as regression protection, while pipeline/ carries 43 real unit tests. Refactored the inline axum Router construction out of main() into api_router(AppState) and added 5 real integration tests driven via tower::ServiceExt::oneshot against the exact same router main() serves: empty-dir list, create (success + 409 duplicate + 400 invalid chars), get 404 for a nonexistent run, and a full iterate round-trip asserting state.json actually changes on disk. Verified hermetically in rust:1-slim with RUSTFLAGS=-D warnings (clean build, 5/5 passed), committed as 0f50e70, CI green on push. No route/handler logic changed -- test-only commit, no redeploy needed.",
       "proposals": [],
       "succeeded": true
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.implement",
+      "iteration": 11,
+      "feedback": "continue alles fein. Create the apk",
+      "proposals": [],
+      "succeeded": true
     }
   ],
   "added_stages": [
@@ -150,5 +158,10 @@
     "devsystem.review",
     "devsystem.improve",
     "devsystem.android_native_build_ci"
-  ]
+  ],
+  "criteria": {
+    "max_iterations": 20,
+    "max_consecutive_failures": 3,
+    "checkin_every": 5
+  }
 }
