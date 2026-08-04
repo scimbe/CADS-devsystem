@@ -157,6 +157,26 @@ function renderRunDetail(id, data) {
     <label>Feedback (what this stage found)</label>
     <textarea id="it-feedback" placeholder="Real, honest account of what happened this iteration…"></textarea>
     <label><input type="checkbox" id="it-succeeded" checked style="width:auto"> succeeded</label>
+
+    <label style="margin-top:1rem"><input type="checkbox" id="it-has-proposal" style="width:auto">
+      Propose a new stage (the pipeline's self-optimization mechanic -- this actually grows the
+      live spec, the same way a role-filler's own proposal would)</label>
+    <div id="proposal-fields" style="display:none;margin-top:.4rem;padding:.6rem .7rem;
+         border:1px dashed var(--border);border-radius:8px">
+      <label>New stage id (e.g. <code>devsystem.android_emulator_test</code>)</label>
+      <input id="pr-stage-id">
+      <label>Tag (short name, e.g. <code>android_emulator_test</code>)</label>
+      <input id="pr-tag">
+      <label>Rationale -- why this stage is needed</label>
+      <textarea id="pr-rationale" placeholder="What real need does this close?"></textarea>
+      <label>Existing service to reuse (leave blank if a new one must be built)</label>
+      <input id="pr-existing-service" placeholder="optional">
+      <label>Units</label>
+      <input id="pr-units" type="number" min="1" value="1">
+      <label>Price ceiling (leave blank for none -- preflight will flag that)</label>
+      <input id="pr-price-ceiling" type="number" min="0" placeholder="optional">
+    </div>
+
     <div style="margin-top:.6rem;display:flex;gap:.5rem">
       <button id="submit-iter">Submit iteration</button>
       <button class="secondary" id="view-checkin">View check-in</button>
@@ -170,6 +190,9 @@ function renderRunDetail(id, data) {
 
   document.getElementById('submit-iter').onclick = () => submitIteration(id);
   document.getElementById('view-checkin').onclick = () => viewCheckin(id);
+  document.getElementById('it-has-proposal').onchange = (e) => {
+    document.getElementById('proposal-fields').style.display = e.target.checked ? 'block' : 'none';
+  };
 }
 
 async function submitIteration(id) {
@@ -178,12 +201,36 @@ async function submitIteration(id) {
   const feedback = document.getElementById('it-feedback').value.trim();
   const succeeded = document.getElementById('it-succeeded').checked;
   if (!feedback) { status.textContent = 'Feedback is required.'; status.className = 'status-line err'; return; }
+
+  const proposals = [];
+  if (document.getElementById('it-has-proposal').checked) {
+    const stageId = document.getElementById('pr-stage-id').value.trim();
+    const tag = document.getElementById('pr-tag').value.trim();
+    const rationale = document.getElementById('pr-rationale').value.trim();
+    if (!stageId || !tag || !rationale) {
+      status.textContent = 'A proposal needs a stage id, tag, and rationale.';
+      status.className = 'status-line err';
+      return;
+    }
+    const existingService = document.getElementById('pr-existing-service').value.trim();
+    const priceCeiling = document.getElementById('pr-price-ceiling').value.trim();
+    proposals.push({
+      proposed_by: stage,
+      stage_id: stageId,
+      tag,
+      rationale,
+      use_existing_service: existingService || null,
+      units: parseInt(document.getElementById('pr-units').value, 10) || 1,
+      price_ceiling: priceCeiling ? parseInt(priceCeiling, 10) : null,
+    });
+  }
+
   status.textContent = 'Submitting…'; status.className = 'status-line';
   try {
     const result = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/iterate`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ stage, feedback, succeeded, proposals: [] })
+      body: JSON.stringify({ stage, feedback, succeeded, proposals })
     });
     status.textContent = `Iteration ${result.iteration} recorded -- outcome: ${result.outcome}, roles now ${result.roles_now}.`;
     status.className = 'status-line ok';
