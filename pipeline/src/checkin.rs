@@ -8,6 +8,26 @@ use crate::improve::stalled_stages;
 use crate::runner::RunState;
 use crate::IterationRecord;
 
+/// Derive a canvas session's `(key, origin)` from the `url` field of
+/// `ecc-plan-canvas open`'s JSON output (e.g.
+/// `"http://127.0.0.1:4517/canvas/3f51bca85e2f"` -> `("3f51bca85e2f",
+/// "http://127.0.0.1:4517")`). `open`'s JSON carries no separate session-key field
+/// -- pulled out here, tested directly, after a real bug shipped in this exact
+/// logic once already (an earlier version assumed a "key" field existed; it
+/// doesn't -- caught during live verification, not by a test, which is the whole
+/// reason this is a real function now instead of staying inline in `main()`).
+pub fn parse_session_key_and_origin(url: &str) -> Option<(String, String)> {
+    let segments: Vec<&str> = url.split('/').collect();
+    // A bare origin ("http://host:port") splits into exactly 3 segments
+    // ("http:", "", "host:port") -- anything at or below that has no path
+    // component to treat as a key, unlike a naive rsplit('/').next() would assume.
+    if segments.len() <= 3 {
+        return None;
+    }
+    let key = segments.last().filter(|s| !s.is_empty())?;
+    Some((key.to_string(), segments[..3].join("/")))
+}
+
 /// Render the most recent [`IterationRecord`] in `state` as a Plan Canvas markdown
 /// artifact -- the zylos envelope's `key_findings` shape (`docs/role-contracts.md`):
 /// what was asked, what was found, what's proposed, and the explicit question a human
@@ -203,5 +223,34 @@ mod tests {
         assert!(md.contains("2 iteration(s) so far"));
         assert!(md.contains("found the JNI gap"), "the non-latest iteration must still be summarized");
         assert!(md.contains("added a Robolectric test"));
+    }
+
+    #[test]
+    fn parses_the_real_url_shape_ecc_plan_canvas_open_actually_returns() {
+        let (key, origin) = parse_session_key_and_origin("http://127.0.0.1:4517/canvas/3f51bca85e2f").unwrap();
+        assert_eq!(key, "3f51bca85e2f");
+        assert_eq!(origin, "http://127.0.0.1:4517");
+    }
+
+    #[test]
+    fn parses_a_url_with_a_different_host_and_port() {
+        let (key, origin) = parse_session_key_and_origin("http://localhost:9000/canvas/abc123").unwrap();
+        assert_eq!(key, "abc123");
+        assert_eq!(origin, "http://localhost:9000");
+    }
+
+    #[test]
+    fn returns_none_for_a_trailing_slash_with_no_key_segment() {
+        assert_eq!(parse_session_key_and_origin("http://127.0.0.1:4517/canvas/"), None);
+    }
+
+    #[test]
+    fn returns_none_for_a_url_with_no_path_at_all() {
+        assert_eq!(parse_session_key_and_origin("http://127.0.0.1:4517"), None);
+    }
+
+    #[test]
+    fn returns_none_for_an_empty_string() {
+        assert_eq!(parse_session_key_and_origin(""), None);
     }
 }

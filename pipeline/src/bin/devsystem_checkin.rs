@@ -13,7 +13,7 @@
 //!
 //! Usage: `devsystem_checkin <run_id>`
 
-use devsystem_pipeline::checkin::render_plan_markdown;
+use devsystem_pipeline::checkin::{parse_session_key_and_origin, render_plan_markdown};
 use devsystem_pipeline::preflight::preflight_annotations;
 use devsystem_pipeline::runner::RunState;
 use std::env;
@@ -60,12 +60,7 @@ fn main() {
         println!("could not parse a session url from `open`'s output -- skipping pre-flight annotations.");
         return;
     };
-    // `open`'s JSON carries no separate session-key field -- it's the last path
-    // segment of `url` (e.g. "http://127.0.0.1:4517/canvas/<key>"), the same key
-    // `ecc-plan-canvas end`/`await` derive internally from the artifact path.
-    let (Some(key), Some(origin)) =
-        (url.rsplit('/').next().filter(|s| !s.is_empty()), url.split('/').take(3).collect::<Vec<_>>().get(0..3).map(|p| p.join("/")))
-    else {
+    let Some((key, origin)) = parse_session_key_and_origin(url) else {
         println!("could not derive a session key/origin from {url:?} -- skipping pre-flight annotations.");
         return;
     };
