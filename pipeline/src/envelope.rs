@@ -112,6 +112,7 @@ mod tests {
             rationale: "reuse the audited Rust Noise_IK code".into(),
             use_existing_service: None,
             units: 1,
+            price_ceiling: None,
         };
         let env = envelope_from_iteration(&record(vec![proposal]));
         assert_eq!(env.envelope.constraints, vec!["devsystem.android_native_bridge: reuse the audited Rust Noise_IK code".to_string()]);

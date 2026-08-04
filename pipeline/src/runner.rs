@@ -134,6 +134,7 @@ mod tests {
             rationale: "test".into(),
             use_existing_service: None,
             units: 1,
+            price_ceiling: None,
         };
         let outcome = run_iteration(&mut spec, &mut state, record(1, true, vec![proposal]), &criteria);
 

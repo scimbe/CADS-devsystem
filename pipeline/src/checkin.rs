@@ -129,6 +129,7 @@ mod tests {
             rationale: "reuse the audited Rust Noise_IK code instead of reimplementing it".into(),
             use_existing_service: None,
             units: 1,
+            price_ceiling: None,
         };
         let state = state_with_one_iteration(vec![proposal]);
         let md = render_plan_markdown(&state).expect("history is non-empty");
@@ -152,6 +153,7 @@ mod tests {
             rationale: "blocked on a real architecture decision".into(),
             use_existing_service: None,
             units: 1,
+            price_ceiling: None,
         };
         let state = state_with_one_iteration(vec![proposal]);
         let md = render_plan_markdown(&state).unwrap();

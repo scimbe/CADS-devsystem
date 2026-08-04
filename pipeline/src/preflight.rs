@@ -29,6 +29,9 @@ pub fn preflight_annotations(state: &RunState) -> Vec<RiskAnnotation> {
     if let Some(a) = missing_test_before_implement(state) {
         findings.push(a);
     }
+    if let Some(a) = no_price_ceiling(state) {
+        findings.push(a);
+    }
     findings
 }
 
@@ -74,6 +77,25 @@ fn missing_test_before_implement(state: &RunState) -> Option<RiskAnnotation> {
     }
 }
 
+/// "external-partner role with no price ceiling" (proposal §5's own example),
+/// honestly scoped to what the data actually shows: a proposal that needs a new
+/// service built or provided (`use_existing_service` is `None` -- the closest
+/// signal available for "not just reusing something already trusted/priced") and
+/// sets no `price_ceiling`. Doesn't claim to know the filler is specifically an
+/// *external paid* partner -- `StageProposal` has no field distinguishing that
+/// from an internal build yet -- only that nothing here bounds what it could cost.
+fn no_price_ceiling(state: &RunState) -> Option<RiskAnnotation> {
+    let latest = state.history.last()?;
+    let unbounded = latest.proposals.iter().find(|p| p.use_existing_service.is_none() && p.price_ceiling.is_none())?;
+    Some(RiskAnnotation {
+        label: "no price ceiling set".into(),
+        evidence: format!(
+            "proposal `{}` needs a new service (no use_existing_service) and sets no price_ceiling -- nothing bounds what filling it could cost",
+            unbounded.stage_id
+        ),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,6 +131,9 @@ mod tests {
             rationale: "handles key material across the JNI boundary".into(),
             use_existing_service: None,
             units: 1,
+            // Set so this test isolates the security-keyword check -- a None here
+            // would also trip no_price_ceiling below, covered by its own tests.
+            price_ceiling: Some(50),
         };
         state.history.push(iteration(STAGE_REVIEW, 1, "no risk words here", vec![proposal]));
         let findings = preflight_annotations(&state);
@@ -150,5 +175,39 @@ mod tests {
         // real historical fact this check reports; it does not retroactively clear.
         let findings = preflight_annotations(&state);
         assert!(findings.iter().any(|f| f.label == "no test stage before implement"));
+    }
+
+    fn proposal(use_existing_service: Option<&str>, price_ceiling: Option<u64>) -> StageProposal {
+        StageProposal {
+            proposed_by: STAGE_REVIEW.into(),
+            stage_id: "devsystem.some_new_role".into(),
+            tag: "some_new_role".into(),
+            rationale: "test".into(),
+            use_existing_service: use_existing_service.map(str::to_string),
+            units: 1,
+            price_ceiling,
+        }
+    }
+
+    #[test]
+    fn flags_a_new_service_proposal_with_no_price_ceiling() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_REVIEW, 1, "no risk words here", vec![proposal(None, None)]));
+        let findings = preflight_annotations(&state);
+        assert!(findings.iter().any(|f| f.label == "no price ceiling set"));
+    }
+
+    #[test]
+    fn does_not_flag_a_proposal_with_a_price_ceiling_set() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_REVIEW, 1, "no risk words here", vec![proposal(None, Some(100))]));
+        assert!(preflight_annotations(&state).is_empty());
+    }
+
+    #[test]
+    fn does_not_flag_a_proposal_that_reuses_an_existing_service() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_REVIEW, 1, "no risk words here", vec![proposal(Some("android-build-box"), None)]));
+        assert!(preflight_annotations(&state).is_empty());
     }
 }

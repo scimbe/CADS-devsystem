@@ -101,6 +101,13 @@ pub struct StageProposal {
     /// Auction seats needed for this role. Defaults to 1 in practice; kept explicit
     /// since a stage might need more than one filler (e.g. two review agents).
     pub units: u64,
+    /// Maximum price this role's `CapacityOffer` may clear at, if the proposer set
+    /// one. `None` means unbounded -- a real risk when a role could be filled by an
+    /// external paid partner (proposal §5's own example), which `preflight`'s
+    /// `no_price_ceiling` check flags. `#[serde(default)]` so already-committed
+    /// proposals (recorded before this field existed) still deserialize.
+    #[serde(default)]
+    pub price_ceiling: Option<u64>,
 }
 
 /// What happened when a [`StageProposal`] was applied to a live [`PipelineSpec`].
@@ -269,6 +276,7 @@ mod tests {
             rationale: "the webconference-android slice needs a real emulator run before verify can pass".to_string(),
             use_existing_service: None,
             units: 1,
+            price_ceiling: None,
         };
         assert_eq!(apply_proposal(&mut spec, &proposal), ProposalOutcome::Added);
         assert_eq!(spec.roles.len(), 2);
@@ -299,6 +307,7 @@ mod tests {
             rationale: "already exists -- must be a no-op".to_string(),
             use_existing_service: None,
             units: 1,
+            price_ceiling: None,
         };
         assert_eq!(apply_proposal(&mut spec, &proposal), ProposalOutcome::AlreadyPresent);
         assert_eq!(spec.roles.len(), before, "no duplicate role for an already-declared stage");
