@@ -149,6 +149,14 @@
       "feedback": "continue alles fein. Create the apk",
       "proposals": [],
       "succeeded": true
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_native_build_ci",
+      "iteration": 12,
+      "feedback": "Closed the real supply-chain gap flagged since iteration 7: native-bridge/'s committed .so files and generated Kotlin bindings had no CI verification against source. Added a verify-native-bridge job (.github/workflows/android-ci.yml) that rebuilds native-bridge for both ABIs from source (cargo-ndk 4.1.2) and regenerates the Kotlin bindings, then diffs the committed Kotlin byte-for-byte and compares the committed .so's exported FFI symbol set per ABI (not a raw hash, since rustc/NDK point-release drift changes bytes without changing the real symbol surface Kotlin calls). Verified the exact rebuild+diff steps locally first (mingc/android-build-box) before trusting the CI YAML, then confirmed the real job passes on GitHub's actual runners: https://github.com/scimbe/CADS-webconference-android/actions/runs/30899638386 (verify-native-bridge succeeded in 6m38s). Committed as b174144.",
+      "proposals": [],
+      "succeeded": true
     }
   ],
   "added_stages": [
