@@ -394,6 +394,7 @@ mod tests {
             feedback: "test feedback".into(),
             proposals,
             succeeded,
+            requirement_indices: Vec::new(),
         }
     }
 

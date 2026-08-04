@@ -1932,6 +1932,14 @@ async function toggleMilestone(id, index) {
 function renderRequirementsPanel(id, data) {
   const body = document.getElementById('body-requirements');
   const requirements = data.state.requirements || [];
+  // Real traceability, reverse direction from the History panel: which real
+  // iterations (if any) actually claimed to address each requirement.
+  const addressedBy = requirements.map(() => []);
+  for (const h of (data.state.history || [])) {
+    for (const i of (h.requirement_indices || [])) {
+      if (addressedBy[i]) addressedBy[i].push(h.iteration);
+    }
+  }
   const items = requirements.length
     ? requirements.map((r, i) => `
         <div class="role-card">
@@ -1942,6 +1950,7 @@ function renderRequirementsPanel(id, data) {
           <ul style="margin:.3rem 0 0 1.6rem;padding:0;font-size:.75rem" class="lede">
             ${r.acceptance_criteria.map(c => `<li>${escapeHtml(c)}</li>`).join('')}
           </ul>
+          <div class="lede" style="font-size:.7rem;margin-top:.3rem">${addressedBy[i].length ? `addressed by iteration(s) ${addressedBy[i].join(', ')}` : 'not yet addressed by any iteration'}</div>
         </div>`).join('')
     : '<span class="lede">No requirements yet.</span>';
   body.innerHTML = `
@@ -2198,12 +2207,21 @@ function setSelectedStage(stageId) {
 
 function renderHistoryPanel(data) {
   const body = document.getElementById('body-history');
+  const requirements = data.state.requirements || [];
+  // Real traceability (#47 follow-up slice): which requirement(s) this
+  // iteration itself claimed to address -- the role-filler's own real
+  // assertion (requirement_indices on the persisted IterationRecord), not
+  // automatically re-verified here; just honestly surfaced.
+  const requirementRefsHtml = (indices) => (indices || []).length
+    ? `<div class="lede" style="font-size:.72rem;margin-top:.2rem">addresses: ${indices.map(i => escapeHtml(requirements[i] ? truncate(requirements[i].statement, 60) : `requirement #${i} (removed)`)).join('; ')}</div>`
+    : '';
   const history = [...data.state.history].reverse().map(h => `
     <div class="iter">
       <div class="head"><span>iteration ${h.iteration} · ${h.stage}</span>
         <span class="${h.succeeded ? 'ok' : 'fail'}">${h.succeeded ? 'ok' : 'FAILED'}</span></div>
       <div>${escapeHtml(h.feedback)}</div>
       ${renderProposals(h.proposals)}
+      ${requirementRefsHtml(h.requirement_indices)}
     </div>`).join('') || '<span class="lede">No iterations yet.</span>';
   body.innerHTML = `<div class="history">${history}</div>`;
 }

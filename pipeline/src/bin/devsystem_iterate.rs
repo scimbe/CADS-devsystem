@@ -65,6 +65,7 @@ fn remote_request_body(record: &IterationRecord) -> serde_json::Value {
         "feedback": record.feedback,
         "succeeded": record.succeeded,
         "proposals": record.proposals,
+        "requirement_indices": record.requirement_indices,
     })
 }
 
@@ -181,6 +182,7 @@ mod tests {
                 price_ceiling: None,
             }],
             succeeded,
+            requirement_indices: Vec::new(),
         }
     }
 
@@ -193,6 +195,7 @@ mod tests {
         assert_eq!(body["succeeded"], true);
         assert_eq!(body["proposals"].as_array().unwrap().len(), 1);
         assert_eq!(body["proposals"][0]["stage_id"], "devsystem.new_stage");
+        assert_eq!(body["requirement_indices"].as_array().unwrap().len(), 0, "record() claims no requirements, so none should be sent");
         // The server derives these from the URL/its own persisted history --
         // sending them would silently claim authority this CLI doesn't have.
         assert!(body.get("run_id").is_none(), "run_id must not be sent -- the URL path is authoritative");

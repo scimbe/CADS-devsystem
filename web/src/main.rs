@@ -438,6 +438,12 @@ struct IterateRequest {
     succeeded: bool,
     #[serde(default)]
     proposals: Vec<StageProposal>,
+    /// Real requirement traceability (#47 follow-up slice) -- which
+    /// `state.requirements` indices this iteration claims to address.
+    /// `#[serde(default)]` so every existing caller (nothing claimed any
+    /// requirement before this field existed) keeps working unchanged.
+    #[serde(default)]
+    requirement_indices: Vec<usize>,
 }
 
 fn default_true() -> bool {
@@ -465,6 +471,10 @@ async fn iterate_run(
     if run_state.paused {
         return (StatusCode::CONFLICT, "run is paused -- resume it first (POST /api/runs/{id}/resume)").into_response();
     }
+    if let Some(&bad) = body.requirement_indices.iter().find(|&&i| i >= run_state.requirements.len()) {
+        return (StatusCode::BAD_REQUEST, format!("requirement_indices references index {bad}, but state.requirements only has {} entries", run_state.requirements.len()))
+            .into_response();
+    }
 
     let iteration = run_state.history.len() as u32 + 1;
     let record = IterationRecord {
@@ -474,6 +484,7 @@ async fn iterate_run(
         feedback: body.feedback,
         succeeded: body.succeeded,
         proposals: body.proposals,
+        requirement_indices: body.requirement_indices,
     };
 
     let memory_path = dir.join("memory.jsonl");
@@ -3573,6 +3584,54 @@ mod tests {
         let after = fs::read_to_string(&state_path).expect("state.json still exists");
         assert!(after.contains("\"real progress\""), "iteration feedback should be persisted to disk");
         assert!(!after.contains("\"history\": []"), "history should no longer be empty on disk");
+    }
+
+    #[tokio::test]
+    async fn iterate_run_persists_real_requirement_traceability() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "trace-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/trace-run/requirements",
+                serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["a real check"]}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/trace-run/iterate",
+                serde_json::json!({"stage": "implement", "feedback": "addressed the requirement", "succeeded": true, "requirement_indices": [0]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/trace-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["state"]["history"][0]["requirement_indices"][0], 0);
+    }
+
+    #[tokio::test]
+    async fn iterate_run_rejects_an_out_of_range_requirement_index() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "trace-oob-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/trace-oob-run/iterate",
+                serde_json::json!({"stage": "implement", "feedback": "x", "succeeded": true, "requirement_indices": [0]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "no requirements exist yet, so index 0 must be rejected, not silently accepted");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]

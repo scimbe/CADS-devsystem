@@ -139,6 +139,7 @@ mod tests {
             feedback: "found a real gap: no Android/JNI path exists".into(),
             proposals,
             succeeded: true,
+            requirement_indices: Vec::new(),
         });
         if let Some(p) = state.history[0].proposals.first() {
             state.added_stages.push(p.stage_id.clone());
@@ -207,6 +208,7 @@ mod tests {
             feedback: "wired the real Noise_IK handshake and session key material".into(),
             proposals: vec![],
             succeeded: true,
+            requirement_indices: Vec::new(),
         });
         let md = render_plan_markdown(&state).unwrap();
         assert!(md.contains("## Risk annotations"));
@@ -223,6 +225,7 @@ mod tests {
             feedback: "added a Robolectric test, no proposals".into(),
             proposals: vec![],
             succeeded: true,
+            requirement_indices: Vec::new(),
         });
         let md = render_plan_markdown(&state).unwrap();
         assert!(!md.contains("## Risk annotations"));
@@ -254,6 +257,7 @@ mod tests {
             feedback: "found the JNI gap".into(),
             proposals: vec![],
             succeeded: true,
+            requirement_indices: Vec::new(),
         });
         state.history.push(IterationRecord {
             run_id: "run-multi".into(),
@@ -262,6 +266,7 @@ mod tests {
             feedback: "added a Robolectric test".into(),
             proposals: vec![],
             succeeded: true,
+            requirement_indices: Vec::new(),
         });
         state.added_stages.push("devsystem.test".into());
 

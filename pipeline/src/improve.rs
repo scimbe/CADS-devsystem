@@ -33,6 +33,7 @@ mod tests {
             feedback: "test".into(),
             proposals: vec![],
             succeeded: true,
+            requirement_indices: Vec::new(),
         }
     }
 

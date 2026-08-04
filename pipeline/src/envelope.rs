@@ -127,6 +127,7 @@ mod tests {
             feedback: "found and fixed allowBackup=true and raw-pixel padding".into(),
             proposals,
             succeeded: true,
+            requirement_indices: Vec::new(),
         }
     }
 
