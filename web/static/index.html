@@ -10,25 +10,35 @@
        --mono:ui-monospace,"SF Mono",Consolas,monospace;--serif:ui-serif,Georgia,serif}
  *{box-sizing:border-box}
  html,body{height:100%}
- body{margin:0;background:var(--bg);color:var(--text);font-family:var(--serif);line-height:1.5;overflow:hidden}
+ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--serif);line-height:1.5;overflow:hidden;
+      display:flex;flex-direction:column;height:100vh}
  .topbar{display:flex;align-items:center;gap:1rem;padding:.6rem 1rem;border-bottom:1px solid var(--border);
-         background:var(--panel);flex-wrap:wrap}
+         background:var(--panel);flex-wrap:wrap;flex-shrink:0}
  .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
  .topbar h1{font-size:1.05rem;margin:0;white-space:nowrap}
  .lede{color:var(--muted);max-width:60ch}
- .prompt-wrap{display:flex;align-items:center;gap:.5rem;min-width:16rem}
- .process-prompt{font-family:var(--mono);font-size:.8rem;background:#0d1117;border:1px solid var(--border);
-                  border-radius:6px;padding:.4rem .6rem;color:var(--text);width:16rem}
- .process-prompt:focus{outline:none;border-color:var(--accent2)}
- .prompt-status{font-family:var(--mono);font-size:.72rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:14rem}
- .prompt-status.err{color:var(--danger)}
  .panel-toggles{display:flex;flex-wrap:wrap;gap:.35rem;flex:1}
  .panel-chip{font-family:var(--mono);font-size:.7rem;background:transparent;border:1px solid var(--border);
              color:var(--muted);border-radius:5px;padding:.2rem .55rem;cursor:pointer;font-weight:400}
  .panel-chip.active{border-color:var(--accent2);color:var(--accent2)}
  .topbar-links{font-size:.72rem;color:var(--muted);white-space:nowrap}
  .topbar-links a{color:var(--accent2)}
- #desktop{position:relative;width:100%;height:calc(100vh - 48px);overflow:auto}
+ #desktop{position:relative;width:100%;flex:1;overflow:auto;min-height:0}
+ /* Process Prompt: docked statically at the bottom, always visible, like a chat
+    input bar -- operator feedback: "die sollte unten statisch eingebunden sein." */
+ .prompt-dock{flex-shrink:0;border-top:1px solid var(--border);background:var(--panel);
+              padding:.7rem 1rem;display:flex;justify-content:center}
+ .prompt-dock-inner{display:flex;align-items:center;gap:.6rem;width:100%;max-width:56rem;
+                     background:#0d1117;border:1px solid var(--border);border-radius:10px;
+                     padding:.55rem .9rem;transition:border-color .15s}
+ .prompt-dock-inner:focus-within{border-color:var(--accent2)}
+ .prompt-dock-icon{color:var(--accent2);font-family:var(--mono);font-weight:700;flex-shrink:0}
+ .process-prompt{font-family:var(--mono);font-size:.85rem;background:transparent;border:none;
+                  color:var(--text);flex:1;width:auto;padding:.2rem 0}
+ .process-prompt:focus{outline:none}
+ .prompt-status{font-family:var(--mono);font-size:.72rem;color:var(--muted);white-space:nowrap;
+                 overflow:hidden;text-overflow:ellipsis;max-width:22rem;flex-shrink:0}
+ .prompt-status.err{color:var(--danger)}
  .win{position:absolute;background:var(--panel);border:1px solid var(--border);border-radius:10px;
       box-shadow:0 10px 30px rgba(0,0,0,.45);display:flex;flex-direction:column;min-width:220px;min-height:140px}
  .win.minimized{height:auto !important;min-height:0 !important}
@@ -146,10 +156,6 @@
   <div class="eyebrow">CADS-Tunnel #382 · live control panel</div>
   <h1>The Development System</h1>
  </div>
- <div class="prompt-wrap">
-  <input id="process-prompt-input" class="process-prompt" placeholder="Command… (try: help)" autocomplete="off" spellcheck="false">
-  <span id="process-prompt-status" class="prompt-status"></span>
- </div>
  <div id="panel-toggles" class="panel-toggles"></div>
  <div class="topbar-links">
   <a href="https://github.com/scimbe/CADS-devsystem">repo</a> ·
@@ -157,6 +163,13 @@
  </div>
 </div>
 <div id="desktop"></div>
+<div class="prompt-dock">
+ <div class="prompt-dock-inner">
+  <span class="prompt-dock-icon">›</span>
+  <input id="process-prompt-input" class="process-prompt" placeholder="Command… (try: help)" autocomplete="off" spellcheck="false">
+  <span id="process-prompt-status" class="prompt-status"></span>
+ </div>
+</div>
 
 <script>
 const API = '/api';
@@ -188,7 +201,14 @@ const PANEL_DEFAULTS = {
 const LAYOUT_KEY = 'devsystem-panel-layout-v1';
 let layout = {};
 try { layout = JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}'); } catch (e) { layout = {}; }
+// Seed from the highest z persisted across sessions, not a fixed 10 -- otherwise a
+// freshly maximized/raised panel this session can still render under an older panel
+// that was raised higher in a previous session and never came back down.
 let zTop = 10;
+for (const id of Object.keys(PANEL_DEFAULTS)) {
+  const z = layout[id] && typeof layout[id].z === 'number' ? layout[id].z : 0;
+  if (z > zTop) zTop = z;
+}
 
 function saveLayout() {
   try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (e) { /* storage unavailable -- layout just won't persist */ }
@@ -427,6 +447,11 @@ async function refreshRunsList() {
       btn.innerHTML = `${r.run_id}${badge}<div class="meta">${r.iterations} iteration(s) · ${r.roles} role(s)</div>`;
       btn.onclick = () => selectRun(r.run_id);
       el.appendChild(btn);
+    }
+    // First load, nothing picked yet: load the first run automatically so the
+    // dashboard isn't a wall of "select a run" placeholders on open.
+    if (!currentRun && runs.length) {
+      await selectRun(runs[0].run_id);
     }
   } catch (e) {
     el.innerHTML = `<span class="status-line err">${e.message}</span>`;
