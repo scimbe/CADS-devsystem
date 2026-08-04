@@ -27,6 +27,16 @@ use tower_http::services::ServeDir;
 #[derive(Clone)]
 struct AppState {
     runs_dir: Arc<PathBuf>,
+    /// Every mutating handler (create/iterate/criteria/govern) does its own
+    /// load-then-persist round trip against `runs/<id>/*.json` with no other
+    /// coordination -- two concurrent requests (a double-click, two browser tabs)
+    /// could both load the same on-disk state before either writes back, and the
+    /// second `persist_run` would silently clobber the first's update. This is a
+    /// real single-process control surface, not a multi-tenant service, so one
+    /// global write lock (not per-run) is the simplest correct fix: writes are
+    /// sub-millisecond, so serializing them costs nothing a human submitting one
+    /// form at a time would ever notice.
+    write_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// The real API router, no static-file fallback -- separated out so tests can
@@ -49,7 +59,7 @@ fn api_router(state: AppState) -> Router {
 async fn main() {
     let runs_dir = PathBuf::from(std::env::var("DEVSYSTEM_RUNS_DIR").unwrap_or_else(|_| "runs".to_string()));
     fs::create_dir_all(&runs_dir).expect("create runs dir");
-    let state = AppState { runs_dir: Arc::new(runs_dir) };
+    let state = AppState { runs_dir: Arc::new(runs_dir), write_lock: Arc::new(tokio::sync::Mutex::new(())) };
 
     let static_dir = std::env::var("DEVSYSTEM_STATIC_DIR").unwrap_or_else(|_| "web/static".to_string());
 
@@ -124,6 +134,7 @@ async fn create_run(State(state): State<AppState>, Json(body): Json<CreateRunReq
     if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
     }
+    let _guard = state.write_lock.lock().await;
     if run_exists(&state, id) {
         return (StatusCode::CONFLICT, "run already exists").into_response();
     }
@@ -210,6 +221,7 @@ fn default_true() -> bool {
 }
 
 async fn iterate_run(State(state): State<AppState>, AxPath(id): AxPath<String>, Json(body): Json<IterateRequest>) -> impl IntoResponse {
+    let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
     let (mut spec, mut run_state) = match load_or_init_run(&dir, &id) {
         Ok(v) => v,
@@ -288,6 +300,7 @@ async fn govern_memory(State(state): State<AppState>, AxPath((id, index)): AxPat
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
     }
+    let _guard = state.write_lock.lock().await;
     let memory_path = run_dir(&state, &id).join("memory.jsonl");
     match govern_memory_entry(&memory_path, index) {
         Ok(entries) => Json(entries).into_response(),
@@ -318,6 +331,7 @@ async fn update_criteria(
     if body.max_iterations == 0 || body.max_consecutive_failures == 0 {
         return (StatusCode::BAD_REQUEST, "max_iterations and max_consecutive_failures must be at least 1").into_response();
     }
+    let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
     let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
         Ok(v) => v,
@@ -343,7 +357,7 @@ mod tests {
 
     fn test_state() -> (AppState, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let state = AppState { runs_dir: Arc::new(dir.path().to_path_buf()) };
+        let state = AppState { runs_dir: Arc::new(dir.path().to_path_buf()), write_lock: Arc::new(tokio::sync::Mutex::new(())) };
         (state, dir)
     }
 
@@ -690,5 +704,52 @@ mod tests {
         let after = fs::read_to_string(&state_path).expect("state.json still exists");
         assert!(after.contains("\"real progress\""), "iteration feedback should be persisted to disk");
         assert!(!after.contains("\"history\": []"), "history should no longer be empty on disk");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_iterations_against_the_same_run_lose_none_of_them() {
+        // Real OS-thread parallelism (not the single-threaded runtime most tests use)
+        // -- this is the only way to actually exercise the load-then-persist race
+        // write_lock exists to close: without it, two requests can both read
+        // state.json before either writes, and the second persist_run silently
+        // clobbers the first iteration.
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "concurrent-run"})))
+            .await
+            .unwrap();
+
+        const N: usize = 20;
+        let mut handles = Vec::new();
+        for i in 0..N {
+            let app = app.clone();
+            handles.push(tokio::spawn(async move {
+                app.oneshot(json_request(
+                    "POST",
+                    "/api/runs/concurrent-run/iterate",
+                    serde_json::json!({"stage": "devsystem.implement", "feedback": format!("concurrent iteration {i}"), "succeeded": true}),
+                ))
+                .await
+                .unwrap()
+                .status()
+            }))
+        }
+        for h in handles {
+            assert_eq!(h.await.unwrap(), SC::OK);
+        }
+
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/concurrent-run").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        let history = body["state"]["history"].as_array().expect("history is an array");
+        assert_eq!(history.len(), N, "every concurrent iteration must land -- none silently overwritten");
+
+        let mut iteration_numbers: Vec<u64> = history.iter().map(|r| r["iteration"].as_u64().unwrap()).collect();
+        iteration_numbers.sort_unstable();
+        assert_eq!(iteration_numbers, (1..=N as u64).collect::<Vec<_>>(), "iteration numbers must be exactly 1..=N, no duplicates or gaps");
     }
 }
