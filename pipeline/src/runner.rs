@@ -21,6 +21,19 @@ pub struct BacklogItem {
     pub done: bool,
 }
 
+/// A real completion/abort checkpoint, distinct from [`BacklogItem`] (informational
+/// todo) and `AbortCriteria` (mechanical iteration/failure counts): operator
+/// feedback: "ich möchte nicht nur Iterationen, sondern auch Milestones als
+/// Abbruchkriterium definieren können." Reaching one is meaningful enough that
+/// `toggle_milestone` (the 0->1 transition only) auto-pauses the run -- the same
+/// `RunState::paused` mechanism a human uses to stop and correct something -- so a
+/// milestone actually gates the run rather than being decorative.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Milestone {
+    pub description: String,
+    pub achieved: bool,
+}
+
 /// Persisted state for one run -- serialized to `runs/<run_id>/state.json` in the
 /// coordination repo so a run survives across separate loop firings (each firing is a
 /// fresh process; nothing here is in-memory-only).
@@ -53,6 +66,10 @@ pub struct RunState {
     /// pre-existing `state.json` files (no backlog yet) still load.
     #[serde(default)]
     pub backlog: Vec<BacklogItem>,
+    /// This run's real completion/abort checkpoints -- see [`Milestone`].
+    /// `#[serde(default)]` so pre-existing `state.json` files still load.
+    #[serde(default)]
+    pub milestones: Vec<Milestone>,
 }
 
 impl RunState {
@@ -65,8 +82,24 @@ impl RunState {
             criteria: AbortCriteria::default(),
             paused: false,
             backlog: Vec::new(),
+            milestones: Vec::new(),
         }
     }
+}
+
+/// Toggle the milestone at `index`. The not-achieved -> achieved transition
+/// auto-pauses the run via the same [`RunState::paused`] a human uses to stop and
+/// correct something -- reaching a real milestone is a checkpoint, not decoration.
+/// The achieved -> not-achieved direction (a human undoing a mistaken mark) does
+/// NOT auto-unpause; resuming is always a separate, deliberate action.
+pub fn toggle_milestone(state: &mut RunState, index: usize) -> Result<(), String> {
+    let milestone = state.milestones.get_mut(index).ok_or_else(|| format!("no milestone at index {index}"))?;
+    let was_achieved = milestone.achieved;
+    milestone.achieved = !milestone.achieved;
+    if !was_achieved && milestone.achieved {
+        state.paused = true;
+    }
+    Ok(())
 }
 
 /// What the runner decided after folding in one [`IterationRecord`].
@@ -159,6 +192,34 @@ mod tests {
             proposals,
             succeeded,
         }
+    }
+
+    #[test]
+    fn achieving_a_milestone_auto_pauses_the_run() {
+        let mut state = RunState::new("run-milestone");
+        state.milestones.push(Milestone { description: "APK builds and installs".into(), achieved: false });
+        assert!(!state.paused);
+
+        toggle_milestone(&mut state, 0).unwrap();
+        assert!(state.milestones[0].achieved);
+        assert!(state.paused, "reaching a milestone must pause the run for human review");
+    }
+
+    #[test]
+    fn un_achieving_a_milestone_does_not_auto_unpause() {
+        let mut state = RunState::new("run-milestone-undo");
+        state.milestones.push(Milestone { description: "real APK build".into(), achieved: true });
+        state.paused = true;
+
+        toggle_milestone(&mut state, 0).unwrap();
+        assert!(!state.milestones[0].achieved);
+        assert!(state.paused, "undoing a mistaken mark should not silently resume the run");
+    }
+
+    #[test]
+    fn toggling_an_out_of_range_milestone_index_fails_loudly() {
+        let mut state = RunState::new("run-milestone-oob");
+        assert!(toggle_milestone(&mut state, 0).is_err());
     }
 
     #[test]
