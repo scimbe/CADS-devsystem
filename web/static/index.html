@@ -1274,7 +1274,12 @@ async function renderRolesPanel(id, data) {
     </form>
     <div class="arch-note" style="margin-bottom:.6rem">Real, signed, and accepted the same way as a CLI agent's bid --
       each submission generates a fresh, throwaway signing identity server-side (like running
-      <code>devsystem_offer --seed N</code> by hand). Not a persistent account/identity yet.</div>`;
+      <code>devsystem_offer --seed N</code> by hand). Not a persistent account/identity yet.</div>
+    <div class="arch-note" style="margin-bottom:.6rem">Winning a bid alone runs nothing -- a real
+      external agent submits its actual work back over HTTP with
+      <code>devsystem_iterate --remote &lt;this-site's-api-base&gt; ${escapeHtml(id)} record.json</code>
+      (same real endpoint the New Iteration panel itself uses). There is no enforcement yet tying a
+      submission to the role you actually won.</div>`;
 
   const fillModes = data.state.role_fill_modes || {};
   const cards = data.spec.roles.map(r => {
