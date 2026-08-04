@@ -128,8 +128,9 @@ async fn whoami(headers: axum::http::HeaderMap) -> impl IntoResponse {
 /// the minimum honest signal rather than handing out internal network topology.
 async fn assistant_status(State(state): State<AppState>) -> impl IntoResponse {
     let Some(url) = state.assistant_url.clone() else {
-        return Json(serde_json::json!({"configured": false, "reachable": null})).into_response();
+        return Json(serde_json::json!({"configured": false, "reachable": null, "response_time_ms": null})).into_response();
     };
+    let started = std::time::Instant::now();
     let reachable = state
         .http_client
         .get(url.as_ref())
@@ -137,7 +138,12 @@ async fn assistant_status(State(state): State<AppState>) -> impl IntoResponse {
         .send()
         .await
         .is_ok();
-    Json(serde_json::json!({"configured": true, "reachable": reachable})).into_response()
+    // Only a meaningful latency figure when the probe actually completed --
+    // a timeout/connection-refused elapsed time is an artifact of the 2s
+    // timeout itself, not a real response time, so it's reported as null
+    // rather than a number that would misleadingly look like one.
+    let response_time_ms = reachable.then(|| started.elapsed().as_millis() as u64);
+    Json(serde_json::json!({"configured": true, "reachable": reachable, "response_time_ms": response_time_ms})).into_response()
 }
 
 #[tokio::main]
@@ -1881,6 +1887,7 @@ mod tests {
         let body = body_json(response).await;
         assert_eq!(body["configured"], false);
         assert!(body["reachable"].is_null(), "reachable must be null (not attempted), not a fabricated false, when nothing is configured");
+        assert!(body["response_time_ms"].is_null());
     }
 
     #[tokio::test]
@@ -1893,6 +1900,7 @@ mod tests {
         let body = body_json(response).await;
         assert_eq!(body["configured"], true);
         assert_eq!(body["reachable"], true, "a real TCP-reachable mock bridge, even answering 404 on GET /, must report reachable");
+        assert!(body["response_time_ms"].as_u64().is_some(), "a real completed probe must report a real measured latency");
     }
 
     #[tokio::test]
@@ -1905,6 +1913,7 @@ mod tests {
         let body = body_json(response).await;
         assert_eq!(body["configured"], true);
         assert_eq!(body["reachable"], false, "configured but genuinely unreachable must be reported as such, not silently true");
+        assert!(body["response_time_ms"].is_null(), "a timed-out probe's elapsed time is an artifact of the timeout, not a real latency -- must not be reported as one");
     }
 
     #[tokio::test]
