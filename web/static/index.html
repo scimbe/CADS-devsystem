@@ -1004,8 +1004,23 @@ function initPanels() {
 
 async function fetchJSON(url, opts) {
   const res = await fetch(url, opts);
-  const body = await res.json().catch(() => null);
-  if (!res.ok) throw new Error((body && (body.error || JSON.stringify(body))) || res.statusText);
+  const raw = await res.text();
+  // Real gap found+fixed 2026-08-05: the overwhelming majority of this
+  // backend's real error responses are plain text (`(StatusCode::X, "a real
+  // message")` -- axum's default IntoResponse for &str/String), not JSON.
+  // The old `res.json().catch(() => null)` silently swallowed every one of
+  // them and fell back to `res.statusText` (a generic "Bad Request"/"Not
+  // Found"/"Conflict"), meaning basically every specific, carefully-worded
+  // validation error this codebase has ever written was invisible in the
+  // GUI -- only ever seen by reading the raw HTTP body directly (e.g. via
+  // curl), never in an actual "status-line err" message a real operator
+  // would see. Try JSON first (still the common shape for successful
+  // responses and a few real JSON error bodies), fall back to the raw text
+  // itself, and only fall back to the generic HTTP status text if the body
+  // is genuinely empty.
+  let body = null;
+  try { body = JSON.parse(raw); } catch (e) { /* not JSON -- raw text is the real message below */ }
+  if (!res.ok) throw new Error((body && (body.error || JSON.stringify(body))) || raw.trim() || res.statusText);
   return body;
 }
 
@@ -2409,7 +2424,15 @@ async function viewCheckin(id) {
     const data = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/checkin`);
     view.innerHTML = `<pre class="checkin">${escapeHtml(data.markdown)}</pre>`;
   } catch (e) {
-    view.innerHTML = `<span class="status-line err">${e.message}</span>`;
+    // "no iteration history yet" is an honest, expected 404 for a fresh run
+    // (see checkin_run's own doc comment) -- not a real failure, so it
+    // shouldn't read as one. Any other message (network failure, a real
+    // server error) still shows as a genuine error, unchanged.
+    if (e.message === 'no iteration history yet') {
+      view.innerHTML = '<span class="lede">No check-in yet -- this run hasn\'t completed an iteration.</span>';
+    } else {
+      view.innerHTML = `<span class="status-line err">${e.message}</span>`;
+    }
   }
 }
 
