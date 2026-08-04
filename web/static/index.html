@@ -49,6 +49,7 @@
  .status-line{font-family:var(--mono);font-size:.82rem;color:var(--muted);margin-top:.6rem;min-height:1.2em}
  .status-line.ok{color:var(--accent2)}
  .status-line.err{color:var(--danger)}
+ .status-line.warn{color:var(--accent);font-weight:700}
  pre.checkin{white-space:pre-wrap;font-family:var(--mono);font-size:.8rem;background:#0d1117;
              border:1px solid var(--border);border-radius:8px;padding:1rem;max-height:24rem;overflow:auto}
  code{background:#0d1117;border:1px solid var(--border);border-radius:5px;padding:.1rem .35rem;font-size:.9em;font-family:var(--mono)}
@@ -238,9 +239,28 @@ async function submitIteration(id) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ stage, feedback, succeeded, proposals })
     });
-    status.textContent = `Iteration ${result.iteration} recorded -- outcome: ${result.outcome}, roles now ${result.roles_now}.`;
-    status.className = 'status-line ok';
+    let text, cls, showCheckin = false;
+    if (result.outcome === 'CheckinDue') {
+      text = `Iteration ${result.iteration} recorded -- CHECK-IN REQUIRED (the bounded-loop cadence just fired). ` +
+        `No further iterations should run on this stage until a human reviews the check-in below.`;
+      cls = 'status-line warn';
+      showCheckin = true;
+    } else if (result.outcome === 'Abort') {
+      text = `Iteration ${result.iteration} recorded -- RUN ABORTED (too many consecutive failures, or the ` +
+        `iteration ceiling was reached). This run should not continue unsupervised.`;
+      cls = 'status-line err';
+    } else {
+      text = `Iteration ${result.iteration} recorded -- outcome: ${result.outcome}, roles now ${result.roles_now}.`;
+      cls = 'status-line ok';
+    }
+    // selectRun() re-renders the whole panel (including a fresh #iter-status
+    // element) -- set the message on the element AFTER that render, not the
+    // stale reference captured before it, or it gets wiped immediately.
     await selectRun(id);
+    const freshStatus = document.getElementById('iter-status');
+    freshStatus.textContent = text;
+    freshStatus.className = cls;
+    if (showCheckin) await viewCheckin(id);
   } catch (e) {
     status.textContent = e.message; status.className = 'status-line err';
   }
