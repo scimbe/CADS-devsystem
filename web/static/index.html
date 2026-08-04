@@ -711,7 +711,15 @@ function parseGithubRepo(url) {
   }
 }
 
-async function renderCodePanel(id, data) {
+// Deliberately on-demand, like Check-in/Memory -- NOT auto-fetched on every
+// selectRun(). GitHub's unauthenticated API allows only ~60 requests/hour, and
+// nearly every action in this GUI (toggling a backlog item, saving criteria,
+// submitting an iteration) calls selectRun() to refresh the whole run view; an
+// automatic fetch here would burn through that budget on actions that have
+// nothing to do with code, and silently break this panel for the rest of the
+// hour (a real bug caught by re-reading this file, not reported -- fixed before
+// it was ever hit in practice).
+function renderCodePanel(id, data) {
   const body = document.getElementById('body-code');
   const repoUrl = data.state.repo_url;
   const formHtml = `
@@ -727,15 +735,19 @@ async function renderCodePanel(id, data) {
     wireRepoForm(id);
     return;
   }
-  body.innerHTML = formHtml + `<div id="repo-commits"><span class="lede">Loading real commits from GitHub…</span></div>`;
+  body.innerHTML = formHtml + `<button class="secondary" id="load-commits">Load recent commits from GitHub</button><div id="repo-commits"></div>`;
   wireRepoForm(id);
+  document.getElementById('load-commits').onclick = () => loadCommits(repoUrl);
+}
 
-  const gh = parseGithubRepo(repoUrl);
+async function loadCommits(repoUrl) {
   const commitsEl = document.getElementById('repo-commits');
+  const gh = parseGithubRepo(repoUrl);
   if (!gh) {
     commitsEl.innerHTML = `<a href="${escapeHtml(repoUrl)}" target="_blank" rel="noopener">${escapeHtml(repoUrl)}</a> <span class="lede">(not a github.com URL -- can't fetch commits automatically)</span>`;
     return;
   }
+  commitsEl.innerHTML = '<span class="lede">Loading real commits from GitHub…</span>';
   try {
     const res = await fetch(`https://api.github.com/repos/${gh.owner}/${gh.repo}/commits?per_page=5`);
     if (!res.ok) {
