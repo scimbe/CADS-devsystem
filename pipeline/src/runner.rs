@@ -21,11 +21,24 @@ pub struct RunState {
     /// `stage_id`s of every proposal that actually got added to the live spec, in the
     /// order they were added -- the run's own record of how the pipeline grew itself.
     pub added_stages: Vec<String>,
+    /// This run's own bounded-loop criteria -- starts at [`AbortCriteria::default`] but
+    /// a human can tune it per run (e.g. a run that's earned trust doesn't need a
+    /// check-in every 5 iterations). `#[serde(default)]` so `state.json` files written
+    /// before this field existed still load, falling back to the same defaults every
+    /// run used to be hardcoded to.
+    #[serde(default)]
+    pub criteria: AbortCriteria,
 }
 
 impl RunState {
     pub fn new(run_id: impl Into<String>) -> Self {
-        RunState { run_id: run_id.into(), consecutive_failures: 0, history: Vec::new(), added_stages: Vec::new() }
+        RunState {
+            run_id: run_id.into(),
+            consecutive_failures: 0,
+            history: Vec::new(),
+            added_stages: Vec::new(),
+            criteria: AbortCriteria::default(),
+        }
     }
 }
 

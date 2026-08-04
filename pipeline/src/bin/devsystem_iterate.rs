@@ -8,7 +8,7 @@
 
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration};
 use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, RunOutcome};
-use devsystem_pipeline::{AbortCriteria, IterationRecord};
+use devsystem_pipeline::IterationRecord;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -30,7 +30,7 @@ fn main() {
     let envelope = envelope_from_iteration(&record);
     append_to_memory_log(&memory_path, &envelope).expect("append to memory.jsonl");
 
-    let criteria = AbortCriteria::default();
+    let criteria = state.criteria;
     let outcome = run_iteration(&mut spec, &mut state, record, &criteria);
 
     persist_run(&run_dir, &spec, &state).expect("persist run");

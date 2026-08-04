@@ -37,6 +37,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}", get(get_run))
         .route("/api/runs/{id}/iterate", post(iterate_run))
         .route("/api/runs/{id}/checkin", get(checkin_run))
+        .route("/api/runs/{id}/criteria", post(update_criteria))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -156,7 +157,7 @@ struct RunHealth {
 }
 
 fn run_health(run_state: &devsystem_pipeline::runner::RunState) -> RunHealth {
-    let criteria = AbortCriteria::default();
+    let criteria = run_state.criteria;
     let completed = run_state.history.len() as u32;
     let until_checkin = if criteria.checkin_every == 0 {
         0
@@ -210,7 +211,7 @@ async fn iterate_run(State(state): State<AppState>, AxPath(id): AxPath<String>, 
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("memory log failed: {e}")).into_response();
     }
 
-    let criteria = AbortCriteria::default();
+    let criteria = run_state.criteria;
     let outcome = run_iteration(&mut spec, &mut run_state, record, &criteria);
 
     if let Err(e) = persist_run(&dir, &spec, &run_state) {
@@ -242,6 +243,44 @@ async fn checkin_run(State(state): State<AppState>, AxPath(id): AxPath<String>) 
     match render_plan_markdown(&run_state) {
         Some(markdown) => Json(serde_json::json!({"markdown": markdown})).into_response(),
         None => (StatusCode::NOT_FOUND, "no iteration history yet").into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateCriteriaRequest {
+    max_iterations: u32,
+    max_consecutive_failures: u32,
+    checkin_every: u32,
+}
+
+/// The "customize" half of "control and customize the pipeline for actual use" (#382):
+/// every run starts on [`AbortCriteria::default`], but a run that's earned trust (or
+/// needs a tighter leash) can have its own bounded-loop criteria tuned here, persisted
+/// on `RunState` itself so `run_iteration`/`run_health` immediately pick it up.
+async fn update_criteria(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    Json(body): Json<UpdateCriteriaRequest>,
+) -> impl IntoResponse {
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    if body.max_iterations == 0 || body.max_consecutive_failures == 0 {
+        return (StatusCode::BAD_REQUEST, "max_iterations and max_consecutive_failures must be at least 1").into_response();
+    }
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    run_state.criteria = AbortCriteria {
+        max_iterations: body.max_iterations,
+        max_consecutive_failures: body.max_consecutive_failures,
+        checkin_every: body.checkin_every,
+    };
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"criteria": run_state.criteria})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
     }
 }
 
@@ -309,6 +348,57 @@ mod tests {
         let app = api_router(state);
         let response = app
             .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "not a valid id!"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn update_criteria_persists_and_health_reflects_it() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "criteria-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/criteria-run/criteria",
+                serde_json::json!({"max_iterations": 50, "max_consecutive_failures": 5, "checkin_every": 10}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/criteria-run").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["health"]["criteria"]["max_iterations"], 50);
+        assert_eq!(body["health"]["iterations_until_checkin"], 10, "health should reflect the newly saved criteria, not the old default");
+    }
+
+    #[tokio::test]
+    async fn update_criteria_rejects_zero_bounds() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "bad-criteria-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/bad-criteria-run/criteria",
+                serde_json::json!({"max_iterations": 0, "max_consecutive_failures": 5, "checkin_every": 10}),
+            ))
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST);

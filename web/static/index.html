@@ -37,6 +37,11 @@
  .health .stat.warn b{color:var(--accent)}
  .health .stat.danger{border-color:var(--danger);color:var(--danger)}
  .health .stat.danger b{color:var(--danger)}
+ details.criteria{margin-bottom:1rem;font-size:.85rem}
+ details.criteria summary{cursor:pointer;color:var(--muted);font-family:var(--mono);font-size:.75rem}
+ .criteria-fields{display:flex;gap:.6rem;margin-top:.5rem;flex-wrap:wrap}
+ .criteria-fields label{flex:1;min-width:8rem;margin:0}
+ .criteria-fields input{margin-top:.25rem}
  form.inline{display:flex;gap:.4rem}
  input,textarea,select{background:#0d1117;border:1px solid var(--border);border-radius:6px;color:var(--text);
         padding:.45rem .6rem;font-family:var(--mono);font-size:.85rem;width:100%}
@@ -108,6 +113,7 @@
 <script>
 const API = '/api';
 let currentRun = null;
+let criteriaOpen = false;
 
 async function fetchJSON(url, opts) {
   const res = await fetch(url, opts);
@@ -182,6 +188,21 @@ function renderRunDetail(id, data) {
         iterations: <b>${h.iterations_completed}</b> / ${h.criteria.max_iterations}</span>
     </div>` : '';
 
+  const criteriaDetails = h ? `
+    <details class="criteria" ${criteriaOpen ? 'open' : ''}>
+      <summary>customize this run's bounded-loop criteria</summary>
+      <div class="criteria-fields">
+        <label>max iterations
+          <input id="cr-max-iterations" type="number" min="1" value="${h.criteria.max_iterations}"></label>
+        <label>max consecutive failures
+          <input id="cr-max-failures" type="number" min="1" value="${h.criteria.max_consecutive_failures}"></label>
+        <label>check-in every N iterations (0 = never)
+          <input id="cr-checkin-every" type="number" min="0" value="${h.criteria.checkin_every}"></label>
+      </div>
+      <button type="button" class="secondary" id="save-criteria" style="margin-top:.5rem">Save criteria</button>
+      <div id="criteria-status" class="status-line"></div>
+    </details>` : '';
+
   const stalled = data.stalled_stages || [];
   const stalledPanel = stalled.length ? `
     <div class="stalled-panel">
@@ -197,6 +218,7 @@ function renderRunDetail(id, data) {
     <h2>${id}</h2>
     <div class="roles">${roles}</div>
     ${healthPanel}
+    ${criteriaDetails}
     ${stalledPanel}
 
     <label>New iteration -- stage (pick from this run's live roles, or type a new one)</label>
@@ -238,6 +260,10 @@ function renderRunDetail(id, data) {
 
   document.getElementById('submit-iter').onclick = () => submitIteration(id);
   document.getElementById('view-checkin').onclick = () => viewCheckin(id);
+  const saveCriteriaBtn = document.getElementById('save-criteria');
+  if (saveCriteriaBtn) saveCriteriaBtn.onclick = () => saveCriteria(id);
+  const criteriaEl = document.querySelector('details.criteria');
+  if (criteriaEl) criteriaEl.ontoggle = (e) => { criteriaOpen = e.target.open; };
   document.getElementById('it-has-proposal').onchange = (e) => {
     document.getElementById('proposal-fields').style.display = e.target.checked ? 'block' : 'none';
   };
@@ -308,6 +334,32 @@ async function submitIteration(id) {
     freshStatus.textContent = text;
     freshStatus.className = cls;
     if (showCheckin) await viewCheckin(id);
+  } catch (e) {
+    status.textContent = e.message; status.className = 'status-line err';
+  }
+}
+
+async function saveCriteria(id) {
+  const status = document.getElementById('criteria-status');
+  const max_iterations = parseInt(document.getElementById('cr-max-iterations').value, 10);
+  const max_consecutive_failures = parseInt(document.getElementById('cr-max-failures').value, 10);
+  const checkin_every = parseInt(document.getElementById('cr-checkin-every').value, 10);
+  if (!Number.isInteger(max_iterations) || !Number.isInteger(max_consecutive_failures) || !Number.isInteger(checkin_every)) {
+    status.textContent = 'All three fields must be whole numbers.'; status.className = 'status-line err'; return;
+  }
+  status.textContent = 'Saving…'; status.className = 'status-line';
+  try {
+    await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/criteria`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ max_iterations, max_consecutive_failures, checkin_every })
+    });
+    // Same wiped-status pitfall as submitIteration -- selectRun() rebuilds
+    // #run-detail (including a fresh #criteria-status), so set the message
+    // on that fresh element, not this stale reference.
+    await selectRun(id);
+    const fresh = document.getElementById('criteria-status');
+    fresh.textContent = 'Saved.'; fresh.className = 'status-line ok';
   } catch (e) {
     status.textContent = e.message; status.className = 'status-line err';
   }
