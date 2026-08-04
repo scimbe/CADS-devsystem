@@ -28,6 +28,7 @@
 	# pipeline at all, confirmed against Caddy's own forward_auth docs).
 	forward_auth https://{$CT_GATE_UPSTREAM_HOST} {
 		uri /gate/check
+		copy_headers X-Gate-Email
 	}
 	# devsystem-web (a real axum backend, #382) replaces the plain file_server here --
 	# the page it serves is now a real control panel (list/view/drive pipeline runs),

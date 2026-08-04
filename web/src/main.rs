@@ -96,7 +96,19 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/offers/submit", post(submit_offer))
         .route("/api/runs/{id}/auction", get(view_auction))
         .route("/api/runs/{id}/assistant", post(ask_assistant))
+        .route("/api/me", get(whoami))
         .with_state(state)
+}
+
+/// Real identity, or honestly none -- never fabricated. Caddy's `forward_auth`
+/// gate (demo-site/Caddyfile) copies the real logged-in email from the portal's
+/// own `/gate/check` onto `X-Gate-Email` on every request that reaches this
+/// process; a direct request that bypasses the gate (local dev, an internal
+/// health check) simply has no such header, which this reports as `null`
+/// rather than guessing or claiming a session that was never verified.
+async fn whoami(headers: axum::http::HeaderMap) -> impl IntoResponse {
+    let email = headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+    Json(serde_json::json!({ "email": email }))
 }
 
 #[tokio::main]
@@ -830,6 +842,29 @@ mod tests {
             response.headers().get("access-control-allow-origin").is_none(),
             "no CORS layer should mean no access-control-allow-origin header, regardless of the request's Origin"
         );
+    }
+
+    #[tokio::test]
+    async fn whoami_reports_the_real_gate_header_when_present() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        let response = app
+            .oneshot(Request::builder().uri("/api/me").header("x-gate-email", "operator@example.com").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["email"], "operator@example.com");
+    }
+
+    #[tokio::test]
+    async fn whoami_reports_none_honestly_when_the_gate_header_is_absent() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        let response = app.oneshot(Request::builder().uri("/api/me").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert!(body["email"].is_null(), "no header reaching this process must never be papered over with a fabricated identity");
     }
 
     #[tokio::test]

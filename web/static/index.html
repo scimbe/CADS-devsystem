@@ -23,6 +23,11 @@
  .panel-chip.active{border-color:var(--accent2);color:var(--accent2)}
  .topbar-links{font-size:.72rem;color:var(--muted);white-space:nowrap}
  .topbar-links a{color:var(--accent2)}
+ .whoami{font-family:var(--mono);font-size:.72rem;color:var(--muted);white-space:nowrap;
+         display:flex;align-items:center;gap:.35rem}
+ .whoami .dot{width:.4rem;height:.4rem;border-radius:50%;background:var(--muted);flex-shrink:0}
+ .whoami.signed-in .dot{background:var(--accent2)}
+ .whoami.signed-in{color:var(--text)}
  #main-row{flex:1;display:flex;min-height:0}
  #desktop{position:relative;flex:1;overflow:auto;min-height:0}
  /* Assistant: a real, fixed dock (not a floating .win) -- operator feedback:
@@ -43,15 +48,19 @@
  .assistant-role{display:block;font-family:var(--mono);font-size:.65rem;text-transform:uppercase;
                   letter-spacing:.05em;color:var(--muted);margin-bottom:.25rem}
  .assistant-text{white-space:pre-wrap;overflow-wrap:anywhere}
- /* Process Prompt: docked statically at the bottom, part of the normal layout
-    (not a floating overlay) -- operator feedback: "ich will diese Leiste nicht"
-    ruled out the freestanding/draggable version tried earlier. */
- .prompt-dock{flex-shrink:0;border-top:1px solid var(--border);background:var(--panel);
-              padding:.7rem 1rem;display:flex;justify-content:center}
- .prompt-dock-inner{display:flex;align-items:center;gap:.6rem;width:100%;max-width:56rem;
+ /* Process Prompt: freestanding and draggable via the grip handle (operator:
+    "warum ist der prompt nicht mehr verschiebbar das war viel besser!") --
+    position:fixed with the highest z-index in the app so no maximized panel
+    can ever render above it, but the drag itself is clamped to the viewport
+    (see wireDockDrag), matching the same "stay within the available area"
+    rule the .win panels now follow too. */
+ .prompt-dock{position:fixed;left:50%;bottom:1rem;transform:translateX(-50%);z-index:100000;
+              width:min(56rem,calc(100vw - 2rem))}
+ .prompt-dock-inner{display:flex;align-items:center;gap:.6rem;width:100%;
                      background:#0d1117;border:1px solid var(--border);border-radius:10px;
-                     padding:.55rem .9rem;transition:border-color .15s}
+                     padding:.55rem .9rem;box-shadow:0 10px 30px rgba(0,0,0,.45);transition:border-color .15s}
  .prompt-dock-inner:focus-within{border-color:var(--accent2)}
+ .prompt-dock-grip{cursor:move;color:var(--muted);flex-shrink:0;user-select:none;letter-spacing:-1px}
  .prompt-dock-icon{color:var(--accent2);font-family:var(--mono);font-weight:700;flex-shrink:0}
  .process-prompt{font-family:var(--mono);font-size:.85rem;background:transparent;border:none;
                   color:var(--text);flex:1;width:auto;padding:.2rem 0}
@@ -177,6 +186,7 @@
   <h1>The Development System</h1>
  </div>
  <div id="panel-toggles" class="panel-toggles"></div>
+ <div id="whoami" class="whoami"></div>
  <div class="topbar-links">
   <a href="https://github.com/scimbe/CADS-devsystem">repo</a> ·
   <a href="https://github.com/scimbe/CADS-Tunnel/issues/382">#382</a>
@@ -200,6 +210,7 @@
 </div>
 <div class="prompt-dock" id="prompt-dock">
  <div class="prompt-dock-inner">
+  <span class="prompt-dock-grip" id="prompt-dock-grip" title="drag to reposition">⠿</span>
   <span class="prompt-dock-icon">›</span>
   <input id="process-prompt-input" class="process-prompt" placeholder="Ask devsystem.assistant, or a panel command… (try: help)" autocomplete="off" spellcheck="false">
   <span id="process-prompt-status" class="prompt-status"></span>
@@ -457,10 +468,22 @@ function checkPanelsFitViewport() {
   renderPanelToggleBar();
 }
 
+// A dragged-and-saved prompt-dock position can end up off-screen after the
+// viewport shrinks; clamp it back on resize the same way a fresh drag would.
+function clampDockToViewport() {
+  const dock = document.getElementById('prompt-dock');
+  if (!dock || getComputedStyle(dock).bottom !== 'auto') return; // still at the untouched default position
+  const rect = dock.getBoundingClientRect();
+  const x = Math.max(0, Math.min(window.innerWidth - rect.width, dock.offsetLeft));
+  const y = Math.max(0, Math.min(window.innerHeight - rect.height, dock.offsetTop));
+  dock.style.left = x + 'px';
+  dock.style.top = y + 'px';
+}
+
 let resizeCheckTimer = null;
 function scheduleViewportCheck() {
   clearTimeout(resizeCheckTimer);
-  resizeCheckTimer = setTimeout(checkPanelsFitViewport, 150);
+  resizeCheckTimer = setTimeout(() => { checkPanelsFitViewport(); clampDockToViewport(); }, 150);
 }
 
 function initPanels() {
@@ -1377,6 +1400,45 @@ function comboFromEvent(e) {
   return parts.sort().join('+');
 }
 
+const PROMPT_POS_KEY = 'devsystem-prompt-pos-v1';
+
+// Draggable via the grip handle, clamped to stay within the viewport --
+// operator: "verschiebbar", but consistent with panels also being bounded
+// to their available area rather than able to fly off anywhere.
+function wireDockDrag() {
+  const dock = document.getElementById('prompt-dock');
+  const grip = document.getElementById('prompt-dock-grip');
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(PROMPT_POS_KEY) || 'null'); } catch (e) { saved = null; }
+  if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
+    dock.style.left = saved.x + 'px';
+    dock.style.top = saved.y + 'px';
+    dock.style.bottom = 'auto';
+    dock.style.transform = 'none';
+  }
+  grip.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const rect = dock.getBoundingClientRect();
+    const startX = e.clientX, startY = e.clientY;
+    const startLeft = rect.left, startTop = rect.top;
+    dock.style.transform = 'none';
+    dock.style.bottom = 'auto';
+    function onMove(ev) {
+      const x = Math.max(0, Math.min(window.innerWidth - rect.width, startLeft + ev.clientX - startX));
+      const y = Math.max(0, Math.min(window.innerHeight - rect.height, startTop + ev.clientY - startY));
+      dock.style.left = x + 'px';
+      dock.style.top = y + 'px';
+    }
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      try { localStorage.setItem(PROMPT_POS_KEY, JSON.stringify({ x: dock.offsetLeft, y: dock.offsetTop })); } catch (e) { /* storage unavailable */ }
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
 function initProcessPrompt() {
   const input = document.getElementById('process-prompt-input');
   input.addEventListener('keydown', (e) => {
@@ -1385,6 +1447,7 @@ function initProcessPrompt() {
     showPromptStatus(result);
     input.value = '';
   });
+  wireDockDrag();
 
   // Global shortcuts fire only when nothing else is capturing keystrokes (no
   // input/textarea/contenteditable focused, including this prompt itself) --
@@ -1402,9 +1465,30 @@ function initProcessPrompt() {
   });
 }
 
+// Real identity or nothing -- the gate's X-Gate-Email header, relayed by
+// devsystem-web's own /api/me. Never guesses: an absent header renders as
+// "not signed in", not a stale/fabricated name.
+async function loadWhoami() {
+  const el = document.getElementById('whoami');
+  try {
+    const data = await fetchJSON(`${API}/me`);
+    if (data.email) {
+      el.className = 'whoami signed-in';
+      el.innerHTML = `<span class="dot"></span>${escapeHtml(data.email)}`;
+    } else {
+      el.className = 'whoami';
+      el.innerHTML = `<span class="dot"></span>not signed in`;
+    }
+  } catch (e) {
+    el.className = 'whoami';
+    el.textContent = '';
+  }
+}
+
 initPanels();
 initProcessPrompt();
 loadRuns();
+loadWhoami();
 for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'checkin', 'memory', 'auction']) {
   placeholderIfNoRun(id);
 }
