@@ -79,7 +79,21 @@ async fn main() {
     axum::serve(listener, app).await.expect("serve");
 }
 
+/// Real path-traversal guard: `create_run` was the only handler that ever validated
+/// `id`'s charset. Every other handler (`get_run`, `iterate_run`, `checkin_run`,
+/// `memory_run`, `govern_memory`, `update_criteria`) took `id` straight from the URL
+/// path and fed it into `runs_dir.join(id)` unvalidated -- `PathBuf::join` honors
+/// `..` components, and axum's `{id}` path segment happily captures a literal `..`
+/// (proven directly: `GET /api/runs/..` returned 200 with a `state.json` planted
+/// outside `runs_dir`, in its parent directory, before this fix). Every handler that
+/// touches the filesystem now calls this first, and `run_dir`/`run_exists` assert on
+/// it too as a defense-in-depth backstop against a future call site that forgets.
+fn valid_run_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 fn run_dir(state: &AppState, id: &str) -> PathBuf {
+    assert!(valid_run_id(id), "run_dir called with an unvalidated id -- every handler must check valid_run_id(id) first");
     state.runs_dir.join(id)
 }
 
@@ -139,7 +153,7 @@ async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn create_run(State(state): State<AppState>, Json(body): Json<CreateRunRequest>) -> impl IntoResponse {
     let id = body.run_id.trim();
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !valid_run_id(id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
     }
     let _guard = state.write_lock.lock().await;
@@ -162,6 +176,9 @@ struct CreateRunRequest {
 }
 
 async fn get_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
     }
@@ -229,6 +246,9 @@ fn default_true() -> bool {
 }
 
 async fn iterate_run(State(state): State<AppState>, AxPath(id): AxPath<String>, Json(body): Json<IterateRequest>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
     let (mut spec, mut run_state) = match load_or_init_run(&dir, &id) {
@@ -274,6 +294,9 @@ async fn iterate_run(State(state): State<AppState>, AxPath(id): AxPath<String>, 
 }
 
 async fn checkin_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
     }
@@ -292,6 +315,9 @@ async fn checkin_run(State(state): State<AppState>, AxPath(id): AxPath<String>) 
 /// was built, but nothing could ever read it back. Real data, not a stub: whatever
 /// this run's actual history produced.
 async fn memory_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
     }
@@ -305,6 +331,9 @@ async fn memory_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -
 /// The only place `Trust::Governed` should ever get set: a human, through the GUI,
 /// explicitly marking one memory entry as reviewed. Never automatic.
 async fn govern_memory(State(state): State<AppState>, AxPath((id, index)): AxPath<(String, usize)>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
     }
@@ -333,6 +362,9 @@ async fn update_criteria(
     AxPath(id): AxPath<String>,
     Json(body): Json<UpdateCriteriaRequest>,
 ) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
     }
@@ -703,6 +735,29 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn path_traversal_via_dotdot_id_is_rejected_not_served() {
+        // Real, previously-exploitable bug: only create_run validated id's charset --
+        // every other handler passed the URL's {id} segment straight into
+        // runs_dir.join(id), and PathBuf::join honors ".." components. Proven
+        // directly before this fix: GET /api/runs/.. returned 200 with the contents
+        // of a state.json planted OUTSIDE runs_dir, in its parent directory.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let runs_dir = dir.path().join("runs");
+        fs::create_dir_all(&runs_dir).unwrap();
+        fs::write(dir.path().join("state.json"), r#"{"run_id":"OUTSIDE","consecutive_failures":0,"history":[],"added_stages":[],"criteria":{"max_iterations":20,"max_consecutive_failures":3,"checkin_every":5}}"#).unwrap();
+
+        let state = AppState { runs_dir: Arc::new(runs_dir), write_lock: Arc::new(tokio::sync::Mutex::new(())) };
+        let app = api_router(state);
+
+        for uri in ["/api/runs/..", "/api/runs/../checkin", "/api/runs/../memory"] {
+            let response = app.clone().oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(response.status(), SC::BAD_REQUEST, "traversal attempt via {uri} must be rejected, not served");
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            assert!(!String::from_utf8_lossy(&bytes).contains("OUTSIDE"), "the out-of-bounds file's content must never leak into the response for {uri}");
+        }
     }
 
     #[tokio::test]
