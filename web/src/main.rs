@@ -229,6 +229,7 @@ struct RunSummary {
     risk_count: usize,
     needs_attention: bool,
     paused: bool,
+    owner_email: Option<String>,
 }
 
 /// True when a run is close enough to its own bound that a human should notice it
@@ -256,6 +257,7 @@ async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
             let health = run_health(&run_state);
             let alert = needs_attention(&health);
             let paused = run_state.paused;
+            let owner_email = run_state.owner_email.clone();
             runs.push(RunSummary {
                 run_id: id,
                 iterations: run_state.history.len(),
@@ -265,6 +267,7 @@ async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
                 risk_count,
                 needs_attention: alert,
                 paused,
+                owner_email,
             });
         }
     }
@@ -272,7 +275,11 @@ async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
     Json(runs).into_response()
 }
 
-async fn create_run(State(state): State<AppState>, Json(body): Json<CreateRunRequest>) -> impl IntoResponse {
+async fn create_run(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<CreateRunRequest>,
+) -> impl IntoResponse {
     let id = body.run_id.trim();
     if !valid_run_id(id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
@@ -283,10 +290,17 @@ async fn create_run(State(state): State<AppState>, Json(body): Json<CreateRunReq
     }
     let dir = run_dir(&state, id);
     match load_or_init_run(&dir, id) {
-        Ok((spec, run_state)) => match persist_run(&dir, &spec, &run_state) {
-            Ok(()) => (StatusCode::CREATED, Json(serde_json::json!({"run_id": id, "roles": spec.roles.len()}))).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
-        },
+        Ok((spec, mut run_state)) => {
+            // The same real, gate-verified identity `/api/me` reports -- not trusted
+            // from anywhere else, and honestly `None` (not a guess) when the gate
+            // header isn't present. A label for "who created this," not an access
+            // check (#382 gap: no per-run authorization exists yet).
+            run_state.owner_email = headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+            match persist_run(&dir, &spec, &run_state) {
+                Ok(()) => (StatusCode::CREATED, Json(serde_json::json!({"run_id": id, "roles": spec.roles.len()}))).into_response(),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+            }
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("init failed: {e}")).into_response(),
     }
 }
@@ -1035,6 +1049,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn create_run_records_the_real_gate_email_as_owner_when_present() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/runs")
+            .header("content-type", "application/json")
+            .header("x-gate-email", "scimbe@gmail.com")
+            .body(Body::from(serde_json::json!({"run_id": "owned-run"}).to_string()))
+            .expect("build request");
+        let response = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), SC::CREATED);
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/owned-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["state"]["owner_email"], "scimbe@gmail.com");
+    }
+
+    #[tokio::test]
+    async fn create_run_leaves_owner_honestly_absent_without_the_gate_header() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "unowned-run"}))).await.unwrap();
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/unowned-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert!(body["state"]["owner_email"].is_null(), "no gate header present -- must not guess an owner");
     }
 
     #[tokio::test]

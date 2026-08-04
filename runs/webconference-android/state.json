@@ -183,6 +183,14 @@
       "feedback": "Wired a real Noise_IK public-key generation call into the native bridge: generate_noise_public_key_hex() calls ct_common::noise::generate_static_keypair() (the exact Noise_IK_25519_ChaChaPoly_BLAKE2s primitive every real CADS-Tunnel client/origin uses), returning only the public half across the FFI boundary (private half zeroized in-scope, StaticKeypair is ZeroizeOnDrop). Cross-compiled for both Android ABIs via cargo-ndk and verified: a fresh rebuild exports UNIFFI_META_NATIVE_BRIDGE_FUNC_GENERATE_NOISE_PUBLIC_KEY_HEX alongside bridge_version, matching the committed .so files exactly. Regenerated Kotlin bindings via uniffi-bindgen and confirmed generateNoisePublicKeyHex() is exposed. Wired into MainActivity as a second real FFI-call status line (same LinkageError-guarded pattern as bridgeVersion), with an updated Robolectric test that actually ran and passed (not assumed). Caught and fixed a real staleness bug in the process: an earlier build run had committed .kt/.so artifacts built from a stale library that lacked the new export -- rebuilt from the current source and reverified the exported symbol set before committing this time. Pushed to CADS-webconference-android main (188bc8b); Android CI triggered. Still not the real handshake state machine or Agent-Fabric channel-join -- those remain open, later increments.",
       "proposals": [],
       "succeeded": true
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.web_gui",
+      "iteration": 15,
+      "feedback": "Closed the tool-registry gap the operator flagged (Roles panel task 4/4): the GUI now honestly answers \"which ct-agent-connected tools does devsystem.assistant have\" -- none, its real disallowed-tools list (Edit, Write, Bash, WebFetch, WebSearch, Agent), sourced from one shared constant (ASSISTANT_DISALLOWED_TOOLS in devsystem-pipeline) used by both the assistant bridge's real claude -p invocation and the web API, so the two cannot drift. Rendered on the assistant role card in the Roles panel. Verified: hermetic cargo test (pipeline 61 + web 44, all green), rebuilt and redeployed devsystem-web, confirmed live via a real Playwright run against the actual rendered page. Also corrected a stale operator-priority claim this loop: verified live that devsystem-demo.bunsenbrenner.org already serves the real interactive devsystem-web backend (not static HTML) -- did not rebuild a duplicate backend.",
+      "proposals": [],
+      "succeeded": true
     }
   ],
   "added_stages": [

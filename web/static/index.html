@@ -739,7 +739,8 @@ async function refreshRunsList() {
       if (r.needs_attention) badge = `<span class="attention-badge">⚠ needs attention</span>`;
       else if (r.stalled_stages && r.stalled_stages.length) badge = `<span class="stalled-badge">${r.stalled_stages.length} stalled</span>`;
       else if (r.risk_count) badge = `<span class="risk-badge">${r.risk_count} risk(s)</span>`;
-      btn.innerHTML = `${r.run_id}${badge}<div class="meta">${r.iterations} iteration(s) · ${r.roles} role(s)</div>`;
+      const ownerLine = r.owner_email ? ` · created by ${escapeHtml(r.owner_email)}` : ' · no recorded owner';
+      btn.innerHTML = `${r.run_id}${badge}<div class="meta">${r.iterations} iteration(s) · ${r.roles} role(s)${ownerLine}</div>`;
       btn.onclick = () => selectRun(r.run_id);
       el.appendChild(btn);
     }

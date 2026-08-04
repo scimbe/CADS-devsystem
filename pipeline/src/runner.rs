@@ -79,6 +79,16 @@ pub struct RunState {
     /// URLs. `#[serde(default)]` so pre-existing `state.json` files still load.
     #[serde(default)]
     pub repo_url: Option<String>,
+    /// The real, verified identity (Caddy's `forward_auth` `X-Gate-Email`, the exact
+    /// header [`whoami`](../../web/src/main.rs)'s `/api/me` reports) of whoever was
+    /// signed in when this run was created -- #382's "correct identification" gap:
+    /// today's site-wide login gate has no per-run access control, so this is
+    /// deliberately just a real, honest *label* ("who created this"), not
+    /// enforcement -- `None` when the run was created without the gate header
+    /// present (e.g. a direct API call, a pre-gate run). `#[serde(default)]` so
+    /// pre-existing `state.json` files (no owner recorded) still load.
+    #[serde(default)]
+    pub owner_email: Option<String>,
 }
 
 impl RunState {
@@ -93,6 +103,7 @@ impl RunState {
             backlog: Vec::new(),
             milestones: Vec::new(),
             repo_url: None,
+            owner_email: None,
         }
     }
 }
