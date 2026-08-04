@@ -17,7 +17,7 @@ use devsystem_pipeline::checkin::render_plan_markdown;
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration, govern_memory_entry, read_memory_log};
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::preflight_annotations;
-use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, toggle_milestone, BacklogItem, Milestone, RoleFillMode, RunOutcome};
+use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, toggle_milestone, BacklogItem, CustomPanel, Milestone, RoleFillMode, RunOutcome};
 use devsystem_pipeline::{AbortCriteria, IterationRecord, StageProposal};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
 use ct_common::pipeline::SelectionState;
@@ -98,6 +98,8 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/roles/{tag}/fill-mode", post(set_role_fill_mode))
         .route("/api/runs/{id}/rag/sync", post(sync_rag))
         .route("/api/runs/{id}/rag/search", get(search_rag))
+        .route("/api/runs/{id}/panels", post(add_custom_panel))
+        .route("/api/runs/{id}/panels/{panel_id}/remove", post(remove_custom_panel))
         .route("/api/runs/{id}/offers/submit", post(submit_offer))
         .route("/api/runs/{id}/offers/quick-submit", post(quick_submit_offer))
         .route("/api/runs/{id}/auction", get(view_auction))
@@ -975,6 +977,98 @@ async fn search_rag(
     .into_response()
 }
 
+#[derive(Deserialize)]
+struct AddCustomPanelRequest {
+    title: String,
+    html: String,
+}
+
+/// Real cap on a custom panel's `html` size -- a run's `state.json` is loaded
+/// into memory on every request; nothing here should let one careless panel
+/// bloat that file into something the rest of the GUI pays for.
+const MAX_CUSTOM_PANEL_HTML_BYTES: usize = 100_000;
+
+/// `POST /api/runs/{id}/panels` (#382, custom panels slice 1): add a real,
+/// human-written GUI panel. Owner-restricted. `html` is stored as-is -- no
+/// sanitization here, because sanitizing-then-trusting is exactly the mistake
+/// this feature's real safety instead comes from: the GUI renders it inside a
+/// sandboxed iframe (`<iframe sandbox="allow-scripts">`), never the main page,
+/// so nothing server-side needs to guess what's "safe enough" to inject.
+async fn add_custom_panel(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<AddCustomPanelRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let title = body.title.trim().to_string();
+    if title.is_empty() {
+        return (StatusCode::BAD_REQUEST, "title must not be empty").into_response();
+    }
+    if body.html.len() > MAX_CUSTOM_PANEL_HTML_BYTES {
+        return (StatusCode::BAD_REQUEST, format!("html must be under {MAX_CUSTOM_PANEL_HTML_BYTES} bytes")).into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let panel = CustomPanel {
+        id: format!("{:016x}", rand::random::<u64>()),
+        title,
+        html: body.html,
+        source: None,
+        created_at: unix_now(),
+    };
+    run_state.custom_panels.push(panel.clone());
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(panel).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/panels/{panel_id}/remove` -- the operator's own "aber
+/// auch einfach wieder entfernen kann." Owner-restricted, same as adding one.
+async fn remove_custom_panel(
+    State(state): State<AppState>,
+    AxPath((id, panel_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let before = run_state.custom_panels.len();
+    run_state.custom_panels.retain(|p| p.id != panel_id);
+    if run_state.custom_panels.len() == before {
+        return (StatusCode::NOT_FOUND, format!("no custom panel with id {panel_id:?}")).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"removed": panel_id})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
 /// Real offer intake -- the counterpart to CADS-Tunnel core deliberately having no
 /// live bid-collection endpoint (verified directly against the checkout, not
 /// assumed). Any process, on any host, that holds a real ed25519 key can sign a
@@ -1428,6 +1522,99 @@ mod tests {
                 "/api/runs/owned-mutate-run/roles/plan/fill-mode",
                 "someone-else@example.com",
                 Some(serde_json::json!({"mode": "dedicated", "label": "X"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn custom_panel_add_then_remove_round_trips_through_real_state() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "panels-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/panels-run/panels",
+                serde_json::json!({"title": "My Custom Panel", "html": "<h1>hi</h1>"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let created = body_json(response).await;
+        let panel_id = created["id"].as_str().unwrap().to_string();
+        assert_eq!(created["title"], "My Custom Panel");
+        assert_eq!(created["html"], "<h1>hi</h1>");
+        assert!(created["source"].is_null(), "a hand-written panel has no marketplace source");
+
+        let response = app.clone().oneshot(Request::builder().uri("/api/runs/panels-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["state"]["custom_panels"].as_array().unwrap().len(), 1);
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", &format!("/api/runs/panels-run/panels/{panel_id}/remove"), serde_json::json!({})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/panels-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert!(body["state"]["custom_panels"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn custom_panel_rejects_an_empty_title_and_an_oversized_html_payload() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "panels-bad-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/panels-bad-run/panels", serde_json::json!({"title": "  ", "html": "<p>x</p>"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+
+        let huge = "x".repeat(MAX_CUSTOM_PANEL_HTML_BYTES + 1);
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/panels-bad-run/panels", serde_json::json!({"title": "T", "html": huge})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn removing_an_unknown_custom_panel_id_is_a_real_404() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "panels-404-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/panels-404-run/panels/does-not-exist/remove", serde_json::json!({})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_different_account_cannot_add_a_panel_to_someone_elses_run() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "owner@example.com", Some(serde_json::json!({"run_id": "panels-owned-run"}))))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(gate_request(
+                "POST",
+                "/api/runs/panels-owned-run/panels",
+                "someone-else@example.com",
+                Some(serde_json::json!({"title": "T", "html": "<p>x</p>"})),
             ))
             .await
             .unwrap();

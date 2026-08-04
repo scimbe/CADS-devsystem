@@ -170,6 +170,10 @@
  .win-btn.win-max{background:#5fb8ab}
  .win-btn:hover{filter:brightness(1.25)}
  .win-body{padding:.8rem;overflow:auto;flex:1;font-size:.85rem}
+ .win-body.custom-panel-body{padding:0}
+ .win-body.custom-panel-body iframe{width:100%;height:100%;border:none;display:block}
+ .custom-panel-badge{font-size:.6rem;color:var(--muted);border:1px solid var(--border);border-radius:3px;
+   padding:0 .25rem;margin-left:.3rem;text-transform:none;letter-spacing:0}
  .win-resize{position:absolute;right:2px;bottom:2px;width:14px;height:14px;cursor:nwse-resize;
              border-right:2px solid var(--border);border-bottom:2px solid var(--border)}
  h2{font-size:.95rem;margin:0 0 .6rem;font-family:var(--mono)}
@@ -352,6 +356,7 @@ const PANEL_DEFAULTS = {
   architecture: { title: 'Pipeline',         x: 1780, y: 332, w: 380, h: 420 },
   support:    { title: 'Support',            x: 728,  y: 592, w: 320, h: 220 },
   rag:        { title: 'Docs Search',        x: 16,   y: 772, w: 400, h: 320 },
+  panels:     { title: 'Custom Panels',       x: 1780, y: 772, w: 380, h: 320 },
 };
 
 const LAYOUT_KEY = 'devsystem-panel-layout-v1';
@@ -370,8 +375,16 @@ function saveLayout() {
   try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (e) { /* storage unavailable -- layout just won't persist */ }
 }
 
+// Generic default for an id PANEL_DEFAULTS doesn't know about -- custom panels
+// (#382 marketplace slice 1), which have no fixed slot the way core panels do.
+// Cascades new ones so they don't all land in an identical spot.
+function genericPanelDefault(id) {
+  const n = Object.keys(layout).filter(k => !(k in PANEL_DEFAULTS)).length;
+  return { title: 'Custom Panel', x: 60 + (n % 6) * 32, y: 60 + (n % 6) * 32, w: 420, h: 320 };
+}
+
 function panelRect(id) {
-  const d = PANEL_DEFAULTS[id];
+  const d = PANEL_DEFAULTS[id] || genericPanelDefault(id);
   const saved = layout[id] || {};
   return {
     x: saved.x ?? d.x, y: saved.y ?? d.y, w: saved.w ?? d.w, h: saved.h ?? d.h,
@@ -475,7 +488,7 @@ async function refreshTick() {
 
 function createPanel(id) {
   const d = PANEL_DEFAULTS[id];
-  const r = panelRect(id);
+  const r = ensurePanelVisible({ ...panelRect(id), id });
   const win = document.createElement('div');
   win.className = 'win' + (r.minimized ? ' minimized' : '');
   win.id = `win-${id}`;
@@ -517,6 +530,128 @@ function createPanel(id) {
   return win;
 }
 
+// Real, human-added GUI panels (#382 marketplace slice 1) -- the operator's own
+// ask: "neue pannels/windows erstellen und einordnen... aber auch einfach
+// wieder entfernen." `panel.html` renders inside a sandboxed iframe (`srcdoc`,
+// `sandbox="allow-scripts"`, no `allow-same-origin`) -- confirmed as the real
+// trust boundary with the operator before building this: a custom panel never
+// gets the main page's session, cookies, or other panels' DOM, whether it was
+// hand-written, assistant-drafted (a later increment), or marketplace-
+// installed (also later). Close here means REAL delete (calls the API,
+// removes the window), not hide -- these are the human's own panels, not the
+// pipeline's core set.
+function createCustomPanelWindow(runId, panel) {
+  const id = panel.id;
+  const r = ensurePanelVisible({ ...panelRect(id), id });
+  const win = document.createElement('div');
+  win.className = 'win' + (r.minimized ? ' minimized' : '');
+  win.id = `win-${id}`;
+  applyRect(win, r);
+  win.style.zIndex = r.z;
+  win.style.display = r.visible ? 'flex' : 'none';
+  win.innerHTML = `
+    <div class="win-header" data-panel="${id}">
+      <span class="win-controls">
+        <button type="button" class="win-btn win-close" data-panel="${id}" title="Remove this panel">×</button>
+        <button type="button" class="win-btn win-min" data-panel="${id}" title="Minimize">–</button>
+        <button type="button" class="win-btn win-max" data-panel="${id}" title="Maximize">▢</button>
+      </span>
+      <span>${escapeHtml(panel.title)}<span class="custom-panel-badge">custom</span></span>
+    </div>
+    <div class="win-body custom-panel-body" id="body-${id}">
+      <iframe sandbox="allow-scripts" srcdoc="${escapeHtml(panel.html)}"></iframe>
+    </div>
+    <div class="win-resize" data-panel="${id}"></div>
+  `;
+  document.getElementById('desktop').appendChild(win);
+  wireDrag(win, id);
+  wireResize(win, id);
+  win.addEventListener('mousedown', () => bringToFront(id));
+  win.querySelector('.win-min').onclick = (e) => { e.stopPropagation(); toggleMinimize(id); };
+  win.querySelector('.win-max').onclick = (e) => { e.stopPropagation(); toggleMaximize(id); };
+  win.querySelector('.win-close').onclick = async (e) => {
+    e.stopPropagation();
+    if (!confirm(`Remove custom panel "${panel.title}"? This deletes it for real, not just hides it.`)) return;
+    try {
+      await fetchJSON(`${API}/runs/${encodeURIComponent(runId)}/panels/${encodeURIComponent(id)}/remove`, { method: 'POST' });
+      win.remove();
+      delete layout[id];
+      saveLayout();
+      const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(runId)}`);
+      if (runId === currentRun) currentRunData = fresh;
+      if (document.getElementById('body-panels')) renderCustomPanelsManager(runId, fresh);
+    } catch (err) {
+      alert(`Could not remove panel: ${err.message}`);
+    }
+  };
+  return win;
+}
+
+// Rebuilds every custom-panel window from the run's real state -- called once
+// per selectRun, same as every other per-run panel. Removes stale windows for
+// panels no longer in custom_panels (e.g. removed from another tab/session)
+// and adds windows for any new ones, rather than only ever appending.
+function renderCustomPanels(runId, data) {
+  const panels = (data.state && data.state.custom_panels) || [];
+  const liveIds = new Set(panels.map(p => p.id));
+  for (const win of document.querySelectorAll('.win[id^="win-"]')) {
+    const id = win.id.slice(4);
+    if (!(id in PANEL_DEFAULTS) && !liveIds.has(id)) win.remove();
+  }
+  for (const panel of panels) {
+    if (!document.getElementById(`win-${panel.id}`)) createCustomPanelWindow(runId, panel);
+  }
+}
+
+// Add/list/remove UI for custom panels (#382 marketplace slice 1). Assistant-
+// drafted panels and marketplace installs are separate, later increments --
+// this is the real, human-driven path: write HTML, add it, see it render in a
+// sandboxed window immediately.
+function renderCustomPanelsManager(id, data) {
+  const body = document.getElementById('body-panels');
+  const panels = (data.state && data.state.custom_panels) || [];
+  const list = panels.length
+    ? panels.map(p => `
+        <div class="role-card">
+          <div class="role-card-head"><span class="role">${escapeHtml(p.title)}</span></div>
+          <div class="role-meta">${p.source ? escapeHtml(p.source) : 'hand-written'} &middot; added ${escapeHtml(new Date(p.created_at * 1000).toLocaleString())}</div>
+          <div style="margin-top:.4rem;display:flex;gap:.4rem">
+            <button type="button" class="secondary custom-panel-open-btn" data-id="${p.id}">Open</button>
+          </div>
+        </div>`).join('')
+    : `<span class="lede">No custom panels yet -- write one below.</span>`;
+  body.innerHTML = `
+    <div style="margin-bottom:.6rem">${list}</div>
+    <form id="add-custom-panel-form">
+      <label>title<input id="cp-title" type="text" placeholder="My Panel" required></label>
+      <label>HTML (rendered sandboxed -- no page/session access)<textarea id="cp-html" rows="5" placeholder="<h2>Hello</h2><p>...</p>" required style="width:100%;font-family:var(--mono);font-size:.75rem"></textarea></label>
+      <button type="submit">Add panel</button>
+      <span id="cp-add-status" class="status-line"></span>
+    </form>`;
+  for (const btn of body.querySelectorAll('.custom-panel-open-btn')) {
+    btn.onclick = () => showPanel(btn.dataset.id);
+  }
+  document.getElementById('add-custom-panel-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const status = document.getElementById('cp-add-status');
+    const title = document.getElementById('cp-title').value.trim();
+    const html = document.getElementById('cp-html').value;
+    status.textContent = 'Adding…'; status.className = 'status-line';
+    try {
+      await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/panels`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title, html }),
+      });
+      const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+      if (id === currentRun) currentRunData = fresh;
+      renderCustomPanelsManager(id, fresh);
+      renderCustomPanels(id, fresh);
+    } catch (err) {
+      status.textContent = err.message; status.className = 'status-line err';
+    }
+  });
+}
+
 function toggleMinimize(id) {
   const win = document.getElementById(`win-${id}`);
   const minimized = !win.classList.contains('minimized');
@@ -537,7 +672,7 @@ function toggleMaximize(id) {
     win.style.height = (desktop.clientHeight - 16) + 'px';
     layout[id] = { ...current, maximized: true, preMax };
   } else {
-    const pre = current.preMax || PANEL_DEFAULTS[id];
+    const pre = current.preMax || PANEL_DEFAULTS[id] || genericPanelDefault(id);
     applyRect(win, pre);
     layout[id] = { ...current, maximized: false, x: pre.x, y: pre.y, w: pre.w, h: pre.h, preMax: null };
   }
@@ -573,25 +708,62 @@ function hidePanel(id) {
 // panel -- a handful of cascaded offsets, not full collision solving; if
 // nothing open is found, the original (now on-screen) position stands rather
 // than searching forever.
+// Real obstacles an activated panel should dodge: every other currently-open
+// window (core AND custom -- queried from the live DOM, not just
+// PANEL_DEFAULTS, which custom-panel ids were never in) plus the prompt-dock
+// itself. The dock is `position:fixed` in viewport coordinates while panels
+// are `position:absolute` inside #desktop, so its rect is converted into
+// desktop-local coordinates before comparing -- otherwise a panel could land
+// exactly where the always-on-top, z-index:100000 dock sits and have its own
+// controls permanently unclickable underneath it (found live, not theorized:
+// a naive cascade-by-offset fix wasn't enough here, since a panel already
+// clamped to the desktop's max x/y has nowhere further to cascade *to* --
+// the dock needs to shrink the usable area, not just be another thing to
+// dodge around within it).
+function panelObstacles(desktop, excludeId) {
+  const rects = [];
+  for (const win of desktop.querySelectorAll('.win')) {
+    const id = win.id.slice(4);
+    if (id === excludeId) continue;
+    const r = panelRect(id);
+    if (!r.visible) continue;
+    rects.push({ x: r.x, y: r.y, w: r.w, h: r.h });
+  }
+  return rects;
+}
+
+function dockRectInDesktopSpace(desktop) {
+  const dock = document.getElementById('prompt-dock');
+  if (!dock) return null;
+  const dockBox = dock.getBoundingClientRect();
+  const deskBox = desktop.getBoundingClientRect();
+  return { x: dockBox.left - deskBox.left, y: dockBox.top - deskBox.top, w: dockBox.width, h: dockBox.height };
+}
+
 function ensurePanelVisible(rect) {
   const desktop = document.getElementById('desktop');
   if (!desktop) return rect;
-  const dw = desktop.clientWidth, dh = desktop.clientHeight;
+  const dw = desktop.clientWidth;
   let { x, y, w, h } = rect;
   w = Math.min(w, Math.max(220, dw));
+
+  // The dock is always-on-top and horizontally centered -- for any x a panel
+  // could realistically occupy, it's simplest and most robust to treat the
+  // dock's top edge as a hard floor on usable height, not a 2D obstacle to
+  // route around (a panel clamped to the bottom-right corner has nowhere left
+  // to cascade *to* once it's already at its max x/y).
+  const dock = dockRectInDesktopSpace(desktop);
+  const floor = dock ? Math.max(140, dock.y) : desktop.clientHeight;
+  const dh = Math.min(desktop.clientHeight, floor);
   h = Math.min(h, Math.max(140, dh));
   x = Math.min(Math.max(0, dw - w), Math.max(0, x));
   y = Math.min(Math.max(0, dh - h), Math.max(0, y));
 
-  const overlaps = (ax, ay) => Object.keys(PANEL_DEFAULTS).some(otherId => {
-    if (otherId === rect.id) return false;
-    const other = panelRect(otherId);
-    if (!other.visible) return false;
-    return ax < other.x + other.w && ax + w > other.x && ay < other.y + other.h && ay + h > other.y;
-  });
+  const obstacles = panelObstacles(desktop, rect.id);
+  const overlaps = (ax, ay) => obstacles.some(o => ax < o.x + o.w && ax + w > o.x && ay < o.y + o.h && ay + h > o.y);
   if (overlaps(x, y)) {
     const step = 28;
-    for (let i = 1; i <= 8; i++) {
+    for (let i = 1; i <= 12; i++) {
       const cx = Math.min(Math.max(0, dw - w), x + step * i);
       const cy = Math.min(Math.max(0, dh - h), y + step * i);
       if (!overlaps(cx, cy)) { x = cx; y = cy; break; }
@@ -816,7 +988,7 @@ async function selectRun(id) {
     for (const pid of Object.keys(REFRESHABLE_PANELS)) lastRefreshedAt[pid] = Date.now();
   }
   await refreshRunsList();
-  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture', 'rag']) {
+  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture', 'rag', 'panels']) {
     document.getElementById(`body-${panelId}`).innerHTML = '<span class="lede">Loading…</span>';
   }
   try {
@@ -837,8 +1009,10 @@ async function selectRun(id) {
     renderCodePanel(id, data);
     renderArchitecturePanel(id, data);
     renderRagPanel(id, data);
+    renderCustomPanelsManager(id, data);
+    renderCustomPanels(id, data);
   } catch (e) {
-    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture', 'rag']) {
+    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture', 'rag', 'panels']) {
       document.getElementById(`body-${panelId}`).innerHTML = `<span class="status-line err">${e.message}</span>`;
     }
   }
@@ -2357,7 +2531,7 @@ loadWhoami();
 checkAssistantHeartbeat();
 setInterval(checkAssistantHeartbeat, 20000);
 setInterval(refreshTick, 1000);
-for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'checkin', 'memory', 'architecture', 'rag']) {
+for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'checkin', 'memory', 'architecture', 'rag', 'panels']) {
   placeholderIfNoRun(id);
 }
 </script>

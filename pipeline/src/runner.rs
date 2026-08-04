@@ -41,6 +41,25 @@ pub enum RoleFillMode {
     Dedicated { label: String },
 }
 
+/// A real, human-added GUI panel beyond the core set the pipeline itself ships --
+/// operator ask: extend the GUI with custom panels, addable/removable, with a
+/// future path to a public marketplace repo. `html` is rendered inside a
+/// `<iframe sandbox="allow-scripts">` in the GUI, not injected into the main
+/// page -- a custom panel (hand-written, or later assistant-drafted/marketplace-
+/// installed) never gets the main page's session, cookies, or DOM access this
+/// way, a real trust-boundary decision, not an implementation detail (confirmed
+/// with the operator before building this). `source` is `None` for a
+/// hand-written panel and would carry the marketplace URL for an installed one,
+/// once that increment exists -- not fabricated here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CustomPanel {
+    pub id: String,
+    pub title: String,
+    pub html: String,
+    pub source: Option<String>,
+    pub created_at: u64,
+}
+
 /// A real completion/abort checkpoint, distinct from [`BacklogItem`] (informational
 /// todo) and `AbortCriteria` (mechanical iteration/failure counts): operator
 /// feedback: "ich möchte nicht nur Iterationen, sondern auch Milestones als
@@ -115,6 +134,11 @@ pub struct RunState {
     /// same reason.
     #[serde(default)]
     pub role_fill_modes: std::collections::HashMap<String, RoleFillMode>,
+    /// Real, human-added GUI panels beyond the core set -- see [`CustomPanel`].
+    /// `#[serde(default)]` so pre-existing `state.json` files (none added yet)
+    /// still load.
+    #[serde(default)]
+    pub custom_panels: Vec<CustomPanel>,
 }
 
 impl RunState {
@@ -131,6 +155,7 @@ impl RunState {
             repo_url: None,
             owner_email: None,
             role_fill_modes: std::collections::HashMap::new(),
+            custom_panels: Vec::new(),
         }
     }
 }

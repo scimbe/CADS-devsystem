@@ -228,5 +228,6 @@
   "milestones": [],
   "repo_url": "https://github.com/scimbe/CADS-webconference-android",
   "owner_email": null,
-  "role_fill_modes": {}
+  "role_fill_modes": {},
+  "custom_panels": []
 }
