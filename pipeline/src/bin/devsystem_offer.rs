@@ -112,7 +112,16 @@ fn main() -> ExitCode {
     );
 
     let url = format!("{}/api/runs/{}/offers/submit", api_base.trim_end_matches('/'), run_id);
-    let client = reqwest::blocking::Client::new();
+    // #388: a still-gated endpoint 302s to the gate's login page, which itself
+    // returns a real 200 -- reqwest's default redirect policy silently follows
+    // that (POST downgraded to GET, same as a browser or `curl -L`) and this
+    // tool would report a fabricated "accepted" success while the offer never
+    // actually reached submit_offer. No redirects, ever: a still-gated deploy
+    // now fails loudly with the real 3xx status instead of a false positive.
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or_else(|_| reqwest::blocking::Client::new());
     match client.post(&url).json(&offer).send() {
         Ok(resp) => {
             let status = resp.status();

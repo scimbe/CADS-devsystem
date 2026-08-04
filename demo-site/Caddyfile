@@ -20,21 +20,46 @@
 }
 
 :443 {
-	# The gate's own /gate/check issues the login redirect itself when it's
-	# needed (a 302 straight to /gate/start) -- Caddy's forward_auth copies
-	# that response to the client verbatim. No handle_errors block needed
-	# (an earlier version of this Caddyfile had one; it never actually fired --
-	# forward_auth never routes a non-2xx auth response through Caddy's error
-	# pipeline at all, confirmed against Caddy's own forward_auth docs).
-	forward_auth https://{$CT_GATE_UPSTREAM_HOST} {
-		uri /gate/check
-		copy_headers X-Gate-Email
+	# CADS-Tunnel#388 gap 1: a headless CLI (devsystem_offer) has no browser, no
+	# cookie jar, no way to complete an interactive Keycloak login -- and doesn't
+	# need one here. A CapacityOffer's own real ed25519 signature, verified
+	# server-side by submit_offer before it's ever accepted, IS the
+	# authentication for this one endpoint; a session cookie on top verifies
+	# nothing a forged offer wouldn't already fail on via signature
+	# verification, while fully blocking the exact headless case this exists
+	# for. Agreed in the issue thread (bob-1 + the external-agent reply, both
+	# independently landing on this same option (a) over a separate un-gated
+	# intake path (b), since (b) is strictly more surface for the same
+	# outcome). Scoped tightly to POST .../offers/submit specifically -- NOT a
+	# blanket /api/* exemption: every other endpoint here is a real GUI/human
+	# action (iterate, checkin, pause/resume, role fill-mode, ...) with no
+	# signature of its own, and stays behind the gate.
+	@offers_submit {
+		method POST
+		path_regexp ^/api/runs/[^/]+/offers/submit$
 	}
-	# devsystem-web (a real axum backend, #382) replaces the plain file_server here --
-	# the page it serves is now a real control panel (list/view/drive pipeline runs),
-	# not a static status page. Confirmed 100% static with zero interactivity before
-	# this change; see the devsystem-web commit for how that was verified.
-	reverse_proxy devsystem-web:8790
+	handle @offers_submit {
+		reverse_proxy devsystem-web:8790
+	}
+
+	handle {
+		# The gate's own /gate/check issues the login redirect itself when it's
+		# needed (a 302 straight to /gate/start) -- Caddy's forward_auth copies
+		# that response to the client verbatim. No handle_errors block needed
+		# (an earlier version of this Caddyfile had one; it never actually fired --
+		# forward_auth never routes a non-2xx auth response through Caddy's error
+		# pipeline at all, confirmed against Caddy's own forward_auth docs).
+		forward_auth https://{$CT_GATE_UPSTREAM_HOST} {
+			uri /gate/check
+			copy_headers X-Gate-Email
+		}
+		# devsystem-web (a real axum backend, #382) replaces the plain file_server here --
+		# the page it serves is now a real control panel (list/view/drive pipeline runs),
+		# not a static status page. Confirmed 100% static with zero interactivity before
+		# this change; see the devsystem-web commit for how that was verified.
+		reverse_proxy devsystem-web:8790
+	}
+
 	encode gzip
 	header {
 		X-Content-Type-Options "nosniff"
