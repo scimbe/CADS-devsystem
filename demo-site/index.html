@@ -1,4 +1,21 @@
 <!doctype html>
+<!--
+  HISTORICAL, NO LONGER SERVED (confirmed 2026-08-05, not guessed): this was
+  devsystem-demo.bunsenbrenner.org's original 100% static status page --
+  exactly the page the operator's own CURRENT PRIORITY directive (README,
+  git log) said had "zero script/form/button/fetch" and needed replacing.
+  It's been replaced: ../demo-site/Caddyfile's own `handle {}` block now
+  reverse_proxies straight to devsystem-web:8790 for every route (see that
+  file's own comment on the change) -- there is no `file_server` directive
+  left anywhere in this Caddyfile that would ever actually serve this file.
+  This file is STILL bind-mounted into the live devsystem-demo-origin
+  container (harmless, just genuinely unused) -- left in place rather than
+  deleted specifically so that mount keeps resolving to a real file, not a
+  live-service concern to touch casually. Kept in the repo as the real
+  historical record of what the static page looked like, not as
+  documentation of current behavior -- see the README's Status section and
+  ../demo-site/Caddyfile for what's actually live today.
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
