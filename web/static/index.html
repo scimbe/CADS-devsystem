@@ -131,6 +131,19 @@
              font-size:.72rem;color:var(--muted);letter-spacing:.03em;text-transform:uppercase;
              border-radius:10px 10px 0 0;user-select:none}
  .win-controls{display:flex;gap:.4rem;flex-shrink:0}
+ .refresh-gear{margin-left:auto;cursor:pointer;font-size:.8rem;line-height:1;color:var(--muted);
+               flex-shrink:0;user-select:none}
+ .refresh-gear:hover{color:var(--text)}
+ .refresh-gear.active{color:var(--accent2)}
+ .refresh-popover{position:fixed;z-index:200000;background:#0d1117;border:1px solid var(--border);
+                   border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.45);padding:.4rem;
+                   display:flex;flex-direction:column;gap:.15rem;min-width:6rem}
+ .refresh-popover-label{font-family:var(--mono);font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;
+                         color:var(--muted);padding:.15rem .4rem .35rem}
+ .refresh-opt{background:transparent;border:none;color:var(--text);text-align:left;font-family:var(--mono);
+              font-size:.75rem;font-weight:400;padding:.3rem .4rem;border-radius:5px;cursor:pointer}
+ .refresh-opt:hover{background:rgba(95,184,171,.12)}
+ .refresh-opt.active{color:var(--accent2);font-weight:700}
  .win-btn{width:.8rem;height:.8rem;border-radius:50%;border:none;cursor:pointer;padding:0;
           font-size:0;flex-shrink:0}
  .win-btn.win-close{background:#e5534b}
@@ -342,6 +355,7 @@ function panelRect(id) {
     x: saved.x ?? d.x, y: saved.y ?? d.y, w: saved.w ?? d.w, h: saved.h ?? d.h,
     visible: saved.visible ?? true, z: saved.z ?? (zTop++),
     minimized: saved.minimized ?? false, maximized: saved.maximized ?? false, preMax: saved.preMax ?? null,
+    refreshInterval: saved.refreshInterval ?? 0,
   };
 }
 
@@ -350,6 +364,91 @@ function applyRect(win, r) {
   win.style.top = r.y + 'px';
   win.style.width = r.w + 'px';
   win.style.height = r.h + 'px';
+}
+
+// Per-panel auto-refresh (operator: "jedes Fenster das Daten anzeigt die aus
+// dem System heraus aktualisiert werden koennte kann parametriert werden ob
+// aktualisiert werden soll oder falls ja mit welchem interval, jedes panel
+// muss ein raedchen zur einstellung haben"). Registry of the panels whose
+// content is driven by the current run's fetched data -- only these get a
+// gear; static panels (Runs, Support, New Iteration's own form, etc.) don't
+// need one. All share ONE re-fetch per due tick (refreshTick), not one fetch
+// per panel, even though each panel's interval/on-off is independently
+// configurable.
+const REFRESHABLE_PANELS = {
+  process: (data) => renderProcessPanel(currentRun, data),
+  roles: (data) => renderRolesPanel(currentRun, data),
+  healthcrit: (data) => renderHealthCriteriaPanel(currentRun, data),
+  risks: (data) => renderRisksPanel(data),
+  history: (data) => renderHistoryPanel(data),
+};
+const REFRESH_INTERVALS = [
+  { seconds: 0, label: 'off' },
+  { seconds: 15, label: '15s' },
+  { seconds: 30, label: '30s' },
+  { seconds: 60, label: '1min' },
+  { seconds: 300, label: '5min' },
+];
+const lastRefreshedAt = {};
+
+function refreshIntervalLabel(seconds) {
+  return (REFRESH_INTERVALS.find(o => o.seconds === seconds) || REFRESH_INTERVALS[0]).label;
+}
+
+function closeRefreshPopover() {
+  const existing = document.getElementById('refresh-popover');
+  if (existing) existing.remove();
+}
+
+function openRefreshPopover(id, anchorEl) {
+  closeRefreshPopover();
+  const current = panelRect(id).refreshInterval || 0;
+  const pop = document.createElement('div');
+  pop.id = 'refresh-popover';
+  pop.className = 'refresh-popover';
+  pop.innerHTML = `<div class="refresh-popover-label">auto-refresh</div>`
+    + REFRESH_INTERVALS.map(o => `<button type="button" class="refresh-opt${o.seconds === current ? ' active' : ''}" data-seconds="${o.seconds}">${o.label}</button>`).join('');
+  document.body.appendChild(pop);
+  const r = anchorEl.getBoundingClientRect();
+  pop.style.left = Math.min(r.left, window.innerWidth - pop.offsetWidth - 8) + 'px';
+  pop.style.top = (r.bottom + 4) + 'px';
+  for (const btn of pop.querySelectorAll('.refresh-opt')) {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const seconds = parseInt(btn.dataset.seconds, 10);
+      layout[id] = { ...panelRect(id), refreshInterval: seconds };
+      saveLayout();
+      lastRefreshedAt[id] = Date.now();
+      const gear = document.querySelector(`.refresh-gear[data-panel="${id}"]`);
+      if (gear) { gear.classList.toggle('active', seconds > 0); gear.title = `auto-refresh: ${refreshIntervalLabel(seconds)}`; }
+      closeRefreshPopover();
+    };
+  }
+  setTimeout(() => document.addEventListener('click', closeRefreshPopover, { once: true }), 0);
+}
+
+// One shared re-fetch per due tick, then only the panels that are actually
+// due get re-rendered with it -- an idle panel with refresh off costs nothing.
+async function refreshTick() {
+  if (!currentRun) return;
+  const now = Date.now();
+  const due = Object.keys(REFRESHABLE_PANELS).filter(id => {
+    const seconds = panelRect(id).refreshInterval || 0;
+    if (seconds <= 0 || !panelRect(id).visible) return false;
+    return now - (lastRefreshedAt[id] || 0) >= seconds * 1000;
+  });
+  if (!due.length) return;
+  try {
+    const data = await fetchJSON(`${API}/runs/${encodeURIComponent(currentRun)}`);
+    currentRunData = data;
+    for (const id of due) {
+      REFRESHABLE_PANELS[id](data);
+      lastRefreshedAt[id] = now;
+    }
+  } catch (e) {
+    // A transient refresh failure isn't worth interrupting the operator with --
+    // the panel just keeps showing its last-known-good content until the next tick.
+  }
 }
 
 function createPanel(id) {
@@ -366,6 +465,10 @@ function createPanel(id) {
   // minimieren." Minimize collapses to just the header (state preserved, not
   // destroyed); maximize fills the desktop and remembers the pre-maximize rect
   // to restore on a second click.
+  const refreshable = id in REFRESHABLE_PANELS;
+  const gearHtml = refreshable
+    ? `<span class="refresh-gear${r.refreshInterval > 0 ? ' active' : ''}" data-panel="${id}" title="auto-refresh: ${refreshIntervalLabel(r.refreshInterval)}">⚙</span>`
+    : '';
   win.innerHTML = `
     <div class="win-header" data-panel="${id}">
       <span class="win-controls">
@@ -374,6 +477,7 @@ function createPanel(id) {
         <button type="button" class="win-btn win-max" data-panel="${id}" title="Maximize">▢</button>
       </span>
       <span>${d.title}</span>
+      ${gearHtml}
     </div>
     <div class="win-body" id="body-${id}"></div>
     <div class="win-resize" data-panel="${id}"></div>
@@ -385,6 +489,9 @@ function createPanel(id) {
   win.querySelector('.win-close').onclick = (e) => { e.stopPropagation(); hidePanel(id); };
   win.querySelector('.win-min').onclick = (e) => { e.stopPropagation(); toggleMinimize(id); };
   win.querySelector('.win-max').onclick = (e) => { e.stopPropagation(); toggleMaximize(id); };
+  if (refreshable) {
+    win.querySelector('.refresh-gear').onclick = (e) => { e.stopPropagation(); openRefreshPopover(id, e.target); };
+  }
   return win;
 }
 
@@ -648,7 +755,10 @@ async function refreshRunsList() {
 async function selectRun(id) {
   const switching = currentRun !== id;
   currentRun = id;
-  if (switching) resetAssistantTranscript(id);
+  if (switching) {
+    resetAssistantTranscript(id);
+    for (const pid of Object.keys(REFRESHABLE_PANELS)) lastRefreshedAt[pid] = Date.now();
+  }
   await refreshRunsList();
   for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture']) {
     document.getElementById(`body-${panelId}`).innerHTML = '<span class="lede">Loading…</span>';
@@ -1981,6 +2091,7 @@ loadRuns();
 loadWhoami();
 checkAssistantHeartbeat();
 setInterval(checkAssistantHeartbeat, 20000);
+setInterval(refreshTick, 1000);
 for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'checkin', 'memory', 'architecture']) {
   placeholderIfNoRun(id);
 }
