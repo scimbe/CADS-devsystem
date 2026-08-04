@@ -72,6 +72,23 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
     md.push_str(&record.feedback);
     md.push_str("\n\n");
 
+    // Real gap found+fixed 2026-08-05: requirement_indices lives ON this exact
+    // IterationRecord (same as `proposals`, already shown below), but had no
+    // rendering anywhere in the mandatory check-in artifact -- a human
+    // approving/requesting-changes on this iteration had no way to see which
+    // requirements it actually claims to address, unlike the GUI's History/
+    // Requirements panels which already show it (#47 traceability slice).
+    if !record.requirement_indices.is_empty() {
+        md.push_str("## Requirements addressed this iteration\n\n");
+        for &i in &record.requirement_indices {
+            match state.requirements.get(i) {
+                Some(r) => md.push_str(&format!("- {}\n", r.statement)),
+                None => md.push_str(&format!("- requirement #{i} (no longer exists)\n")),
+            }
+        }
+        md.push('\n');
+    }
+
     if record.proposals.is_empty() {
         md.push_str("## Proposals\n\nNone this iteration.\n\n");
     } else {
@@ -128,6 +145,7 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runner::Requirement;
     use crate::{IterationRecord, StageProposal};
 
     fn state_with_one_iteration(proposals: Vec<StageProposal>) -> RunState {
@@ -175,6 +193,36 @@ mod tests {
         assert!(md.contains("reuse the audited Rust Noise_IK code"));
         assert!(md.contains("none -- a new service must be built or provided"));
         assert!(md.contains("Decision needed"));
+    }
+
+    #[test]
+    fn renders_which_real_requirements_this_iteration_claims_to_address() {
+        let mut state = RunState::new("run-req-checkin");
+        state.requirements.push(Requirement {
+            statement: "WHEN a user sends a text message over an established channel, THE SYSTEM SHALL persist it locally before confirming delivery to the UI".into(),
+            acceptance_criteria: vec!["message survives an app restart".into()],
+            verified: false,
+        });
+        state.history.push(IterationRecord {
+            run_id: "run-req-checkin".into(),
+            stage: "devsystem.implement".into(),
+            iteration: 1,
+            feedback: "wired local persistence before the UI confirms delivery".into(),
+            proposals: vec![],
+            succeeded: true,
+            requirement_indices: vec![0],
+        });
+
+        let md = render_plan_markdown(&state).expect("history is non-empty");
+        assert!(md.contains("## Requirements addressed this iteration"));
+        assert!(md.contains("WHEN a user sends a text message over an established channel"));
+    }
+
+    #[test]
+    fn omits_the_requirements_section_when_this_iteration_claims_none() {
+        let state = state_with_one_iteration(vec![]);
+        let md = render_plan_markdown(&state).unwrap();
+        assert!(!md.contains("## Requirements addressed this iteration"));
     }
 
     #[test]
