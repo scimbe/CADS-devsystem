@@ -46,9 +46,18 @@ jobs:
         with:
           workspaces: web
 
-      - name: cargo build (web crate)
+      # Real gap found+fixed 2026-08-05: this ran `cargo build`, not `cargo
+      # test` -- directly violating this workflow's OWN stated principle two
+      # comment blocks above ("no `cargo build` alone counted as passing").
+      # web/'s 90+ real hermetic tests (owner-scoping, requirement
+      # validation, proposal approve/reject, the auction endpoints, ...)
+      # were never actually run by real CI on push/PR -- a genuine
+      # regression to any of them would have compiled clean and shown green
+      # here regardless. `cargo test --all-targets` builds AND tests, same
+      # as the pipeline job above.
+      - name: cargo test (web crate)
         working-directory: web
-        run: cargo build --all-targets --verbose
+        run: cargo test --all-targets --verbose
 
       - name: docker build (the actual image deployed live behind devsystem-demo.bunsenbrenner.org)
         run: docker build -f web/Dockerfile -t devsystem-web:ci .
