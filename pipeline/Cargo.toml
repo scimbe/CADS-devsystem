@@ -20,3 +20,12 @@ serde_json = "1"
 # Same rustls-backed, no-default-features shape CADS-Tunnel's own crates use.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 rand = "0.8"
+# devsystem_assistant --serve only -- a minimal, synchronous HTTP server so the
+# GUI can call the assistant over the same real logic the one-shot CLI uses.
+# Deliberately not axum/tokio (already web/'s job): this bridge is meant to run
+# co-located with a real LLM CLI, possibly a different host than devsystem-web
+# itself, and processes one request at a time by design (each request already
+# takes several real seconds for the LLM call -- serialized handling is a
+# feature here, not a limitation, it caps concurrent LLM spend).
+tiny_http = "0.12"
+
