@@ -21,7 +21,6 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
 #[derive(Clone)]
@@ -42,6 +41,16 @@ struct AppState {
 /// The real API router, no static-file fallback -- separated out so tests can
 /// exercise the exact same routes/handlers `main()` serves, via `tower::ServiceExt`,
 /// without binding a real socket or needing a static dir on disk.
+///
+/// Deliberately no `CorsLayer`: the frontend (`web/static/`) and this API are always
+/// served from the same origin -- Caddy reverse-proxies the whole
+/// devsystem-demo.bunsenbrenner.org domain to this one process, and `index.html`'s
+/// fetch calls are relative (`/api/...`). A permissive CORS layer was present here
+/// since the very first commit for no functional reason -- same-origin requests never
+/// need CORS headers -- and only widened the attack surface: it let *any* origin's
+/// JS read this API's responses in a browser, real risk if a session cookie ever
+/// stops being strictly same-site. Removing it is a pure security tightening with no
+/// loss of functionality.
 fn api_router(state: AppState) -> Router {
     Router::new()
         .route("/api/runs", get(list_runs).post(create_run))
@@ -51,7 +60,6 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/criteria", post(update_criteria))
         .route("/api/runs/{id}/memory", get(memory_run))
         .route("/api/runs/{id}/memory/{index}/govern", post(govern_memory))
-        .layer(CorsLayer::permissive())
         .with_state(state)
 }
 
@@ -385,6 +393,32 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), SC::OK);
         assert_eq!(body_json(response).await, serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn no_cors_headers_leak_to_a_cross_origin_request() {
+        // The API and frontend are always same-origin (Caddy reverse-proxies the
+        // whole domain to this one process); a permissive CorsLayer here would only
+        // let a foreign origin's JS read responses in a real browser. Proves the
+        // actual security property directly: even with a hostile-looking Origin
+        // header, no access-control-allow-* header comes back.
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/runs")
+                    .header("origin", "https://evil.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        assert!(
+            response.headers().get("access-control-allow-origin").is_none(),
+            "no CORS layer should mean no access-control-allow-origin header, regardless of the request's Origin"
+        );
     }
 
     #[tokio::test]
