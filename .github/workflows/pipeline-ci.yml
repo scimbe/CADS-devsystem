@@ -1,0 +1,31 @@
+name: Pipeline CI
+
+# Real continuous verification for the pipeline crate -- the actual mechanism
+# driving every real iteration/check-in this whole effort. Had no CI at all until
+# now, unlike CADS-webconference-android's; same class of gap, same fix. Matches
+# this project's own hermetic-gate discipline: -D warnings, real tests, no
+# `cargo build` alone counted as "passing".
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: pipeline
+
+      - name: cargo test (pipeline crate)
+        working-directory: pipeline
+        run: cargo test --all-targets --verbose
