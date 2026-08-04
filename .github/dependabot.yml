@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # pipeline/'s real crates.io dependencies (ed25519-dalek, serde, serde_json) plus
+  # the ct-common git dependency (tag-pinned) -- now that pipeline-ci.yml actually
+  # verifies every push, dependency bumps get a real CI signal instead of only
+  # being caught the next time someone runs cargo test by hand.
+  - package-ecosystem: "cargo"
+    directory: "/pipeline"
+    schedule:
+      interval: "weekly"
+
+  # GitHub Actions versions used by pipeline-ci.yml itself.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
