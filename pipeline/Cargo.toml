@@ -12,3 +12,11 @@ ct-common = { git = "https://github.com/scimbe/CADS-Tunnel", tag = "v0.4.13" }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# devsystem_offer only -- the minimal real "agent" binary: signs a real
+# CapacityOffer and POSTs it to a devsystem-web instance's /offers/submit over
+# plain HTTP, so it can run on any host with network access, never co-located
+# with devsystem-web (#382 operator directive: every component must be able to
+# run on a different host, connected only by real channels/network calls).
+# Same rustls-backed, no-default-features shape CADS-Tunnel's own crates use.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+rand = "0.8"
