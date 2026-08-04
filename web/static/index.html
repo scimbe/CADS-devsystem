@@ -137,6 +137,14 @@ async function selectRun(id) {
 function renderRunDetail(id, data) {
   const detail = document.getElementById('run-detail');
   const roles = data.spec.roles.map(r => `<span class="role">${r.tag}</span>`).join('');
+  // Custom service names come back as {"Custom": "devsystem.xxx"} (ct_common's own
+  // serde shape) -- includes every dynamically-proposed role, not just the original
+  // seven, so a human can actually pick a stage this run itself grew into.
+  const stageOptions = data.spec.roles
+    .map(r => r.service && r.service.Custom)
+    .filter(Boolean)
+    .map(s => `<option value="${escapeHtml(s)}">`)
+    .join('');
   const history = [...data.state.history].reverse().map(h => `
     <div class="iter">
       <div class="head"><span>iteration ${h.iteration} · ${h.stage}</span>
@@ -149,16 +157,9 @@ function renderRunDetail(id, data) {
     <h2>${id}</h2>
     <div class="roles">${roles}</div>
 
-    <label>New iteration -- stage</label>
-    <select id="it-stage">
-      <option value="devsystem.plan">plan</option>
-      <option value="devsystem.test">test</option>
-      <option value="devsystem.implement" selected>implement</option>
-      <option value="devsystem.review">review</option>
-      <option value="devsystem.verify">verify</option>
-      <option value="devsystem.remember">remember</option>
-      <option value="devsystem.improve">improve</option>
-    </select>
+    <label>New iteration -- stage (pick from this run's live roles, or type a new one)</label>
+    <input id="it-stage" list="it-stage-list" value="devsystem.implement">
+    <datalist id="it-stage-list">${stageOptions}</datalist>
     <label>Feedback (what this stage found)</label>
     <textarea id="it-feedback" placeholder="Real, honest account of what happened this iteration…"></textarea>
     <label><input type="checkbox" id="it-succeeded" checked style="width:auto"> succeeded</label>
