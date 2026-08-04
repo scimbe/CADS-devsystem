@@ -77,6 +77,13 @@
  .status-line.warn{color:var(--accent);font-weight:700}
  pre.checkin{white-space:pre-wrap;font-family:var(--mono);font-size:.8rem;background:#0d1117;
              border:1px solid var(--border);border-radius:8px;padding:1rem;max-height:24rem;overflow:auto}
+ .memory-list{display:flex;flex-direction:column;gap:.5rem;max-height:24rem;overflow-y:auto;margin-top:.5rem}
+ .mem-entry{border:1px solid var(--border);border-radius:8px;padding:.6rem .8rem;font-size:.82rem}
+ .mem-entry .head{font-family:var(--mono);font-size:.72rem;color:var(--muted);display:flex;justify-content:space-between;margin-bottom:.3rem}
+ .mem-entry .trust{border-radius:5px;padding:.05rem .35rem;font-size:.68rem;font-weight:700}
+ .mem-entry .trust.unreviewed{color:var(--accent);border:1px solid var(--accent)}
+ .mem-entry .trust.governed{color:var(--accent2);border:1px solid var(--accent2)}
+ .mem-entry ul{margin:.2rem 0 0;padding-left:1.1rem}
  code{background:#0d1117;border:1px solid var(--border);border-radius:5px;padding:.1rem .35rem;font-size:.9em;font-family:var(--mono)}
  footer{margin-top:2rem;color:var(--muted);font-size:.8rem}
  footer a{color:var(--accent2)}
@@ -264,9 +271,11 @@ function renderRunDetail(id, data) {
     <div style="margin-top:.6rem;display:flex;gap:.5rem">
       <button id="submit-iter">Submit iteration</button>
       <button class="secondary" id="view-checkin">View check-in</button>
+      <button class="secondary" id="view-memory">View memory log</button>
     </div>
     <div id="iter-status" class="status-line"></div>
     <div id="checkin-view"></div>
+    <div id="memory-view"></div>
 
     <h2 style="margin-top:1.5rem">History</h2>
     <div class="history">${history}</div>
@@ -274,6 +283,7 @@ function renderRunDetail(id, data) {
 
   document.getElementById('submit-iter').onclick = () => submitIteration(id);
   document.getElementById('view-checkin').onclick = () => viewCheckin(id);
+  document.getElementById('view-memory').onclick = () => viewMemory(id);
   const saveCriteriaBtn = document.getElementById('save-criteria');
   if (saveCriteriaBtn) saveCriteriaBtn.onclick = () => saveCriteria(id);
   const criteriaEl = document.querySelector('details.criteria');
@@ -388,6 +398,36 @@ async function viewCheckin(id) {
   } catch (e) {
     view.innerHTML = `<span class="status-line err">${e.message}</span>`;
   }
+}
+
+async function viewMemory(id) {
+  const view = document.getElementById('memory-view');
+  view.innerHTML = '<span class="lede">Loading…</span>';
+  try {
+    const entries = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/memory`);
+    if (!entries.length) {
+      view.innerHTML = '<span class="lede">No memory entries yet -- devsystem.remember writes one per iteration.</span>';
+      return;
+    }
+    view.innerHTML = `<div class="memory-list">${entries.map(renderMemoryEntry).join('')}</div>`;
+  } catch (e) {
+    view.innerHTML = `<span class="status-line err">${e.message}</span>`;
+  }
+}
+
+function renderMemoryEntry(e) {
+  const findings = e.envelope.key_findings.map(f => `<li>${escapeHtml(f)}</li>`).join('');
+  const constraints = e.envelope.constraints.length
+    ? `<div style="margin-top:.3rem;color:var(--muted)">constraints: <ul>${e.envelope.constraints.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul></div>`
+    : '';
+  return `<div class="mem-entry">
+    <div class="head">
+      <span>${escapeHtml(e.stage)} · role ${escapeHtml(e.role)}</span>
+      <span class="trust ${e.trust}">${e.trust}</span>
+    </div>
+    <ul>${findings}</ul>
+    ${constraints}
+  </div>`;
 }
 
 function renderProposals(proposals) {

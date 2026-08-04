@@ -12,7 +12,7 @@ use axum::response::{IntoResponse, Json};
 use axum::routing::{get, post};
 use axum::Router;
 use devsystem_pipeline::checkin::render_plan_markdown;
-use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration};
+use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration, read_memory_log};
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::preflight_annotations;
 use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, RunOutcome};
@@ -39,6 +39,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/iterate", post(iterate_run))
         .route("/api/runs/{id}/checkin", get(checkin_run))
         .route("/api/runs/{id}/criteria", post(update_criteria))
+        .route("/api/runs/{id}/memory", get(memory_run))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -249,6 +250,21 @@ async fn checkin_run(State(state): State<AppState>, AxPath(id): AxPath<String>) 
     }
 }
 
+/// `devsystem.remember`'s durable log (`memory.jsonl`) was write-only until now --
+/// `iterate_run` has appended a real envelope every iteration since the mechanism
+/// was built, but nothing could ever read it back. Real data, not a stub: whatever
+/// this run's actual history produced.
+async fn memory_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> impl IntoResponse {
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let memory_path = run_dir(&state, &id).join("memory.jsonl");
+    match read_memory_log(&memory_path) {
+        Ok(entries) => Json(entries).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    }
+}
+
 #[derive(Deserialize)]
 struct UpdateCriteriaRequest {
     max_iterations: u32,
@@ -354,6 +370,50 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn memory_run_reads_back_every_real_iteration_appended() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "memory-run"})))
+            .await
+            .unwrap();
+
+        for feedback in ["first real finding", "second real finding"] {
+            app.clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/runs/memory-run/iterate",
+                    serde_json::json!({"stage": "devsystem.implement", "feedback": feedback, "succeeded": true}),
+                ))
+                .await
+                .unwrap();
+        }
+
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/memory-run/memory").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        let entries = body.as_array().expect("memory log is an array");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["envelope"]["key_findings"][0], "first real finding");
+        assert_eq!(entries[1]["envelope"]["key_findings"][0], "second real finding");
+    }
+
+    #[tokio::test]
+    async fn memory_run_404_for_nonexistent_run() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/does-not-exist/memory").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
     }
 
     #[tokio::test]

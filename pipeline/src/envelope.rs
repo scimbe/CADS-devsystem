@@ -75,6 +75,23 @@ pub fn append_to_memory_log(path: &Path, record: &EnvelopeRecord) -> io::Result<
     writeln!(file, "{line}")
 }
 
+/// Read every entry ever appended to a run's `memory.jsonl`, in write order -- the
+/// read side `append_to_memory_log` never had, which meant `devsystem.remember`'s
+/// durable log was write-only in practice: real data landed on disk every iteration
+/// but nothing (CLI or GUI) could ever look back at it. A missing file (a run with
+/// no iterations yet) is a normal empty log, not an error; a line that fails to
+/// parse is skipped rather than failing the whole read, since one malformed
+/// historical line shouldn't hide every other real entry from a human trying to
+/// review this run's memory.
+pub fn read_memory_log(path: &Path) -> io::Result<Vec<EnvelopeRecord>> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    Ok(contents.lines().filter(|line| !line.trim().is_empty()).filter_map(|line| serde_json::from_str(line).ok()).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,6 +164,36 @@ mod tests {
         let parsed2: EnvelopeRecord = serde_json::from_str(lines[1]).unwrap();
         assert_eq!(parsed1, env1);
         assert_eq!(parsed2, env2);
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn reading_a_nonexistent_memory_log_returns_an_empty_vec_not_an_error() {
+        let path = std::env::temp_dir().join(format!("devsystem-envelope-missing-{}-{}", std::process::id(), line!()));
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(read_memory_log(&path).unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn read_memory_log_round_trips_every_appended_entry_in_order() {
+        let dir = std::env::temp_dir().join(format!("devsystem-envelope-readback-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("memory.jsonl");
+        let _ = std::fs::remove_file(&path);
+
+        let env1 = envelope_from_iteration(&record(vec![]));
+        let mut rec2 = record(vec![]);
+        rec2.iteration = 5;
+        rec2.feedback = "second iteration's real feedback".into();
+        let env2 = envelope_from_iteration(&rec2);
+
+        append_to_memory_log(&path, &env1).unwrap();
+        append_to_memory_log(&path, &env2).unwrap();
+
+        let read_back = read_memory_log(&path).unwrap();
+        assert_eq!(read_back, vec![env1, env2]);
 
         std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir(&dir).unwrap();
