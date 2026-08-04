@@ -18,8 +18,8 @@ use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::preflight_annotations;
 use devsystem_pipeline::runner::{
-    load_or_init_run, persist_run, run_iteration, toggle_milestone, BacklogItem, CustomPanel, Milestone, PendingPanelProposal, PendingStageProposal, RoleFillMode,
-    RunOutcome,
+    load_or_init_run, persist_run, run_iteration, toggle_milestone, BacklogItem, CustomPanel, Milestone, PendingIssueProposal, PendingPanelProposal,
+    PendingStageProposal, RoleFillMode, RunOutcome,
 };
 use devsystem_pipeline::{apply_proposal, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
@@ -62,6 +62,12 @@ struct AppState {
     /// assistant panel then reports a clear "not configured" error rather than
     /// silently doing nothing or fabricating a response.
     assistant_url: Option<Arc<str>>,
+    /// A GitHub token with `public_repo` (or `repo`) scope, so an approved issue
+    /// proposal can actually be posted (real self-healing, 2026-08-04) -- `None`
+    /// on a deployment that hasn't configured one: `approve_issue_proposal` then
+    /// reports a clear 503 rather than silently doing nothing or fabricating
+    /// success. Never logged, never returned in any response.
+    github_token: Option<Arc<str>>,
     http_client: reqwest::Client,
 }
 
@@ -111,6 +117,9 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/stages/propose", post(propose_stage))
         .route("/api/runs/{id}/stages/proposals/{proposal_id}/approve", post(approve_stage_proposal))
         .route("/api/runs/{id}/stages/proposals/{proposal_id}/reject", post(reject_stage_proposal))
+        .route("/api/runs/{id}/issues/propose", post(propose_issue))
+        .route("/api/runs/{id}/issues/proposals/{proposal_id}/approve", post(approve_issue_proposal))
+        .route("/api/runs/{id}/issues/proposals/{proposal_id}/reject", post(reject_issue_proposal))
         .route("/api/runs/{id}/offers/submit", post(submit_offer))
         .route("/api/runs/{id}/offers/quick-submit", post(quick_submit_offer))
         .route("/api/runs/{id}/auction", get(view_auction))
@@ -190,11 +199,16 @@ async fn main() {
     if assistant_url.is_none() {
         println!("DEVSYSTEM_ASSISTANT_URL not set -- the Assistant panel will report itself unconfigured");
     }
+    let github_token: Option<Arc<str>> = std::env::var("DEVSYSTEM_GITHUB_TOKEN").ok().filter(|s| !s.trim().is_empty()).map(Arc::from);
+    if github_token.is_none() {
+        println!("DEVSYSTEM_GITHUB_TOKEN not set -- approving an issue proposal will report itself unconfigured");
+    }
     let state = AppState {
         runs_dir: Arc::new(runs_dir),
         write_lock: Arc::new(tokio::sync::Mutex::new(())),
         offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         assistant_url,
+        github_token,
         http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().expect("build http client"),
     };
 
@@ -1486,6 +1500,185 @@ async fn reject_stage_proposal(
     }
 }
 
+const MAX_ISSUE_TITLE_LEN: usize = 300;
+const MAX_ISSUE_BODY_LEN: usize = 20_000;
+/// `owner/repo` this deployment will actually let a proposal target -- the
+/// operator's own explicit ask names CADS-webconference-demo; kept as a real
+/// allowlist rather than a free-form field so a proposal (assistant-authored
+/// text) can never point a real GitHub write at an arbitrary repo.
+const ISSUE_PROPOSAL_REPO_ALLOWLIST: &[&str] = &["scimbe/CADS-webconference-demo"];
+
+#[derive(Deserialize)]
+struct ProposeIssueRequest {
+    repo: String,
+    title: String,
+    body: String,
+}
+
+/// `POST /api/runs/{id}/issues/propose` -- real "self-healing" (operator ask,
+/// 2026-08-04): the assistant notices a genuine gap/error and drafts a real
+/// GitHub issue, but this alone never reaches GitHub -- see
+/// `RunState::pending_issue_proposals`'s doc comment for the trust-model
+/// reasoning (same gate as custom panels/stage proposals).
+async fn propose_issue(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ProposeIssueRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let repo = body.repo.trim().to_string();
+    let title = body.title.trim().to_string();
+    let issue_body = body.body.trim().to_string();
+    if !ISSUE_PROPOSAL_REPO_ALLOWLIST.contains(&repo.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("repo must be one of {ISSUE_PROPOSAL_REPO_ALLOWLIST:?} -- proposing against an arbitrary repo isn't allowed"),
+        )
+            .into_response();
+    }
+    if title.is_empty() || issue_body.is_empty() {
+        return (StatusCode::BAD_REQUEST, "title and body must not be empty").into_response();
+    }
+    if title.len() > MAX_ISSUE_TITLE_LEN {
+        return (StatusCode::BAD_REQUEST, format!("title must be under {MAX_ISSUE_TITLE_LEN} characters")).into_response();
+    }
+    if issue_body.len() > MAX_ISSUE_BODY_LEN {
+        return (StatusCode::BAD_REQUEST, format!("body must be under {MAX_ISSUE_BODY_LEN} characters")).into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let proposal = PendingIssueProposal { id: format!("{:016x}", rand::random::<u64>()), repo, title, body: issue_body, proposed_at: unix_now() };
+    run_state.pending_issue_proposals.push(proposal.clone());
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(proposal).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreatedGithubIssue {
+    number: u64,
+    html_url: String,
+}
+
+/// `POST /api/runs/{id}/issues/proposals/{proposal_id}/approve` -- the actual
+/// "eingebaut nach meiner Zustimmung" (built in after my approval) step: posts
+/// the real issue to GitHub via the REST API, using `DEVSYSTEM_GITHUB_TOKEN`.
+/// Honest `503` (never a silent no-op) when this deployment hasn't configured
+/// one -- the drafted title/body/repo are still in the response either way, so
+/// the operator can copy-paste and post it by hand as a fallback, same pattern
+/// as CADS-Tunnel's `ensure_user` relaying a temp password out of band when
+/// there's no real email mechanism.
+async fn approve_issue_proposal(
+    State(state): State<AppState>,
+    AxPath((id, proposal_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let Some(pos) = run_state.pending_issue_proposals.iter().position(|p| p.id == proposal_id) else {
+        return (StatusCode::NOT_FOUND, format!("no pending proposal with id {proposal_id:?}")).into_response();
+    };
+    let Some(token) = state.github_token.clone() else {
+        let proposal = &run_state.pending_issue_proposals[pos];
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "DEVSYSTEM_GITHUB_TOKEN is not configured on this deployment -- post it by hand instead",
+                "repo": proposal.repo,
+                "title": proposal.title,
+                "body": proposal.body,
+            })),
+        )
+            .into_response();
+    };
+    let proposal = run_state.pending_issue_proposals[pos].clone();
+    let url = format!("https://api.github.com/repos/{}/issues", proposal.repo);
+    let resp = state
+        .http_client
+        .post(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "devsystem-web-issue-proposal/1 (+https://github.com/scimbe/CADS-devsystem)")
+        .json(&serde_json::json!({"title": proposal.title, "body": proposal.body}))
+        .send()
+        .await;
+    let created: CreatedGithubIssue = match resp {
+        Ok(r) if r.status().is_success() => match r.json().await {
+            Ok(v) => v,
+            Err(e) => return (StatusCode::BAD_GATEWAY, format!("GitHub returned a real issue but the response couldn't be parsed: {e}")).into_response(),
+        },
+        Ok(r) => {
+            let status = r.status();
+            let text = r.text().await.unwrap_or_default();
+            return (StatusCode::BAD_GATEWAY, format!("GitHub rejected the issue create: HTTP {status}: {text}")).into_response();
+        }
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("could not reach GitHub: {e}")).into_response(),
+    };
+    run_state.pending_issue_proposals.remove(pos);
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"number": created.number, "html_url": created.html_url})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("issue was posted to GitHub (#{}) but persisting the local state failed: {e}", created.number)).into_response(),
+    }
+}
+
+async fn reject_issue_proposal(
+    State(state): State<AppState>,
+    AxPath((id, proposal_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let before = run_state.pending_issue_proposals.len();
+    run_state.pending_issue_proposals.retain(|p| p.id != proposal_id);
+    if run_state.pending_issue_proposals.len() == before {
+        return (StatusCode::NOT_FOUND, format!("no pending proposal with id {proposal_id:?}")).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"rejected": proposal_id})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
 /// Real offer intake -- the counterpart to CADS-Tunnel core deliberately having no
 /// live bid-collection endpoint (verified directly against the checkout, not
 /// assumed). Any process, on any host, that holds a real ed25519 key can sign a
@@ -1706,6 +1899,7 @@ mod tests {
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
             offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             assistant_url: assistant_url.map(Arc::from),
+            github_token: None,
             http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().expect("build http client"),
         };
         (state, dir)
@@ -2850,6 +3044,143 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn proposed_issue_never_reaches_github_until_a_human_approves_it() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "propose-issue-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/propose-issue-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": "Real gap found", "body": "Detailed real description."}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let proposed = body_json(response).await;
+        assert_eq!(proposed["repo"], "scimbe/CADS-webconference-demo");
+        let proposal_id = proposed["id"].as_str().unwrap().to_string();
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/propose-issue-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["pending_issue_proposals"].as_array().unwrap().len(), 1, "nothing must be posted anywhere -- it only sits pending");
+        assert_eq!(run["state"]["pending_issue_proposals"][0]["id"], proposal_id);
+    }
+
+    #[tokio::test]
+    async fn propose_issue_rejects_a_repo_outside_the_allowlist() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "issue-allowlist-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/issue-allowlist-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/some-other-repo", "title": "x", "body": "y"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "an assistant-authored proposal must never be able to target an arbitrary repo");
+    }
+
+    #[tokio::test]
+    async fn propose_issue_rejects_empty_title_or_body_and_oversized_ones() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "issue-edge-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/issue-edge-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": "  ", "body": "y"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/issue-edge-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": "x".repeat(MAX_ISSUE_TITLE_LEN + 1), "body": "y"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn approving_an_issue_proposal_reports_503_honestly_when_no_github_token_is_configured() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "issue-503-run"}))).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/issue-503-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": "Real gap", "body": "Real detail."}),
+            ))
+            .await
+            .unwrap();
+        let proposal_id = body_json(response).await["id"].as_str().unwrap().to_string();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/runs/issue-503-run/issues/proposals/{proposal_id}/approve"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::SERVICE_UNAVAILABLE, "must say plainly this deployment has no GitHub token, never silently no-op");
+        let body = body_json(response).await;
+        assert_eq!(body["repo"], "scimbe/CADS-webconference-demo", "the drafted content must still be returned so the operator can post it by hand");
+        assert_eq!(body["title"], "Real gap");
+    }
+
+    #[tokio::test]
+    async fn rejecting_an_issue_proposal_discards_it_without_ever_touching_github() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "reject-issue-run"}))).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/reject-issue-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": "Nope", "body": "not needed"}),
+            ))
+            .await
+            .unwrap();
+        let proposal_id = body_json(response).await["id"].as_str().unwrap().to_string();
+
+        let reject = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/runs/reject-issue-run/issues/proposals/{proposal_id}/reject"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reject.status(), SC::OK);
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/reject-issue-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["pending_issue_proposals"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
     async fn pausing_a_run_blocks_new_iterations_until_resumed() {
         let (state, _dir) = test_state();
         let app = api_router(state);
@@ -3001,6 +3332,7 @@ mod tests {
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
             offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             assistant_url: None,
+            github_token: None,
             http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().expect("build http client"),
         };
         let app = api_router(state);

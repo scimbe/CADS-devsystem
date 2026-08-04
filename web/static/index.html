@@ -1637,7 +1637,25 @@ async function renderArchitecturePanel(id, data) {
         </div>`).join('')
     : '';
 
-  body.innerHTML = viewerHtml + specHtml + roleRows + stageProposalsHtml
+  // Self-healing (#45, operator ask): devsystem.assistant notices something
+  // genuinely missing/broken and drafts a real GitHub issue on
+  // CADS-webconference-demo -- never posted until a human approves it here.
+  const issueProposals = data.state.pending_issue_proposals || [];
+  const issueProposalsHtml = issueProposals.length
+    ? `<div class="arch-note" style="margin:.6rem 0 .4rem">Self-healing: devsystem.assistant drafted a GitHub issue -- review before it's actually posted:</div>`
+      + issueProposals.map(p => `
+        <div class="role-card">
+          <div class="role-card-head"><span class="role">${escapeHtml(p.title)}</span></div>
+          <div class="role-meta">${escapeHtml(p.repo)}</div>
+          <div class="lede" style="font-size:.75rem;margin-top:.3rem;white-space:pre-wrap">${escapeHtml(p.body)}</div>
+          <div style="margin-top:.4rem;display:flex;gap:.4rem">
+            <button type="button" class="issue-proposal-approve-btn" data-id="${p.id}">Approve &amp; post to GitHub</button>
+            <button type="button" class="secondary issue-proposal-reject-btn" data-id="${p.id}">Reject</button>
+          </div>
+        </div>`).join('')
+    : '';
+
+  body.innerHTML = viewerHtml + specHtml + roleRows + stageProposalsHtml + issueProposalsHtml
     + `<div class="lede" style="font-size:.72rem;margin-top:.4rem">Live backing status and bidding are on the Roles panel.</div>`;
 
   for (const btn of body.querySelectorAll('.panel-proposal-approve-btn')) {
@@ -1662,6 +1680,33 @@ async function renderArchitecturePanel(id, data) {
         renderArchitecturePanel(id, fresh);
       } catch (err) {
         alert(`Could not reject stage proposal: ${err.message}`);
+      }
+    };
+  }
+  for (const btn of body.querySelectorAll('.issue-proposal-approve-btn')) {
+    btn.onclick = async () => {
+      try {
+        const result = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/issues/proposals/${encodeURIComponent(btn.dataset.id)}/approve`, { method: 'POST' });
+        if (result && result.html_url) {
+          alert(`Posted: ${result.html_url}`);
+        }
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        renderArchitecturePanel(id, fresh);
+      } catch (err) {
+        alert(`Could not post issue to GitHub: ${err.message}`);
+      }
+    };
+  }
+  for (const btn of body.querySelectorAll('.issue-proposal-reject-btn')) {
+    btn.onclick = async () => {
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/issues/proposals/${encodeURIComponent(btn.dataset.id)}/reject`, { method: 'POST' });
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        renderArchitecturePanel(id, fresh);
+      } catch (err) {
+        alert(`Could not reject issue proposal: ${err.message}`);
       }
     };
   }

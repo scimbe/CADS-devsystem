@@ -183,6 +183,16 @@ pub struct RunState {
     /// still load.
     #[serde(default)]
     pub pending_stage_proposals: Vec<PendingStageProposal>,
+    /// A real GitHub issue draft the assistant proposed after noticing a gap or
+    /// error -- "self-healing" (operator ask, 2026-08-04): the assistant
+    /// recognizes something's missing/broken and drafts a real issue for a
+    /// target repo (e.g. CADS-webconference-demo), but NEVER posts it itself.
+    /// Same trust-model pattern as `pending_panel_proposals`/
+    /// `pending_stage_proposals` -- a human reviews and explicitly approves
+    /// before anything reaches GitHub. `#[serde(default)]` so pre-existing
+    /// `state.json` files (none proposed yet) still load.
+    #[serde(default)]
+    pub pending_issue_proposals: Vec<PendingIssueProposal>,
 }
 
 /// See [`RunState::pending_stage_proposals`]'s doc comment for why this wraps
@@ -192,6 +202,19 @@ pub struct RunState {
 pub struct PendingStageProposal {
     pub id: String,
     pub proposal: crate::StageProposal,
+    pub proposed_at: u64,
+}
+
+/// See [`RunState::pending_issue_proposals`]'s doc comment. `repo` is
+/// `owner/name` (e.g. `"scimbe/CADS-webconference-demo"`), not a full URL --
+/// kept minimal, no free-form target the assistant could otherwise be tricked
+/// or drift into pointing at an unrelated repo.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingIssueProposal {
+    pub id: String,
+    pub repo: String,
+    pub title: String,
+    pub body: String,
     pub proposed_at: u64,
 }
 
@@ -225,6 +248,7 @@ impl RunState {
             custom_panels: Vec::new(),
             pending_panel_proposals: Vec::new(),
             pending_stage_proposals: Vec::new(),
+            pending_issue_proposals: Vec::new(),
         }
     }
 }

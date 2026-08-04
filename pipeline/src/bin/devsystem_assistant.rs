@@ -161,31 +161,40 @@ fn build_system_prompt(context: &str) -> String {
          when you are actually taking action; omit it entirely otherwise -- never emit \
          an empty or placeholder block):\n\
          {ACTIONS_FENCE_OPEN}\n\
-         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}}]\n\
+         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}}]\n\
          {ACTIONS_FENCE_CLOSE}\n\
          Indices refer to the real state.milestones/state.backlog arrays already shown \
          to you below -- never guess an index you can't see there. Never invent or add \
          a milestone/backlog item the operator didn't actually ask for, and never mark \
          one achieved/done unless the operator told you it's done or clearly confirmed \
-         it. `propose_custom_panel` and `propose_stage` are different from the other \
-         three: neither takes effect by itself. `propose_custom_panel` only queues a \
-         real proposal (title + a self-contained HTML fragment, no <script src> to \
-         anything external, it runs sandboxed with no page/session access) for the \
-         operator to review and explicitly approve or reject in the Custom Panels \
-         panel. `propose_stage` only queues a real StageProposal (the exact same real \
-         mechanism a role-filler agent uses mid-iteration -- see state.spec.roles for \
-         what already exists) for the operator to approve or reject in the Pipeline \
-         panel; `stage_id` should be namespaced `devsystem.*` by convention, `tag` is \
-         the short role tag, `rationale` is the actual reason a human will read. Use \
-         either only when the operator actually asks for a new panel/dashboard or a new \
-         pipeline stage/role, not speculatively -- this is the real self-optimizing-\
-         pipeline mechanism (#382), not a toy, and an unwanted role clutters the real \
-         auction every real bidder sees. If a request is ambiguous, or you're not \
-         confident it's safe to act on, say so in prose and ask instead of emitting an \
-         action. You have NO other tool or system access in this version -- only these \
-         six action types against these four kinds of data; for \
-         anything else (e.g. a code change, a GitHub issue, a different panel's data) \
-         tell the operator what you'd want to do and let them decide.\n\n\
+         it. `propose_custom_panel`, `propose_stage`, and `propose_issue` are different \
+         from the other four: neither takes effect by itself. `propose_custom_panel` \
+         only queues a real proposal (title + a self-contained HTML fragment, no \
+         <script src> to anything external, it runs sandboxed with no page/session \
+         access) for the operator to review and explicitly approve or reject in the \
+         Custom Panels panel. `propose_stage` only queues a real StageProposal (the \
+         exact same real mechanism a role-filler agent uses mid-iteration -- see \
+         state.spec.roles for what already exists) for the operator to approve or \
+         reject in the Pipeline panel; `stage_id` should be namespaced `devsystem.*` by \
+         convention, `tag` is the short role tag, `rationale` is the actual reason a \
+         human will read. `propose_issue` is the self-healing action: when you \
+         genuinely notice something real is missing or broken (never speculatively), \
+         draft a real GitHub issue for the operator to review in the Pipeline panel -- \
+         `repo` must currently be exactly \"scimbe/CADS-webconference-demo\" (the only \
+         allowed target; anything else is rejected server-side), `title` and `body` \
+         should be a real, specific, actionable bug/gap report grounded in the real \
+         state you were given, not a vague complaint. It is NEVER posted to GitHub \
+         without the operator's own explicit approval, no matter how confident you \
+         are. Use any of these three only when the operator actually asks for a new \
+         panel/dashboard/stage, or you've found a genuine, concrete gap worth a real \
+         issue -- not speculatively. This is the real self-optimizing-pipeline \
+         mechanism (#382), not a toy: an unwanted role clutters the real auction every \
+         real bidder sees, and a vague/speculative issue wastes a human reviewer's \
+         time. If a request is ambiguous, or you're not confident it's safe to act on, \
+         say so in prose and ask instead of emitting an action. You have NO other tool \
+         or system access in this version -- only these seven action types against \
+         these five kinds of data; for anything else (e.g. an actual code change) tell \
+         the operator what you'd want to do and let them decide.\n\n\
          Current real run state (JSON):\n{context}"
     )
 }
@@ -219,6 +228,10 @@ enum Action {
         #[serde(default)]
         price_ceiling: Option<u64>,
     },
+    /// Also does not take effect immediately -- see `RunState::pending_issue_proposals`'s
+    /// doc comment. Real self-healing (operator ask): the assistant notices a
+    /// gap/error and drafts a real GitHub issue, but never posts it itself.
+    ProposeIssue { repo: String, title: String, body: String },
 }
 
 fn default_stage_units() -> u64 {
@@ -293,6 +306,12 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
                 "units": units,
                 "price_ceiling": price_ceiling,
             }),
+            "proposed",
+        ),
+        Action::ProposeIssue { repo, title, body: issue_body } => (
+            format!("propose GitHub issue \"{title}\" on {repo} (awaiting your approval in the Pipeline panel)"),
+            format!("{base}/api/runs/{run_id}/issues/propose"),
+            serde_json::json!({"repo": repo, "title": title, "body": issue_body}),
             "proposed",
         ),
     };
@@ -570,12 +589,17 @@ mod tests {
         assert!(prompt.contains("Markdown pipe table"), "structured-data replies should be steered toward real tables the GUI can actually render");
         assert!(prompt.contains(ACTIONS_FENCE_OPEN), "the prompt must teach the LLM the exact action-block contract");
         assert!(
-            prompt.contains("add_milestone") && prompt.contains("toggle_backlog_item") && prompt.contains("propose_custom_panel") && prompt.contains("propose_stage"),
-            "all six real action types must be documented"
+            prompt.contains("add_milestone")
+                && prompt.contains("toggle_backlog_item")
+                && prompt.contains("propose_custom_panel")
+                && prompt.contains("propose_stage")
+                && prompt.contains("propose_issue"),
+            "all seven real action types must be documented"
         );
-        assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these four data kinds");
-        assert!(prompt.contains("neither takes effect by itself"), "the panel/stage-proposal approval gate must be explicit, not implied");
+        assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these five data kinds");
+        assert!(prompt.contains("neither takes effect by itself"), "the panel/stage/issue-proposal approval gate must be explicit, not implied");
         assert!(prompt.contains("BE TERSE") && prompt.contains("mehr tun, weniger reden"), "the operator's own terseness instruction must be explicit, not just implied by 'be concise'");
+        assert!(prompt.contains("scimbe/CADS-webconference-demo"), "the issue-proposal repo allowlist must be stated in the prompt, not left for the LLM to guess");
     }
 
     #[test]
@@ -597,8 +621,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_actions_parses_all_six_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"}]\n```";
+    fn extract_actions_parses_all_seven_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -616,6 +640,11 @@ mod tests {
                     use_existing_service: None,
                     units: 1,
                     price_ceiling: None,
+                },
+                Action::ProposeIssue {
+                    repo: "scimbe/CADS-webconference-demo".to_string(),
+                    title: "Missing retry on flaky upload".to_string(),
+                    body: "Observed 3 consecutive timeouts.".to_string(),
                 },
             ]
         );
@@ -727,6 +756,27 @@ mod tests {
         assert_eq!(parsed["tag"], "android_emulator_test");
         assert_eq!(parsed["units"], 1);
         assert!(parsed["use_existing_service"].is_null());
+    }
+
+    #[test]
+    fn apply_action_posts_the_real_propose_issue_request_and_reports_proposed_not_done() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let action = Action::ProposeIssue {
+            repo: "scimbe/CADS-webconference-demo".to_string(),
+            title: "Missing retry on flaky upload".to_string(),
+            body: "Observed 3 consecutive timeouts.".to_string(),
+        };
+        let result = apply_action(&client, &addr, "my-run", &action);
+        assert!(result.starts_with("proposed:"), "an issue proposal must never be reported as \"done\" -- it isn't on GitHub yet: {result}");
+        assert!(result.contains("awaiting your approval"), "the response must say a human still has to act: {result}");
+        let (method, url, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/issues/propose");
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
+        assert_eq!(parsed["repo"], "scimbe/CADS-webconference-demo");
+        assert_eq!(parsed["title"], "Missing retry on flaky upload");
+        assert_eq!(parsed["body"], "Observed 3 consecutive timeouts.");
     }
 
     #[test]
