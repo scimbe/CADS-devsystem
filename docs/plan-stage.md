@@ -49,15 +49,17 @@ self-assessment.
 The proposal also asks for a lightweight review agent that pre-populates
 canvas annotations for known risk patterns before a human ever opens the
 canvas. Built in [`pipeline/src/preflight.rs`](../pipeline/src/preflight.rs):
-two real, mechanical checks over a run's actual history — "touches auth"
-(a security keyword in the latest iteration's feedback or a proposal's
-rationale) and "no test stage before implement" (a real `devsystem.implement`
-iteration with no `devsystem.test` before it in history). `devsystem_checkin`
-seeds any findings into the session's chat via the canvas server's
-`POST /api/session/<key>/reply` endpoint directly — the same one
-`await --reply` posts to internally, called without ever invoking the
-blocking `await` itself. Not yet built: "external-partner role with no price
-ceiling" — `StageProposal` has no price-ceiling field yet to check against.
+three real, mechanical checks over a run's actual history — "touches
+auth/security" (a keyword in the latest iteration's feedback or a proposal's
+rationale), "no test stage before implement" (a real `devsystem.implement`
+iteration with no `devsystem.test` before it in history), and "no price
+ceiling set" (a proposal needing a new service, `use_existing_service: None`,
+with no `price_ceiling` — named honestly, not as "external-partner role",
+since `StageProposal` has no field distinguishing an external paid partner
+from an internal build). `devsystem_checkin` seeds any findings into the
+session's chat via the canvas server's `POST /api/session/<key>/reply`
+endpoint directly — the same one `await --reply` posts to internally, called
+without ever invoking the blocking `await` itself.
 
 ## What's still open
 
