@@ -153,22 +153,28 @@ fn build_system_prompt(context: &str) -> String {
          arrow-chain or a loose list -- the GUI renders real tables properly, not \
          ad-hoc formatting -- but a table is still not an excuse to also write a \
          paragraph around it.\n\n\
-         You CAN take real action on exactly two kinds of run state: milestones and \
-         backlog items. When the operator asks you to add a milestone, check one off, \
-         add a backlog item, or mark one done -- and their intent is clear and \
-         unambiguous -- do it yourself instead of telling them to enter it by hand. To \
-         act, end your reply with a fenced block exactly like this (include it ONLY \
-         when you are actually taking action; omit it entirely otherwise -- never emit \
-         an empty or placeholder block):\n\
+         You CAN take real action on exactly three kinds of run state: milestones, \
+         backlog items, and requirements. When the operator asks you to add a \
+         milestone, check one off, add a backlog item, mark one done, or define/verify \
+         a requirement -- and their intent is clear and unambiguous -- do it yourself \
+         instead of telling them to enter it by hand. A requirement is not a vague \
+         wish: `statement` should follow EARS-style phrasing (e.g. \"WHEN <trigger>, \
+         THE SYSTEM SHALL <behavior>\") and `acceptance_criteria` must be concrete, \
+         checkable conditions, not restatements of the statement -- a requirement with \
+         no real acceptance criteria is rejected server-side, and you should never \
+         invent one just to satisfy that. To act, end your reply with a fenced block \
+         exactly like this (include it ONLY when you are actually taking action; omit \
+         it entirely otherwise -- never emit an empty or placeholder block):\n\
          {ACTIONS_FENCE_OPEN}\n\
-         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}}]\n\
+         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}}]\n\
          {ACTIONS_FENCE_CLOSE}\n\
-         Indices refer to the real state.milestones/state.backlog arrays already shown \
-         to you below -- never guess an index you can't see there. Never invent or add \
-         a milestone/backlog item the operator didn't actually ask for, and never mark \
-         one achieved/done unless the operator told you it's done or clearly confirmed \
-         it. `propose_custom_panel`, `propose_stage`, and `propose_issue` are different \
-         from the other four: neither takes effect by itself. `propose_custom_panel` \
+         Indices refer to the real state.milestones/state.backlog/state.requirements \
+         arrays already shown to you below -- never guess an index you can't see \
+         there. Never invent or add a milestone/backlog item/requirement the operator \
+         didn't actually ask for, and never mark one achieved/done/verified unless the \
+         operator told you it's done or clearly confirmed it. `propose_custom_panel`, \
+         `propose_stage`, and `propose_issue` are different from the other six: \
+         neither takes effect by itself. `propose_custom_panel` \
          only queues a real proposal (title + a self-contained HTML fragment, no \
          <script src> to anything external, it runs sandboxed with no page/session \
          access) for the operator to review and explicitly approve or reject in the \
@@ -192,8 +198,8 @@ fn build_system_prompt(context: &str) -> String {
          real bidder sees, and a vague/speculative issue wastes a human reviewer's \
          time. If a request is ambiguous, or you're not confident it's safe to act on, \
          say so in prose and ask instead of emitting an action. You have NO other tool \
-         or system access in this version -- only these seven action types against \
-         these five kinds of data; for anything else (e.g. an actual code change) tell \
+         or system access in this version -- only these nine action types against \
+         these six kinds of data; for anything else (e.g. an actual code change) tell \
          the operator what you'd want to do and let them decide.\n\n\
          Current real run state (JSON):\n{context}"
     )
@@ -210,6 +216,10 @@ enum Action {
     ToggleMilestone { index: usize },
     AddBacklogItem { text: String },
     ToggleBacklogItem { index: usize },
+    /// A real, structured requirement -- see `Requirement`'s own doc comment
+    /// (`pipeline/src/runner.rs`) for why this is distinct from a milestone.
+    AddRequirement { statement: String, acceptance_criteria: Vec<String> },
+    ToggleRequirement { index: usize },
     /// Deliberately the ONE action that does not take effect immediately -- see
     /// the system prompt's own explanation and `RunState::pending_panel_proposals`'s
     /// doc comment (`pipeline/src/runner.rs`) for the trust-model reasoning.
@@ -287,6 +297,18 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
         Action::ToggleBacklogItem { index } => {
             (format!("toggle backlog item #{index}"), format!("{base}/api/runs/{run_id}/backlog/{index}/toggle"), serde_json::json!({}), "done")
         }
+        Action::AddRequirement { statement, acceptance_criteria } => (
+            format!("add requirement \"{statement}\""),
+            format!("{base}/api/runs/{run_id}/requirements"),
+            serde_json::json!({"statement": statement, "acceptance_criteria": acceptance_criteria}),
+            "done",
+        ),
+        Action::ToggleRequirement { index } => (
+            format!("toggle requirement #{index}"),
+            format!("{base}/api/runs/{run_id}/requirements/{index}/toggle"),
+            serde_json::json!({}),
+            "done",
+        ),
         // Deliberately "proposed" not "done" -- this never takes effect on its own,
         // see the system prompt's own explanation of the approval gate.
         Action::ProposeCustomPanel { title, html } => (
@@ -591,15 +613,18 @@ mod tests {
         assert!(
             prompt.contains("add_milestone")
                 && prompt.contains("toggle_backlog_item")
+                && prompt.contains("add_requirement")
+                && prompt.contains("toggle_requirement")
                 && prompt.contains("propose_custom_panel")
                 && prompt.contains("propose_stage")
                 && prompt.contains("propose_issue"),
-            "all seven real action types must be documented"
+            "all nine real action types must be documented"
         );
-        assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these five data kinds");
+        assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these six data kinds");
         assert!(prompt.contains("neither takes effect by itself"), "the panel/stage/issue-proposal approval gate must be explicit, not implied");
         assert!(prompt.contains("BE TERSE") && prompt.contains("mehr tun, weniger reden"), "the operator's own terseness instruction must be explicit, not just implied by 'be concise'");
         assert!(prompt.contains("scimbe/CADS-webconference-demo"), "the issue-proposal repo allowlist must be stated in the prompt, not left for the LLM to guess");
+        assert!(prompt.contains("EARS"), "the requirement-statement format expectation must be explicit, not left for the LLM to guess at style");
     }
 
     #[test]
@@ -621,8 +646,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_actions_parses_all_seven_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"}]\n```";
+    fn extract_actions_parses_all_nine_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -632,6 +657,11 @@ mod tests {
                 Action::ToggleMilestone { index: 2 },
                 Action::AddBacklogItem { text: "write tests".to_string() },
                 Action::ToggleBacklogItem { index: 0 },
+                Action::AddRequirement {
+                    statement: "WHEN a user sends a text, THE SYSTEM SHALL persist it locally".to_string(),
+                    acceptance_criteria: vec!["survives app restart".to_string()],
+                },
+                Action::ToggleRequirement { index: 1 },
                 Action::ProposeCustomPanel { title: "Burndown".to_string(), html: "<h2>hi</h2>".to_string() },
                 Action::ProposeStage {
                     stage_id: "devsystem.android_emulator_test".to_string(),
@@ -716,6 +746,34 @@ mod tests {
         let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
         assert_eq!(method, "POST");
         assert_eq!(url, "/api/runs/my-run/backlog/3/toggle");
+    }
+
+    #[test]
+    fn apply_action_posts_the_real_add_requirement_request() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let action = Action::AddRequirement {
+            statement: "WHEN a user sends a text message over an established channel, THE SYSTEM SHALL persist it locally before confirming delivery to the UI".to_string(),
+            acceptance_criteria: vec!["message survives an app restart".to_string()],
+        };
+        let result = apply_action(&client, &addr, "my-run", &action);
+        assert!(result.starts_with("done:"), "a 200 response must be reported as success: {result}");
+        let (method, url, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/requirements");
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
+        assert_eq!(parsed["acceptance_criteria"][0], "message survives an app restart");
+    }
+
+    #[test]
+    fn apply_action_posts_the_real_toggle_requirement_request() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let result = apply_action(&client, &addr, "my-run", &Action::ToggleRequirement { index: 2 });
+        assert!(result.starts_with("done:"));
+        let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/requirements/2/toggle");
     }
 
     #[test]

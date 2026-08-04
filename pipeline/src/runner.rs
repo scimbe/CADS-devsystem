@@ -96,6 +96,26 @@ pub struct Milestone {
     pub achieved: bool,
 }
 
+/// A real, structured requirement -- the concrete first slice of "requirement
+/// management" the operator asked to research (2026-08-04). Modeled on the
+/// EARS notation (Easy Approach to Requirements Syntax -- the industry-standard
+/// way to keep a requirement unambiguous and testable for an LLM coding agent,
+/// e.g. "WHEN a user sends a text message over an established channel, THE
+/// SYSTEM SHALL persist it locally before confirming delivery to the UI"),
+/// distinct from a [`Milestone`] (a checkpoint) or a [`BacklogItem`] (a task):
+/// a requirement states an intended system behavior with concrete,
+/// checkable `acceptance_criteria`, giving devsystem.assistant and any stage
+/// something real to verify against instead of a vague wish. Deliberately no
+/// linkage to `IterationRecord`/`history` yet (real traceability -- which
+/// iteration actually addressed which requirement -- is a follow-up slice,
+/// not guessed at here).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Requirement {
+    pub statement: String,
+    pub acceptance_criteria: Vec<String>,
+    pub verified: bool,
+}
+
 /// Persisted state for one run -- serialized to `runs/<run_id>/state.json` in the
 /// coordination repo so a run survives across separate loop firings (each firing is a
 /// fresh process; nothing here is in-memory-only).
@@ -193,6 +213,11 @@ pub struct RunState {
     /// `state.json` files (none proposed yet) still load.
     #[serde(default)]
     pub pending_issue_proposals: Vec<PendingIssueProposal>,
+    /// This run's real, structured requirements -- see [`Requirement`].
+    /// `#[serde(default)]` so pre-existing `state.json` files (none defined
+    /// yet) still load.
+    #[serde(default)]
+    pub requirements: Vec<Requirement>,
 }
 
 /// See [`RunState::pending_stage_proposals`]'s doc comment for why this wraps
@@ -249,6 +274,7 @@ impl RunState {
             pending_panel_proposals: Vec::new(),
             pending_stage_proposals: Vec::new(),
             pending_issue_proposals: Vec::new(),
+            requirements: Vec::new(),
         }
     }
 }
@@ -265,6 +291,17 @@ pub fn toggle_milestone(state: &mut RunState, index: usize) -> Result<(), String
     if !was_achieved && milestone.achieved {
         state.paused = true;
     }
+    Ok(())
+}
+
+/// Unlike [`toggle_milestone`], toggling a requirement's `verified` flag never
+/// auto-pauses the run -- a requirement is a standing behavioral contract, not
+/// a one-time checkpoint; marking it verified (or un-verifying it after a
+/// regression) is routine bookkeeping, not an event that should interrupt the
+/// loop.
+pub fn toggle_requirement(state: &mut RunState, index: usize) -> Result<(), String> {
+    let requirement = state.requirements.get_mut(index).ok_or_else(|| format!("no requirement at index {index}"))?;
+    requirement.verified = !requirement.verified;
     Ok(())
 }
 
@@ -386,6 +423,28 @@ mod tests {
     fn toggling_an_out_of_range_milestone_index_fails_loudly() {
         let mut state = RunState::new("run-milestone-oob");
         assert!(toggle_milestone(&mut state, 0).is_err());
+    }
+
+    #[test]
+    fn toggling_a_requirement_flips_verified_and_never_auto_pauses() {
+        let mut state = RunState::new("run-req");
+        state.requirements.push(Requirement {
+            statement: "WHEN a user sends a text message over an established channel, THE SYSTEM SHALL persist it locally before confirming delivery to the UI".into(),
+            acceptance_criteria: vec!["message survives an app restart".into(), "UI shows \"sent\" only after local persistence succeeds".into()],
+            verified: false,
+        });
+        toggle_requirement(&mut state, 0).unwrap();
+        assert!(state.requirements[0].verified);
+        assert!(!state.paused, "unlike a milestone, verifying a requirement must not auto-pause the run");
+
+        toggle_requirement(&mut state, 0).unwrap();
+        assert!(!state.requirements[0].verified);
+    }
+
+    #[test]
+    fn toggling_an_out_of_range_requirement_index_fails_loudly() {
+        let mut state = RunState::new("run-req-oob");
+        assert!(toggle_requirement(&mut state, 0).is_err());
     }
 
     #[test]

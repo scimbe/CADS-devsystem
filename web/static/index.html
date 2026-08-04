@@ -392,6 +392,7 @@ const PANEL_DEFAULTS = {
   history:    { title: 'History',            x: 728,  y: 332, w: 320, h: 480 },
   backlog:    { title: 'Backlog',            x: 1420, y: 16,  w: 340, h: 300 },
   milestones: { title: 'Milestones',         x: 1420, y: 332, w: 340, h: 240 },
+  requirements: { title: 'Requirements',     x: 1780, y: 1108, w: 380, h: 340 },
   checkin:    { title: 'Check-in',           x: 16,   y: 452, w: 280, h: 300 },
   memory:     { title: 'Memory Log',         x: 1780, y: 16,  w: 360, h: 300 },
   code:       { title: 'Code',               x: 1420, y: 592, w: 340, h: 300 },
@@ -1127,7 +1128,7 @@ async function selectRun(id) {
     for (const pid of Object.keys(REFRESHABLE_PANELS)) lastRefreshedAt[pid] = Date.now();
   }
   await refreshRunsList();
-  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture', 'rag', 'panels', 'flow']) {
+  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow']) {
     document.getElementById(`body-${panelId}`).innerHTML = '<span class="lede">Loading…</span>';
   }
   try {
@@ -1141,6 +1142,7 @@ async function selectRun(id) {
     renderHistoryPanel(data);
     renderBacklogPanel(id, data);
     renderMilestonesPanel(id, data);
+    renderRequirementsPanel(id, data);
     document.getElementById('body-checkin').innerHTML = `<button class="secondary" id="view-checkin">View check-in</button><div id="checkin-view"></div>`;
     document.getElementById('view-checkin').onclick = () => viewCheckin(id);
     document.getElementById('body-memory').innerHTML = `<button class="secondary" id="view-memory">View memory log</button><div id="memory-view"></div>`;
@@ -1152,7 +1154,7 @@ async function selectRun(id) {
     renderCustomPanels(id, data);
     renderFlowPanel(id, data);
   } catch (e) {
-    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture', 'rag', 'panels', 'flow']) {
+    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow']) {
       document.getElementById(`body-${panelId}`).innerHTML = `<span class="status-line err">${e.message}</span>`;
     }
   }
@@ -1917,6 +1919,69 @@ async function toggleMilestone(id, index) {
     await selectRun(id);
   } catch (e) {
     const status = document.getElementById('milestone-status');
+    if (status) { status.textContent = e.message; status.className = 'status-line err'; }
+  }
+}
+
+// Real, structured requirement management (2026-08-04 operator ask, researched
+// against industry spec-driven-development practice -- EARS notation,
+// traceSDD/Spec Kit-style acceptance criteria): distinct from Milestones (a
+// checkpoint) -- a Requirement states an intended behavior plus concrete,
+// checkable acceptance criteria devsystem.assistant and a human can both
+// verify against. See `Requirement` in pipeline/src/runner.rs.
+function renderRequirementsPanel(id, data) {
+  const body = document.getElementById('body-requirements');
+  const requirements = data.state.requirements || [];
+  const items = requirements.length
+    ? requirements.map((r, i) => `
+        <div class="role-card">
+          <label class="backlog-item${r.verified ? ' done' : ''}" style="align-items:flex-start">
+            <input type="checkbox" class="requirement-toggle" data-index="${i}" ${r.verified ? 'checked' : ''}>
+            <span>${escapeHtml(r.statement)}</span>
+          </label>
+          <ul style="margin:.3rem 0 0 1.6rem;padding:0;font-size:.75rem" class="lede">
+            ${r.acceptance_criteria.map(c => `<li>${escapeHtml(c)}</li>`).join('')}
+          </ul>
+        </div>`).join('')
+    : '<span class="lede">No requirements yet.</span>';
+  body.innerHTML = `
+    <div class="backlog-list">${items}</div>
+    <div class="lede" style="font-size:.72rem;margin-top:.4rem">EARS-style: "WHEN &lt;trigger&gt;, THE SYSTEM SHALL &lt;behavior&gt;". One acceptance criterion per line, at least one required.</div>
+    <form class="inline" id="requirement-form" style="margin-top:.6rem;flex-direction:column;align-items:stretch;gap:.3rem">
+      <input id="requirement-statement" placeholder="WHEN ..., THE SYSTEM SHALL ...">
+      <textarea id="requirement-criteria" rows="2" placeholder="acceptance criterion (one per line)" style="font-family:var(--mono);font-size:.8rem"></textarea>
+      <button type="submit">Add requirement</button>
+    </form>
+    <div id="requirement-status" class="status-line"></div>
+  `;
+  for (const cb of body.querySelectorAll('.requirement-toggle')) {
+    cb.onchange = () => toggleRequirement(id, parseInt(cb.dataset.index, 10));
+  }
+  document.getElementById('requirement-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const status = document.getElementById('requirement-status');
+    const statement = document.getElementById('requirement-statement').value.trim();
+    const acceptance_criteria = document.getElementById('requirement-criteria').value.split('\n').map(s => s.trim()).filter(Boolean);
+    if (!statement) { status.textContent = 'Statement is required.'; status.className = 'status-line err'; return; }
+    if (!acceptance_criteria.length) { status.textContent = 'At least one acceptance criterion is required.'; status.className = 'status-line err'; return; }
+    try {
+      await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ statement, acceptance_criteria })
+      });
+      await selectRun(id);
+    } catch (err) {
+      status.textContent = err.message; status.className = 'status-line err';
+    }
+  });
+}
+
+async function toggleRequirement(id, index) {
+  try {
+    await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements/${index}/toggle`, { method: 'POST' });
+    await selectRun(id);
+  } catch (e) {
+    const status = document.getElementById('requirement-status');
     if (status) { status.textContent = e.message; status.className = 'status-line err'; }
   }
 }
