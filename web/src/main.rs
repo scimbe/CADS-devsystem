@@ -15,7 +15,7 @@ use devsystem_pipeline::checkin::render_plan_markdown;
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration, govern_memory_entry, read_memory_log};
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::preflight_annotations;
-use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, RunOutcome};
+use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, BacklogItem, RunOutcome};
 use devsystem_pipeline::{AbortCriteria, IterationRecord, StageProposal};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -62,6 +62,8 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/resume", post(resume_run))
         .route("/api/runs/{id}/memory", get(memory_run))
         .route("/api/runs/{id}/memory/{index}/govern", post(govern_memory))
+        .route("/api/runs/{id}/backlog", post(add_backlog_item))
+        .route("/api/runs/{id}/backlog/{index}/toggle", post(toggle_backlog_item))
         .with_state(state)
 }
 
@@ -427,6 +429,66 @@ async fn set_paused(state: AppState, id: String, paused: bool) -> axum::response
     }
 }
 
+#[derive(Deserialize)]
+struct AddBacklogItemRequest {
+    text: String,
+}
+
+/// A run's real backlog -- operator feedback: "ich möchte die Liste der
+/// Taskliste... ein echtes Backlog pro Run." Human-editable today; the natural
+/// place a future `devsystem.assistant` role would read/write from once it exists,
+/// but the data + API need to exist first regardless of who ends up populating it.
+async fn add_backlog_item(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    Json(body): Json<AddBacklogItemRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let text = body.text.trim().to_string();
+    if text.is_empty() {
+        return (StatusCode::BAD_REQUEST, "text must not be empty").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    run_state.backlog.push(BacklogItem { text, done: false });
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"backlog": run_state.backlog})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+async fn toggle_backlog_item(State(state): State<AppState>, AxPath((id, index)): AxPath<(String, usize)>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    let Some(item) = run_state.backlog.get_mut(index) else {
+        return (StatusCode::NOT_FOUND, format!("no backlog item at index {index}")).into_response();
+    };
+    item.done = !item.done;
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"backlog": run_state.backlog})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -690,6 +752,68 @@ mod tests {
         let body = body_json(response).await;
         let risks = body["risks"].as_array().expect("risks is an array");
         assert!(risks.iter().any(|r| r["label"] == "touches auth/security"), "expected a real preflight finding, got {risks:?}");
+    }
+
+    #[tokio::test]
+    async fn backlog_items_can_be_added_and_toggled_and_persist() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "backlog-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/backlog-run/backlog", serde_json::json!({"text": "wire real crypto into native-bridge"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["backlog"][0]["text"], "wire real crypto into native-bridge");
+        assert_eq!(body["backlog"][0]["done"], false);
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/backlog-run/backlog/0/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["backlog"][0]["done"], true, "toggle should flip done, not remove the item");
+
+        // Re-fetching the run independently proves it actually persisted to disk.
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/backlog-run").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let reread = body_json(response).await;
+        assert_eq!(reread["state"]["backlog"][0]["done"], true);
+    }
+
+    #[tokio::test]
+    async fn add_backlog_item_rejects_empty_text_and_toggle_404s_out_of_range() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "backlog-edge-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/backlog-edge-run/backlog", serde_json::json!({"text": "   "})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/backlog-edge-run/backlog/9/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
     }
 
     #[tokio::test]

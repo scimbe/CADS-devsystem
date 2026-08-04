@@ -10,6 +10,17 @@ use std::error::Error;
 use std::fs;
 use std::path::Path;
 
+/// One entry in a run's real backlog -- distinct from `history` (what already
+/// happened) and stalled stages (proposed-but-unfilled roles): a plain "still needs
+/// doing" list, operator feedback: "ich möchte die Liste der Taskliste... ein echtes
+/// Backlog pro Run." Addressed by its index in `RunState::backlog`; checked off
+/// rather than removed, so the record of what was planned survives.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BacklogItem {
+    pub text: String,
+    pub done: bool,
+}
+
 /// Persisted state for one run -- serialized to `runs/<run_id>/state.json` in the
 /// coordination repo so a run survives across separate loop firings (each firing is a
 /// fresh process; nothing here is in-memory-only).
@@ -38,6 +49,10 @@ pub struct RunState {
     /// paused, obviously) still load.
     #[serde(default)]
     pub paused: bool,
+    /// This run's real backlog -- see [`BacklogItem`]. `#[serde(default)]` so
+    /// pre-existing `state.json` files (no backlog yet) still load.
+    #[serde(default)]
+    pub backlog: Vec<BacklogItem>,
 }
 
 impl RunState {
@@ -49,6 +64,7 @@ impl RunState {
             added_stages: Vec::new(),
             criteria: AbortCriteria::default(),
             paused: false,
+            backlog: Vec::new(),
         }
     }
 }
