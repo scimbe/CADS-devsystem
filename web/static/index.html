@@ -27,6 +27,10 @@
  .run-item .meta{color:var(--muted);font-size:.75rem;margin-top:.2rem}
  .stalled-badge{float:right;font-size:.68rem;color:var(--accent);border:1px solid var(--accent);
                 border-radius:5px;padding:.05rem .35rem;font-weight:700}
+ .attention-badge{float:right;font-size:.68rem;color:var(--danger);border:1px solid var(--danger);
+                border-radius:5px;padding:.05rem .35rem;font-weight:700;margin-left:.3rem}
+ .risk-badge{float:right;font-size:.68rem;color:var(--danger);border:1px solid var(--danger);
+                border-radius:5px;padding:.05rem .35rem;font-weight:700}
  .stalled-panel{margin-bottom:1rem;padding:.6rem .8rem;border:1px solid var(--accent);
                  background:rgba(217,138,79,.08);border-radius:8px;font-size:.85rem}
  .stalled-panel .title{font-family:var(--mono);font-size:.75rem;color:var(--accent);font-weight:700;margin-bottom:.3rem}
@@ -146,9 +150,14 @@ async function loadRuns() {
     for (const r of runs) {
       const btn = document.createElement('button');
       btn.className = 'run-item' + (r.run_id === currentRun ? ' active' : '');
-      const stalledBadge = (r.stalled_stages && r.stalled_stages.length)
-        ? `<span class="stalled-badge">${r.stalled_stages.length} stalled</span>` : '';
-      btn.innerHTML = `${r.run_id}${stalledBadge}<div class="meta">${r.iterations} iteration(s) · ${r.roles} role(s)</div>`;
+      // Most urgent signal wins, one badge at a glance rather than a pile-up:
+      // needs_attention (close to abort/overdue check-in) outranks a stalled
+      // stage, which outranks a mechanical preflight risk finding.
+      let badge = '';
+      if (r.needs_attention) badge = `<span class="attention-badge">⚠ needs attention</span>`;
+      else if (r.stalled_stages && r.stalled_stages.length) badge = `<span class="stalled-badge">${r.stalled_stages.length} stalled</span>`;
+      else if (r.risk_count) badge = `<span class="risk-badge">${r.risk_count} risk(s)</span>`;
+      btn.innerHTML = `${r.run_id}${badge}<div class="meta">${r.iterations} iteration(s) · ${r.roles} role(s)</div>`;
       btn.onclick = () => selectRun(r.run_id);
       el.appendChild(btn);
     }

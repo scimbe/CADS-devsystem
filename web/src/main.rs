@@ -76,6 +76,17 @@ struct RunSummary {
     roles: usize,
     added_stages: Vec<String>,
     stalled_stages: Vec<String>,
+    risk_count: usize,
+    needs_attention: bool,
+}
+
+/// True when a run is close enough to its own bound that a human should notice it
+/// before opening the run, not just after -- the same danger/warn thresholds the
+/// GUI's health panel already uses, just evaluated once here so the run list can
+/// surface it too (matches the stalled-stage badge precedent: proactive, not
+/// only-on-click).
+fn needs_attention(health: &RunHealth) -> bool {
+    health.consecutive_failures + 1 >= health.criteria.max_consecutive_failures || health.iterations_until_checkin <= 1
 }
 
 async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
@@ -90,12 +101,17 @@ async fn list_runs(State(state): State<AppState>) -> impl IntoResponse {
         }
         if let Ok((spec, run_state)) = load_or_init_run(&run_dir(&state, &id), &id) {
             let stalled = stalled_stages(&run_state);
+            let risk_count = preflight_annotations(&run_state).len();
+            let health = run_health(&run_state);
+            let alert = needs_attention(&health);
             runs.push(RunSummary {
                 run_id: id,
                 iterations: run_state.history.len(),
                 roles: spec.roles.len(),
                 added_stages: run_state.added_stages,
                 stalled_stages: stalled,
+                risk_count,
+                needs_attention: alert,
             });
         }
     }
@@ -355,6 +371,45 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), SC::OK);
         assert_eq!(body_json(response).await, serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn list_runs_surfaces_risk_count_and_needs_attention() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "list-health-run"})))
+            .await
+            .unwrap();
+
+        // A fresh run: no risks, and not yet close to any bound.
+        let response = app.clone().oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body[0]["risk_count"], 0);
+        assert_eq!(body[0]["needs_attention"], false);
+
+        // Push it to 2 consecutive failures against the default max of 3 --
+        // one away from the abort bound, so the list should flag it now.
+        for _ in 0..2 {
+            app.clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/runs/list-health-run/iterate",
+                    serde_json::json!({
+                        "stage": "devsystem.implement",
+                        "feedback": "wired the real session handshake and key material",
+                        "succeeded": false
+                    }),
+                ))
+                .await
+                .unwrap();
+        }
+
+        let response = app.oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert!(body[0]["risk_count"].as_u64().unwrap() > 0, "the security-keyword feedback should register as a real risk");
+        assert_eq!(body[0]["needs_attention"], true, "2/3 consecutive failures should already flag needs_attention");
     }
 
     #[tokio::test]
