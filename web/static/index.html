@@ -245,6 +245,8 @@
  .role-bid-row{display:flex;justify-content:space-between;align-items:center;gap:.4rem;
                font-size:.72rem;font-family:var(--mono)}
  .role-bid-who em{color:var(--accent2);font-style:normal}
+ .role-bid-who .lede{display:block;font-family:var(--mono)}
+ .role-bid-stale{color:var(--danger)}
  .role-bid-accept-btn{font-size:.65rem;padding:.1rem .4rem;flex-shrink:0}
  .arch-viewer{font-family:var(--mono);font-size:.78rem;padding:.5rem .65rem;border:1px solid var(--border);
               border-radius:8px;margin-bottom:.6rem}
@@ -1008,6 +1010,16 @@ function truncate(s, n) {
   return s.length > n ? s.slice(0, n) + '…' : s;
 }
 
+// Real bid freshness (#382): a compact "Ns/Nm/Nh" duration -- used both for
+// "issued X ago" (server's own seconds_since_issued) and "expires in X"
+// (expires_at vs. wall clock, formatting only, no server-authoritative claim).
+function formatDuration(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
 async function loadRuns() {
   const el = document.getElementById('body-runs');
   el.innerHTML = `
@@ -1395,11 +1407,23 @@ async function renderRolesPanel(id, data) {
       const view = auctionRoles.find(v => v.role === r.tag);
       if (view && view.bids.length) {
         bidListHtml = `<div class="role-bids">
-          ${view.bids.map(b => `
+          ${view.bids.map(b => {
+            // Real freshness, not fabricated: only shown when devsystem-web's own
+            // auction view actually enriched this bid with the real offer's
+            // issued_at/expires_at (it always does for a real signed offer today,
+            // but stay honest about the shape rather than assuming it).
+            const ageHtml = typeof b.seconds_since_issued === 'number' ? ` · issued ${formatDuration(b.seconds_since_issued)} ago` : '';
+            let expiryHtml = '';
+            if (typeof b.expires_at === 'number' && b.expires_at < 4102444800) { // < year 2100 -- treat huge values as "no real expiry"
+              const secondsLeft = b.expires_at - Math.floor(Date.now() / 1000);
+              expiryHtml = secondsLeft > 0 ? ` · expires in ${formatDuration(secondsLeft)}` : ` · <span class="role-bid-stale">expired</span>`;
+            }
+            return `
             <div class="role-bid-row">
-              <span class="role-bid-who">${escapeHtml(b.who)}${b.win ? ' <em>(winning)</em>' : ''} @ ${b.price}</span>
+              <span class="role-bid-who">${escapeHtml(b.who)}${b.win ? ' <em>(winning)</em>' : ''} @ ${b.price}<span class="lede" style="font-size:.7rem">${ageHtml}${expiryHtml}</span></span>
               <button type="button" class="secondary role-bid-accept-btn" data-tag="${escapeHtml(r.tag)}" data-who="${escapeHtml(b.who)}" data-price="${b.price}">Accept directly</button>
-            </div>`).join('')}
+            </div>`;
+          }).join('')}
         </div>`;
       }
     }

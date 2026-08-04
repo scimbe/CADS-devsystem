@@ -1596,8 +1596,35 @@ async fn view_auction(State(state): State<AppState>, AxPath(id): AxPath<String>)
     // not fabricated) -- label by a short hex prefix of the holder pubkey so bids
     // from different holders are at least distinguishable.
     let label = |holder: &[u8; 32]| holder.iter().take(4).map(|b| format!("{b:02x}")).collect::<String>();
+    // RoleBidView (ct_common::pipeline) deliberately doesn't carry issued_at/
+    // expires_at -- devsystem-web already holds the real CapacityOffers it collected
+    // itself, so it enriches its own auction view with real bid freshness rather
+    // than leaving the operator to guess whether a winning bid is fresh or about to
+    // expire. Real groundwork for any future staleness-aware policy (penalize a
+    // non-responsive bidder), not itself an enforcement decision.
+    let freshness_by_label: std::collections::HashMap<String, (u64, u64)> =
+        run_offers.iter().map(|o| (label(&o.holder_pubkey), (o.issued_at, o.expires_at))).collect();
     match spec.auction_view(&run_offers, unix_now(), spec.selection_policy, &mut selection_state, label) {
-        Ok(views) => Json(serde_json::json!({"roles": views})).into_response(),
+        Ok(views) => {
+            let now = unix_now();
+            let mut roles_json = serde_json::to_value(&views).unwrap_or(serde_json::json!([]));
+            if let Some(roles) = roles_json.as_array_mut() {
+                for role in roles {
+                    let Some(bids) = role.get_mut("bids").and_then(|b| b.as_array_mut()) else { continue };
+                    for bid in bids {
+                        let Some(who) = bid.get("who").and_then(|w| w.as_str()).map(str::to_string) else { continue };
+                        if let Some(&(issued_at, expires_at)) = freshness_by_label.get(&who) {
+                            if let Some(obj) = bid.as_object_mut() {
+                                obj.insert("issued_at".to_string(), serde_json::json!(issued_at));
+                                obj.insert("expires_at".to_string(), serde_json::json!(expires_at));
+                                obj.insert("seconds_since_issued".to_string(), serde_json::json!(now.saturating_sub(issued_at)));
+                            }
+                        }
+                    }
+                }
+            }
+            Json(serde_json::json!({"roles": roles_json})).into_response()
+        }
         Err(e) => (StatusCode::OK, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
     }
 }
@@ -3104,6 +3131,12 @@ mod tests {
         assert_eq!(bids.len(), 1);
         assert_eq!(bids[0]["price"], 42);
         assert_eq!(bids[0]["win"], true, "the only qualifying offer must win its role");
+        assert_eq!(bids[0]["issued_at"], 0, "the real offer's own issued_at must be surfaced, not dropped by RoleBidView");
+        assert_eq!(bids[0]["expires_at"], u64::MAX);
+        assert!(
+            bids[0]["seconds_since_issued"].as_u64().unwrap() > 0,
+            "a bid issued at unix time 0 must show real, non-zero staleness right now"
+        );
     }
 
     #[tokio::test]
