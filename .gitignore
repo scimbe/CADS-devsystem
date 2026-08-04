@@ -1,1 +1,6 @@
 target/
+# Real, but a re-fetchable cache of another repo's own content (rag.rs's
+# sync_repo) -- committing it would duplicate that repo's docs here and go
+# stale the moment the source changes. state.json/memory.jsonl (the actual
+# irreplaceable run history) stay committed; this doesn't.
+runs/*/rag_index.json

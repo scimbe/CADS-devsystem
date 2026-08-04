@@ -6,7 +6,9 @@
 //! actually exist on disk and lets a human create new ones -- `webconference-android`
 //! is just the first one, not a hardcoded case anywhere in this file.
 
-use axum::extract::{Path as AxPath, State};
+mod rag;
+
+use axum::extract::{Path as AxPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
 use axum::routing::{get, post};
@@ -94,6 +96,8 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/milestones/{index}/toggle", post(toggle_milestone_handler))
         .route("/api/runs/{id}/repo", post(set_repo_url))
         .route("/api/runs/{id}/roles/{tag}/fill-mode", post(set_role_fill_mode))
+        .route("/api/runs/{id}/rag/sync", post(sync_rag))
+        .route("/api/runs/{id}/rag/search", get(search_rag))
         .route("/api/runs/{id}/offers/submit", post(submit_offer))
         .route("/api/runs/{id}/offers/quick-submit", post(quick_submit_offer))
         .route("/api/runs/{id}/auction", get(view_auction))
@@ -876,6 +880,99 @@ async fn set_role_fill_mode(
         Ok(()) => Json(serde_json::json!({"tag": tag, "fill_mode": run_state.role_fill_modes.get(&tag)})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
     }
+}
+
+fn rag_index_path(state: &AppState, id: &str) -> PathBuf {
+    run_dir(state, id).join("rag_index.json")
+}
+
+/// `POST /api/runs/{id}/rag/sync` (#382 task 29): real fetch + chunk + index of
+/// whatever `RunState.repo_url` currently names, via [`rag::sync_repo`]. Owner-
+/// restricted like every other GUI mutation -- this hits GitHub's real API on the
+/// caller's behalf, a real (if small) cost, not something any signed-in user
+/// should be able to trigger against a run they don't own.
+async fn sync_rag(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let run_state = match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, s)) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let Some(repo_url) = run_state.repo_url.clone() else {
+        return (StatusCode::BAD_REQUEST, "this run has no repo_url set yet -- set one first (POST /api/runs/{id}/repo)").into_response();
+    };
+    match rag::sync_repo(&state.http_client, &repo_url, unix_now()).await {
+        Ok(index) => {
+            let summary = serde_json::json!({
+                "repo_url": index.repo_url,
+                "branch": index.branch,
+                "synced_at": index.synced_at,
+                "files_seen": index.files_seen,
+                "files_indexed": index.files_indexed,
+                "chunks": index.chunks.len(),
+            });
+            match serde_json::to_string_pretty(&index).and_then(|s| Ok(fs::write(rag_index_path(&state, &id), s))) {
+                Ok(Ok(())) => Json(summary).into_response(),
+                Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the index: {e}")).into_response(),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not serialize the index: {e}")).into_response(),
+            }
+        }
+        Err(e) => (StatusCode::BAD_GATEWAY, format!("sync failed: {e}")).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct RagSearchQuery {
+    q: String,
+}
+
+/// `GET /api/runs/{id}/rag/search?q=...` -- real keyword search over whatever the
+/// last `sync_rag` persisted. `configured: false` (not a 404) when nothing has
+/// been synced yet, honestly distinguishing "never synced" from "synced but no
+/// match," the same `null`-vs-`false` honesty precedent `assistant_status` set.
+async fn search_rag(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    Query(q): Query<RagSearchQuery>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let run_state = match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, s)) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let index_path = rag_index_path(&state, &id);
+    if !index_path.exists() {
+        return Json(serde_json::json!({"configured": false, "results": []})).into_response();
+    }
+    let index: rag::RagIndex = match fs::read_to_string(&index_path).ok().and_then(|s| serde_json::from_str(&s).ok()) {
+        Some(i) => i,
+        None => return (StatusCode::INTERNAL_SERVER_ERROR, "could not read the persisted index").into_response(),
+    };
+    let results = rag::search(&index, q.q.trim(), 10);
+    Json(serde_json::json!({
+        "configured": true,
+        "synced_at": index.synced_at,
+        "branch": index.branch,
+        "files_indexed": index.files_indexed,
+        "results": results,
+    }))
+    .into_response()
 }
 
 /// Real offer intake -- the counterpart to CADS-Tunnel core deliberately having no

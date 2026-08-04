@@ -91,7 +91,12 @@ fn build_system_prompt(context: &str) -> String {
          yourself in this version; you only advise what the operator could do next \
          (e.g. which stage to iterate on, whether a risk finding needs attention, \
          whether a milestone looks achievable, whether the run needs a check-in). Be \
-         concise and reference real field values from the state.\n\n\
+         concise and reference real field values from the state. When presenting \
+         structured data with more than two real fields (a status summary, a \
+         comparison, a per-iteration/per-role breakdown), use a real Markdown pipe \
+         table (`| Field | Value |` with a `|---|---|` separator row) instead of an \
+         inline arrow-chain or a loose list -- the GUI renders real tables properly, \
+         not ad-hoc formatting.\n\n\
          Current real run state (JSON):\n{context}"
     )
 }
@@ -331,6 +336,7 @@ mod tests {
         assert!(prompt.contains(context), "the real fetched context must appear verbatim in the prompt");
         assert!(prompt.contains("do NOT execute any action"), "the advice-only boundary must be explicit");
         assert!(prompt.contains("never invent data"), "the no-fabrication instruction must be explicit");
+        assert!(prompt.contains("Markdown pipe table"), "structured-data replies should be steered toward real tables the GUI can actually render");
     }
 
     fn history_entry(iteration: u32, feedback: &str) -> serde_json::Value {
