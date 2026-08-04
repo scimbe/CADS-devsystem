@@ -1581,8 +1581,52 @@ async function renderArchitecturePanel(id, data) {
     </div>`;
   }).join('');
 
-  body.innerHTML = viewerHtml + specHtml + roleRows
+  // Real self-optimizing-pipeline mechanism (#382): the assistant's own
+  // propose_stage action queues one of these; nothing here touches the live
+  // spec above until a human approves it -- same gate as custom panels (#38).
+  const proposals = data.state.pending_stage_proposals || [];
+  const stageProposalsHtml = proposals.length
+    ? `<div class="arch-note" style="margin:.6rem 0 .4rem">Proposed by devsystem.assistant -- review before it becomes a real auction-able role:</div>`
+      + proposals.map(p => `
+        <div class="role-card">
+          <div class="role-card-head"><span class="role">${escapeHtml(p.proposal.tag)}</span></div>
+          <div class="role-meta">${escapeHtml(p.proposal.stage_id)} · units ${p.proposal.units}${p.proposal.use_existing_service ? ` · uses ${escapeHtml(p.proposal.use_existing_service)}` : ''}</div>
+          <div class="lede" style="font-size:.75rem;margin-top:.3rem">${escapeHtml(p.proposal.rationale)}</div>
+          <div style="margin-top:.4rem;display:flex;gap:.4rem">
+            <button type="button" class="panel-proposal-approve-btn" data-id="${p.id}">Approve &amp; add role</button>
+            <button type="button" class="secondary stage-proposal-reject-btn" data-id="${p.id}">Reject</button>
+          </div>
+        </div>`).join('')
+    : '';
+
+  body.innerHTML = viewerHtml + specHtml + roleRows + stageProposalsHtml
     + `<div class="lede" style="font-size:.72rem;margin-top:.4rem">Live backing status and bidding are on the Roles panel.</div>`;
+
+  for (const btn of body.querySelectorAll('.panel-proposal-approve-btn')) {
+    btn.onclick = async () => {
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/stages/proposals/${encodeURIComponent(btn.dataset.id)}/approve`, { method: 'POST' });
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        renderArchitecturePanel(id, fresh);
+        renderRolesPanel(id, fresh);
+      } catch (err) {
+        alert(`Could not approve stage proposal: ${err.message}`);
+      }
+    };
+  }
+  for (const btn of body.querySelectorAll('.stage-proposal-reject-btn')) {
+    btn.onclick = async () => {
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/stages/proposals/${encodeURIComponent(btn.dataset.id)}/reject`, { method: 'POST' });
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        renderArchitecturePanel(id, fresh);
+      } catch (err) {
+        alert(`Could not reject stage proposal: ${err.message}`);
+      }
+    };
+  }
 }
 
 // "Where are we right now" -- operator: "es fehlt immer noch das

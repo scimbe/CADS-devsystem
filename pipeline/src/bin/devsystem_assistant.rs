@@ -114,21 +114,29 @@ fn build_system_prompt(context: &str) -> String {
          when you are actually taking action; omit it entirely otherwise -- never emit \
          an empty or placeholder block):\n\
          {ACTIONS_FENCE_OPEN}\n\
-         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}}]\n\
+         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}}]\n\
          {ACTIONS_FENCE_CLOSE}\n\
          Indices refer to the real state.milestones/state.backlog arrays already shown \
          to you below -- never guess an index you can't see there. Never invent or add \
          a milestone/backlog item the operator didn't actually ask for, and never mark \
          one achieved/done unless the operator told you it's done or clearly confirmed \
-         it. `propose_custom_panel` is different from the other three: it does NOT go \
-         live by itself -- it only queues a real proposal (title + a self-contained \
-         HTML fragment, no <script src> to anything external, it runs sandboxed with no \
-         page/session access) for the operator to review and explicitly approve or \
-         reject in the Custom Panels panel. Use it when the operator actually asks for a \
-         new panel/dashboard/visualization, not speculatively. If a request is \
-         ambiguous, or you're not confident it's safe to act on, say so in prose and ask \
-         instead of emitting an action. You have NO other tool or system access in this \
-         version -- only these five action types against these three kinds of data; for \
+         it. `propose_custom_panel` and `propose_stage` are different from the other \
+         three: neither takes effect by itself. `propose_custom_panel` only queues a \
+         real proposal (title + a self-contained HTML fragment, no <script src> to \
+         anything external, it runs sandboxed with no page/session access) for the \
+         operator to review and explicitly approve or reject in the Custom Panels \
+         panel. `propose_stage` only queues a real StageProposal (the exact same real \
+         mechanism a role-filler agent uses mid-iteration -- see state.spec.roles for \
+         what already exists) for the operator to approve or reject in the Pipeline \
+         panel; `stage_id` should be namespaced `devsystem.*` by convention, `tag` is \
+         the short role tag, `rationale` is the actual reason a human will read. Use \
+         either only when the operator actually asks for a new panel/dashboard or a new \
+         pipeline stage/role, not speculatively -- this is the real self-optimizing-\
+         pipeline mechanism (#382), not a toy, and an unwanted role clutters the real \
+         auction every real bidder sees. If a request is ambiguous, or you're not \
+         confident it's safe to act on, say so in prose and ask instead of emitting an \
+         action. You have NO other tool or system access in this version -- only these \
+         six action types against these four kinds of data; for \
          anything else (e.g. a code change, a GitHub issue, a different panel's data) \
          tell the operator what you'd want to do and let them decide.\n\n\
          Current real run state (JSON):\n{context}"
@@ -150,6 +158,24 @@ enum Action {
     /// the system prompt's own explanation and `RunState::pending_panel_proposals`'s
     /// doc comment (`pipeline/src/runner.rs`) for the trust-model reasoning.
     ProposeCustomPanel { title: String, html: String },
+    /// Also does not take effect immediately -- see `RunState::pending_stage_proposals`'s
+    /// doc comment. `use_existing_service`/`price_ceiling` default to absent so the LLM
+    /// doesn't have to think about fields it has no real opinion on.
+    ProposeStage {
+        stage_id: String,
+        tag: String,
+        rationale: String,
+        #[serde(default)]
+        use_existing_service: Option<String>,
+        #[serde(default = "default_stage_units")]
+        units: u64,
+        #[serde(default)]
+        price_ceiling: Option<u64>,
+    },
+}
+
+fn default_stage_units() -> u64 {
+    1
 }
 
 /// Pulls a trailing ` ```devsystem-actions ... ``` ` block out of the LLM's raw
@@ -207,6 +233,19 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
             format!("propose custom panel \"{title}\" (awaiting your approval in the Custom Panels panel)"),
             format!("{base}/api/runs/{run_id}/panels/propose"),
             serde_json::json!({"title": title, "html": html}),
+            "proposed",
+        ),
+        Action::ProposeStage { stage_id, tag, rationale, use_existing_service, units, price_ceiling } => (
+            format!("propose pipeline stage \"{stage_id}\" (awaiting your approval in the Pipeline panel)"),
+            format!("{base}/api/runs/{run_id}/stages/propose"),
+            serde_json::json!({
+                "stage_id": stage_id,
+                "tag": tag,
+                "rationale": rationale,
+                "use_existing_service": use_existing_service,
+                "units": units,
+                "price_ceiling": price_ceiling,
+            }),
             "proposed",
         ),
     };
@@ -484,11 +523,11 @@ mod tests {
         assert!(prompt.contains("Markdown pipe table"), "structured-data replies should be steered toward real tables the GUI can actually render");
         assert!(prompt.contains(ACTIONS_FENCE_OPEN), "the prompt must teach the LLM the exact action-block contract");
         assert!(
-            prompt.contains("add_milestone") && prompt.contains("toggle_backlog_item") && prompt.contains("propose_custom_panel"),
-            "all five real action types must be documented"
+            prompt.contains("add_milestone") && prompt.contains("toggle_backlog_item") && prompt.contains("propose_custom_panel") && prompt.contains("propose_stage"),
+            "all six real action types must be documented"
         );
-        assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these three data kinds");
-        assert!(prompt.contains("does NOT go live by itself"), "the panel-proposal approval gate must be explicit, not implied");
+        assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these four data kinds");
+        assert!(prompt.contains("neither takes effect by itself"), "the panel/stage-proposal approval gate must be explicit, not implied");
     }
 
     #[test]
@@ -510,8 +549,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_actions_parses_all_five_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"}]\n```";
+    fn extract_actions_parses_all_six_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -522,6 +561,14 @@ mod tests {
                 Action::AddBacklogItem { text: "write tests".to_string() },
                 Action::ToggleBacklogItem { index: 0 },
                 Action::ProposeCustomPanel { title: "Burndown".to_string(), html: "<h2>hi</h2>".to_string() },
+                Action::ProposeStage {
+                    stage_id: "devsystem.android_emulator_test".to_string(),
+                    tag: "android_emulator_test".to_string(),
+                    rationale: "need real emulator coverage".to_string(),
+                    use_existing_service: None,
+                    units: 1,
+                    price_ceiling: None,
+                },
             ]
         );
     }
@@ -607,6 +654,31 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
         assert_eq!(parsed["title"], "Burndown");
         assert_eq!(parsed["html"], "<h2>hi</h2>");
+    }
+
+    #[test]
+    fn apply_action_posts_the_real_propose_stage_request_and_reports_proposed_not_done() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let action = Action::ProposeStage {
+            stage_id: "devsystem.android_emulator_test".to_string(),
+            tag: "android_emulator_test".to_string(),
+            rationale: "need real emulator coverage".to_string(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: None,
+        };
+        let result = apply_action(&client, &addr, "my-run", &action);
+        assert!(result.starts_with("proposed:"), "a stage proposal must never be reported as \"done\" -- it isn't live yet: {result}");
+        assert!(result.contains("awaiting your approval"), "the response must say a human still has to act: {result}");
+        let (method, url, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/stages/propose");
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
+        assert_eq!(parsed["stage_id"], "devsystem.android_emulator_test");
+        assert_eq!(parsed["tag"], "android_emulator_test");
+        assert_eq!(parsed["units"], 1);
+        assert!(parsed["use_existing_service"].is_null());
     }
 
     #[test]

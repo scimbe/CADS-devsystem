@@ -171,6 +171,28 @@ pub struct RunState {
     /// pre-existing `state.json` files (none proposed yet) still load.
     #[serde(default)]
     pub pending_panel_proposals: Vec<PendingPanelProposal>,
+    /// A new pipeline stage/role the assistant has proposed but a human hasn't
+    /// approved yet -- same trust-model pattern as `pending_panel_proposals`, applied
+    /// to the OTHER thing that renders into the live system: a real role real
+    /// role-fillers can auction/bid against. A real role-filler's own mid-iteration
+    /// `StageProposal` (attached to an `IterationRecord`) stays a completely separate
+    /// path (`run_iteration` applies those immediately, unchanged) -- this field is
+    /// specifically for the advisory chat assistant's speculative suggestions, which
+    /// get the same "propose, human approves" gate custom panels do.
+    /// `#[serde(default)]` so pre-existing `state.json` files (none proposed yet)
+    /// still load.
+    #[serde(default)]
+    pub pending_stage_proposals: Vec<PendingStageProposal>,
+}
+
+/// See [`RunState::pending_stage_proposals`]'s doc comment for why this wraps
+/// [`crate::StageProposal`] rather than being applied directly like a real
+/// role-filler's own iteration-time proposal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingStageProposal {
+    pub id: String,
+    pub proposal: crate::StageProposal,
+    pub proposed_at: u64,
 }
 
 /// See [`RunState::pending_panel_proposals`]'s doc comment for why this is a
@@ -202,6 +224,7 @@ impl RunState {
             role_fill_modes: std::collections::HashMap::new(),
             custom_panels: Vec::new(),
             pending_panel_proposals: Vec::new(),
+            pending_stage_proposals: Vec::new(),
         }
     }
 }

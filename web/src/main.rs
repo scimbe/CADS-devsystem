@@ -18,9 +18,10 @@ use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::preflight_annotations;
 use devsystem_pipeline::runner::{
-    load_or_init_run, persist_run, run_iteration, toggle_milestone, BacklogItem, CustomPanel, Milestone, PendingPanelProposal, RoleFillMode, RunOutcome,
+    load_or_init_run, persist_run, run_iteration, toggle_milestone, BacklogItem, CustomPanel, Milestone, PendingPanelProposal, PendingStageProposal, RoleFillMode,
+    RunOutcome,
 };
-use devsystem_pipeline::{AbortCriteria, IterationRecord, StageProposal};
+use devsystem_pipeline::{apply_proposal, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
 use ct_common::pipeline::SelectionState;
 use serde::{Deserialize, Serialize};
@@ -107,6 +108,9 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/panels/propose", post(propose_custom_panel))
         .route("/api/runs/{id}/panels/proposals/{proposal_id}/approve", post(approve_panel_proposal))
         .route("/api/runs/{id}/panels/proposals/{proposal_id}/reject", post(reject_panel_proposal))
+        .route("/api/runs/{id}/stages/propose", post(propose_stage))
+        .route("/api/runs/{id}/stages/proposals/{proposal_id}/approve", post(approve_stage_proposal))
+        .route("/api/runs/{id}/stages/proposals/{proposal_id}/reject", post(reject_stage_proposal))
         .route("/api/runs/{id}/offers/submit", post(submit_offer))
         .route("/api/runs/{id}/offers/quick-submit", post(quick_submit_offer))
         .route("/api/runs/{id}/auction", get(view_auction))
@@ -1331,6 +1335,157 @@ async fn reject_panel_proposal(
     }
 }
 
+#[derive(Deserialize)]
+struct ProposeStageRequest {
+    stage_id: String,
+    tag: String,
+    rationale: String,
+    #[serde(default)]
+    use_existing_service: Option<String>,
+    #[serde(default = "default_units")]
+    units: u64,
+    #[serde(default)]
+    price_ceiling: Option<u64>,
+}
+
+/// `POST /api/runs/{id}/stages/propose` -- the assistant-facing half of the
+/// self-optimizing-pipeline mandate (#382), gated the same way custom panels are
+/// (#38): a real role-filler's own mid-iteration `StageProposal` (attached to a
+/// real `IterationRecord`) still applies immediately via `run_iteration`,
+/// unchanged -- this is specifically for the advisory chat assistant's
+/// speculative suggestions, which never touch the live spec on their own.
+/// `proposed_by` is always "devsystem.assistant" here, never client-supplied --
+/// the accountability trail this field exists for (see `StageProposal`'s own
+/// doc comment) would be meaningless if a caller could claim to be any stage.
+async fn propose_stage(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ProposeStageRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let stage_id = body.stage_id.trim().to_string();
+    let tag = body.tag.trim().to_string();
+    let rationale = body.rationale.trim().to_string();
+    if stage_id.is_empty() || tag.is_empty() || rationale.is_empty() {
+        return (StatusCode::BAD_REQUEST, "stage_id, tag, and rationale must not be empty").into_response();
+    }
+    if body.units == 0 {
+        return (StatusCode::BAD_REQUEST, "units must be at least 1").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let proposal = PendingStageProposal {
+        id: format!("{:016x}", rand::random::<u64>()),
+        proposal: StageProposal {
+            proposed_by: "devsystem.assistant".to_string(),
+            stage_id,
+            tag,
+            rationale,
+            use_existing_service: body.use_existing_service,
+            units: body.units,
+            price_ceiling: body.price_ceiling,
+        },
+        proposed_at: unix_now(),
+    };
+    run_state.pending_stage_proposals.push(proposal.clone());
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(proposal).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/stages/proposals/{proposal_id}/approve` -- applies the
+/// pending proposal to the *live* spec for real, via the exact same
+/// `apply_proposal` a real role-filler's iteration-time proposal goes through
+/// (idempotent: `AlreadyPresent` if some other path already added this
+/// `stage_id`, still removed from pending either way since there's nothing
+/// left to approve).
+async fn approve_stage_proposal(
+    State(state): State<AppState>,
+    AxPath((id, proposal_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (mut spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let Some(pos) = run_state.pending_stage_proposals.iter().position(|p| p.id == proposal_id) else {
+        return (StatusCode::NOT_FOUND, format!("no pending proposal with id {proposal_id:?}")).into_response();
+    };
+    let pending = run_state.pending_stage_proposals.remove(pos);
+    let outcome = apply_proposal(&mut spec, &pending.proposal);
+    if outcome == ProposalOutcome::Added {
+        run_state.added_stages.push(pending.proposal.stage_id.clone());
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({
+            "stage_id": pending.proposal.stage_id,
+            "outcome": if outcome == ProposalOutcome::Added { "added" } else { "already_present" },
+            "roles_now": spec.roles.len(),
+        }))
+        .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/stages/proposals/{proposal_id}/reject` -- discards a
+/// pending stage proposal; the live spec was never touched, so there's nothing
+/// to undo beyond removing it from the pending list.
+async fn reject_stage_proposal(
+    State(state): State<AppState>,
+    AxPath((id, proposal_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let before = run_state.pending_stage_proposals.len();
+    run_state.pending_stage_proposals.retain(|p| p.id != proposal_id);
+    if run_state.pending_stage_proposals.len() == before {
+        return (StatusCode::NOT_FOUND, format!("no pending proposal with id {proposal_id:?}")).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"rejected": proposal_id})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
 /// Real offer intake -- the counterpart to CADS-Tunnel core deliberately having no
 /// live bid-collection endpoint (verified directly against the checkout, not
 /// assumed). Any process, on any host, that holds a real ed25519 key can sign a
@@ -2542,6 +2697,129 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn proposed_stage_never_touches_the_live_spec_until_a_human_approves_it() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "propose-stage-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/propose-stage-run/stages/propose",
+                serde_json::json!({"stage_id": "devsystem.android_emulator_test", "tag": "android_emulator_test", "rationale": "need real emulator coverage"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let proposed = body_json(response).await;
+        assert_eq!(proposed["proposal"]["proposed_by"], "devsystem.assistant", "proposed_by must always be server-set, never client-supplied");
+        let proposal_id = proposed["id"].as_str().unwrap().to_string();
+
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/propose-stage-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["spec"]["roles"].as_array().unwrap().len(), 1, "the live spec must be untouched before approval (still just the default plan role)");
+        assert_eq!(run["state"]["pending_stage_proposals"].as_array().unwrap().len(), 1);
+
+        let approve = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/propose-stage-run/stages/proposals/{proposal_id}/approve")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(approve.status(), SC::OK);
+        let result = body_json(approve).await;
+        assert_eq!(result["outcome"], "added");
+        assert_eq!(result["roles_now"], 2);
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/propose-stage-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["spec"]["roles"].as_array().unwrap().len(), 2, "approval must add the real role to the live spec");
+        assert_eq!(run["state"]["pending_stage_proposals"].as_array().unwrap().len(), 0);
+        assert_eq!(run["state"]["added_stages"], serde_json::json!(["devsystem.android_emulator_test"]));
+    }
+
+    #[tokio::test]
+    async fn approving_a_stage_proposal_for_an_already_present_role_is_idempotent_not_a_duplicate() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "dup-stage-run"}))).await.unwrap();
+
+        // Propose the exact role the default spec already has (devsystem.plan).
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/dup-stage-run/stages/propose",
+                serde_json::json!({"stage_id": "devsystem.plan", "tag": "plan", "rationale": "already exists, testing idempotency"}),
+            ))
+            .await
+            .unwrap();
+        let proposal_id = body_json(response).await["id"].as_str().unwrap().to_string();
+
+        let approve = app
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/dup-stage-run/stages/proposals/{proposal_id}/approve")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let result = body_json(approve).await;
+        assert_eq!(result["outcome"], "already_present");
+        assert_eq!(result["roles_now"], 1, "must not create a duplicate role for the same stage_id");
+    }
+
+    #[tokio::test]
+    async fn rejecting_a_stage_proposal_discards_it_without_ever_touching_the_spec() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "reject-stage-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/reject-stage-run/stages/propose",
+                serde_json::json!({"stage_id": "devsystem.bad_idea", "tag": "bad_idea", "rationale": "nope"}),
+            ))
+            .await
+            .unwrap();
+        let proposal_id = body_json(response).await["id"].as_str().unwrap().to_string();
+
+        let reject = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/reject-stage-run/stages/proposals/{proposal_id}/reject")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(reject.status(), SC::OK);
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/reject-stage-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["spec"]["roles"].as_array().unwrap().len(), 1, "a rejected proposal must never touch the live spec");
+        assert_eq!(run["state"]["pending_stage_proposals"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn propose_stage_rejects_empty_fields_and_zero_units() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "propose-stage-edge-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/propose-stage-edge-run/stages/propose", serde_json::json!({"stage_id": "  ", "tag": "x", "rationale": "y"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/propose-stage-edge-run/stages/propose",
+                serde_json::json!({"stage_id": "devsystem.x", "tag": "x", "rationale": "y", "units": 0}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
     }
 
     #[tokio::test]
