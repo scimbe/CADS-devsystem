@@ -71,6 +71,11 @@ design. Landed so far:
   resource/SaaS/agent catalog, the local git server — all explicitly
   deferred until this flagship run proves the mechanics end to end, per the
   operator's own phased sequencing.
+- ✅ **RAG search** (`web/`, `#7`): real keyword + semantic search + real
+  Unstructured document/image extraction over a run's synced repo and
+  uploaded documents, real Postgres+pgvector storage for the semantic index.
+  See [`docs/rag-search.md`](docs/rag-search.md) for the required environment
+  variables and what degrades honestly when they're unset.
 
 ## What's reused from CADS-Tunnel/ct-agent, unchanged
 
