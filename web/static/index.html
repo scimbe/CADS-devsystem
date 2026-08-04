@@ -23,15 +23,39 @@
  .panel-chip.active{border-color:var(--accent2);color:var(--accent2)}
  .topbar-links{font-size:.72rem;color:var(--muted);white-space:nowrap}
  .topbar-links a{color:var(--accent2)}
- #desktop{position:relative;width:100%;flex:1;overflow:auto;min-height:0}
- /* Process Prompt: docked statically at the bottom, always visible, like a chat
-    input bar -- operator feedback: "die sollte unten statisch eingebunden sein." */
- .prompt-dock{flex-shrink:0;border-top:1px solid var(--border);background:var(--panel);
-              padding:.7rem 1rem;display:flex;justify-content:center}
- .prompt-dock-inner{display:flex;align-items:center;gap:.6rem;width:100%;max-width:56rem;
+ #main-row{flex:1;display:flex;min-height:0}
+ #desktop{position:relative;flex:1;overflow:auto;min-height:0}
+ /* Assistant: a real, fixed dock (not a floating .win) -- operator feedback:
+    "sollte beim start rechts ueber zwei spalten angedockt sein und man kann es
+    nicht ausblenden." No close/hide affordance exists for it anywhere, by
+    construction, rather than a floating panel that happens to be hard to hide. */
+ #assistant-dock{width:38rem;max-width:44vw;flex-shrink:0;display:flex;flex-direction:column;
+                  border-left:1px solid var(--border);background:var(--panel);min-height:0}
+ .assistant-dock-head{flex-shrink:0;display:flex;align-items:center;justify-content:space-between;
+                       padding:.55rem .8rem;border-bottom:1px solid var(--border);font-family:var(--mono);
+                       font-size:.72rem;color:var(--muted);letter-spacing:.03em;text-transform:uppercase}
+ .assistant-dock-run{color:var(--accent2);text-transform:none;letter-spacing:0}
+ .assistant-transcript{flex:1;overflow:auto;padding:.8rem;display:flex;flex-direction:column;gap:.6rem}
+ .assistant-entry{border-radius:8px;padding:.5rem .65rem;font-size:.82rem}
+ .assistant-entry.you{background:#0d1117;border:1px solid var(--border);align-self:flex-end;max-width:88%}
+ .assistant-entry.assistant{background:var(--panel2,#161b22);border:1px solid var(--border);max-width:92%}
+ .assistant-entry.error{background:rgba(229,83,75,.12);border:1px solid var(--danger)}
+ .assistant-role{display:block;font-family:var(--mono);font-size:.65rem;text-transform:uppercase;
+                  letter-spacing:.05em;color:var(--muted);margin-bottom:.25rem}
+ .assistant-text{white-space:pre-wrap;overflow-wrap:anywhere}
+ /* Process Prompt: freestanding and draggable (operator: "freistehend und
+    verschiebbar"), but position:fixed with the highest z-index in the app --
+    not part of the .win floating-panel stack at all, so no maximized/raised
+    panel can ever render above it ("das darf nicht ueberblendet werden").
+    Defaults to bottom-center like a chat input bar; dragging persists a new
+    fixed screen position via the grip handle. */
+ .prompt-dock{position:fixed;left:50%;bottom:1rem;transform:translateX(-50%);z-index:100000;
+              width:min(56rem,calc(100vw - 2rem))}
+ .prompt-dock-inner{display:flex;align-items:center;gap:.6rem;width:100%;
                      background:#0d1117;border:1px solid var(--border);border-radius:10px;
-                     padding:.55rem .9rem;transition:border-color .15s}
+                     padding:.55rem .9rem;box-shadow:0 10px 30px rgba(0,0,0,.45);transition:border-color .15s}
  .prompt-dock-inner:focus-within{border-color:var(--accent2)}
+ .prompt-dock-grip{cursor:move;color:var(--muted);flex-shrink:0;user-select:none;letter-spacing:-1px}
  .prompt-dock-icon{color:var(--accent2);font-family:var(--mono);font-weight:700;flex-shrink:0}
  .process-prompt{font-family:var(--mono);font-size:.85rem;background:transparent;border:none;
                   color:var(--text);flex:1;width:auto;padding:.2rem 0}
@@ -162,11 +186,27 @@
   <a href="https://github.com/scimbe/CADS-Tunnel/issues/382">#382</a>
  </div>
 </div>
-<div id="desktop"></div>
-<div class="prompt-dock">
+<div id="main-row">
+ <div id="desktop"></div>
+ <div id="assistant-dock">
+  <div class="assistant-dock-head">
+   <span>devsystem.assistant</span>
+   <span id="assistant-dock-run" class="assistant-dock-run"></span>
+  </div>
+  <div id="assistant-transcript" class="assistant-transcript">
+   <div class="lede" style="font-size:.78rem">
+    Type anything in the prompt below that isn't a panel command (e.g. "show backlog")
+    and it goes here -- a real, grounded advisory call to devsystem.assistant about the
+    selected run. Advice only: it never changes anything itself.
+   </div>
+  </div>
+ </div>
+</div>
+<div class="prompt-dock" id="prompt-dock">
  <div class="prompt-dock-inner">
+  <span class="prompt-dock-grip" id="prompt-dock-grip" title="drag to reposition">⠿</span>
   <span class="prompt-dock-icon">›</span>
-  <input id="process-prompt-input" class="process-prompt" placeholder="Command… (try: help)" autocomplete="off" spellcheck="false">
+  <input id="process-prompt-input" class="process-prompt" placeholder="Ask devsystem.assistant, or a panel command… (try: help)" autocomplete="off" spellcheck="false">
   <span id="process-prompt-status" class="prompt-status"></span>
  </div>
 </div>
@@ -459,7 +499,9 @@ async function refreshRunsList() {
 }
 
 async function selectRun(id) {
+  const switching = currentRun !== id;
   currentRun = id;
+  if (switching) resetAssistantTranscript(id);
   await refreshRunsList();
   for (const panelId of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code']) {
     document.getElementById(`body-${panelId}`).innerHTML = '<span class="lede">Loading…</span>';
@@ -1210,10 +1252,62 @@ function runCommand(cmdline) {
   }
 
   if (cmd === 'help') {
-    return { ok: true, message: 'show/hide/toggle/max/min/restore <panel> · reset · bind <combo> <cmd> · unbind <combo> · shortcuts' };
+    return { ok: true, message: 'show/hide/toggle/max/min/restore <panel> · reset · bind <combo> <cmd> · unbind <combo> · shortcuts · anything else -> devsystem.assistant' };
   }
 
-  return { ok: false, message: `unknown command: ${cmd} (try: help)` };
+  // Not a recognized panel command -- the real point of this prompt: hand the
+  // whole line to devsystem.assistant as a grounded question about the
+  // selected run (see askAssistant). Fire-and-forget from here: the transcript
+  // dock renders the real reply when it arrives.
+  askAssistant(trimmed);
+  return { ok: true, message: 'Asking devsystem.assistant…' };
+}
+
+// devsystem.assistant: the Process Prompt is the real anchor for talking to the
+// pipeline, not just a panel-command parser (operator: "es ist der anker fuer
+// die kommunikation mit der dev pipeline") -- anything typed there that isn't a
+// recognized panel command goes here as a real, grounded advisory question about
+// whichever run is selected, proxied server-side to a real LLM (devsystem_assistant
+// --serve). Advice only -- it never changes run state itself.
+function resetAssistantTranscript(runId) {
+  const transcript = document.getElementById('assistant-transcript');
+  const label = document.getElementById('assistant-dock-run');
+  if (label) label.textContent = runId ? `re: ${runId}` : '';
+  if (transcript) {
+    transcript.innerHTML = runId
+      ? `<div class="lede" style="font-size:.78rem">Ask anything about <b>${escapeHtml(runId)}</b> in the prompt below.</div>`
+      : `<div class="lede" style="font-size:.78rem">Select a run, then ask about it in the prompt below.</div>`;
+  }
+}
+
+function appendAssistantEntry(role, text) {
+  const transcript = document.getElementById('assistant-transcript');
+  if (!transcript) return;
+  const entry = document.createElement('div');
+  entry.className = `assistant-entry ${role}`;
+  entry.innerHTML = `<span class="assistant-role">${escapeHtml(role)}</span><div class="assistant-text">${escapeHtml(text)}</div>`;
+  transcript.appendChild(entry);
+  transcript.scrollTop = transcript.scrollHeight;
+}
+
+async function askAssistant(instruction) {
+  if (!currentRun) {
+    showPromptStatus({ ok: false, message: 'select a run first -- the assistant needs real run context' });
+    return;
+  }
+  appendAssistantEntry('you', instruction);
+  showPromptStatus({ ok: true, message: 'Asking devsystem.assistant…' });
+  try {
+    const data = await fetchJSON(`${API}/runs/${encodeURIComponent(currentRun)}/assistant`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ instruction })
+    });
+    appendAssistantEntry('assistant', data.response || '(empty response)');
+    showPromptStatus({ ok: true, message: 'devsystem.assistant replied' });
+  } catch (e) {
+    appendAssistantEntry('error', e.message);
+    showPromptStatus({ ok: false, message: e.message });
+  }
 }
 
 function showPromptStatus(result) {
@@ -1234,6 +1328,46 @@ function comboFromEvent(e) {
   return parts.sort().join('+');
 }
 
+const PROMPT_POS_KEY = 'devsystem-prompt-pos-v1';
+
+// Freestanding + draggable via the grip handle, but position:fixed with a
+// z-index above every .win (see CSS) -- it can move anywhere on screen, it
+// just can never end up BEHIND another panel. Position persists like window
+// layout does.
+function wireDockDrag() {
+  const dock = document.getElementById('prompt-dock');
+  const grip = document.getElementById('prompt-dock-grip');
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(PROMPT_POS_KEY) || 'null'); } catch (e) { saved = null; }
+  if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
+    dock.style.left = saved.x + 'px';
+    dock.style.top = saved.y + 'px';
+    dock.style.bottom = 'auto';
+    dock.style.transform = 'none';
+  }
+  grip.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const rect = dock.getBoundingClientRect();
+    const startX = e.clientX, startY = e.clientY;
+    const startLeft = rect.left, startTop = rect.top;
+    dock.style.transform = 'none';
+    dock.style.bottom = 'auto';
+    function onMove(ev) {
+      const x = Math.max(0, Math.min(window.innerWidth - rect.width, startLeft + ev.clientX - startX));
+      const y = Math.max(0, Math.min(window.innerHeight - rect.height, startTop + ev.clientY - startY));
+      dock.style.left = x + 'px';
+      dock.style.top = y + 'px';
+    }
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      try { localStorage.setItem(PROMPT_POS_KEY, JSON.stringify({ x: dock.offsetLeft, y: dock.offsetTop })); } catch (e) { /* storage unavailable */ }
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
 function initProcessPrompt() {
   const input = document.getElementById('process-prompt-input');
   input.addEventListener('keydown', (e) => {
@@ -1242,6 +1376,7 @@ function initProcessPrompt() {
     showPromptStatus(result);
     input.value = '';
   });
+  wireDockDrag();
 
   // Global shortcuts fire only when nothing else is capturing keystrokes (no
   // input/textarea/contenteditable focused, including this prompt itself) --

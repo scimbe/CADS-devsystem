@@ -50,6 +50,14 @@ struct AppState {
     /// control plane has no live bid-collection endpoint to call instead
     /// (verified directly against the current checkout, not assumed).
     offers: Arc<tokio::sync::Mutex<HashMap<String, Vec<CapacityOffer>>>>,
+    /// Base URL of a running `devsystem_assistant --serve` bridge (e.g.
+    /// `http://host.docker.internal:8791` when the assistant runs as a host
+    /// process alongside this container's Docker host -- the real LLM CLI lives
+    /// on the host, not in this container). `None` when unconfigured: the
+    /// assistant panel then reports a clear "not configured" error rather than
+    /// silently doing nothing or fabricating a response.
+    assistant_url: Option<Arc<str>>,
+    http_client: reqwest::Client,
 }
 
 fn unix_now() -> u64 {
@@ -87,6 +95,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/repo", post(set_repo_url))
         .route("/api/runs/{id}/offers/submit", post(submit_offer))
         .route("/api/runs/{id}/auction", get(view_auction))
+        .route("/api/runs/{id}/assistant", post(ask_assistant))
         .with_state(state)
 }
 
@@ -94,7 +103,17 @@ fn api_router(state: AppState) -> Router {
 async fn main() {
     let runs_dir = PathBuf::from(std::env::var("DEVSYSTEM_RUNS_DIR").unwrap_or_else(|_| "runs".to_string()));
     fs::create_dir_all(&runs_dir).expect("create runs dir");
-    let state = AppState { runs_dir: Arc::new(runs_dir), write_lock: Arc::new(tokio::sync::Mutex::new(())), offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())) };
+    let assistant_url: Option<Arc<str>> = std::env::var("DEVSYSTEM_ASSISTANT_URL").ok().filter(|s| !s.trim().is_empty()).map(Arc::from);
+    if assistant_url.is_none() {
+        println!("DEVSYSTEM_ASSISTANT_URL not set -- the Assistant panel will report itself unconfigured");
+    }
+    let state = AppState {
+        runs_dir: Arc::new(runs_dir),
+        write_lock: Arc::new(tokio::sync::Mutex::new(())),
+        offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        assistant_url,
+        http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().expect("build http client"),
+    };
 
     let static_dir = std::env::var("DEVSYSTEM_STATIC_DIR").unwrap_or_else(|_| "web/static".to_string());
 
@@ -676,6 +695,51 @@ async fn view_auction(State(state): State<AppState>, AxPath(id): AxPath<String>)
     }
 }
 
+#[derive(Deserialize)]
+struct AssistantAsk {
+    instruction: String,
+}
+
+/// Proxies to a real `devsystem_assistant --serve` bridge -- a separate process
+/// (possibly a separate host: the real LLM CLI + its auth live wherever an
+/// operator has them, not necessarily co-located with this container). This
+/// handler never calls an LLM itself and never fabricates a response: with no
+/// bridge configured, or if the bridge is unreachable, it says so plainly.
+async fn ask_assistant(State(state): State<AppState>, AxPath(id): AxPath<String>, Json(body): Json<AssistantAsk>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if body.instruction.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "instruction is required"}))).into_response();
+    }
+    let Some(assistant_url) = state.assistant_url.clone() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "devsystem.assistant is not configured on this deployment (DEVSYSTEM_ASSISTANT_URL unset)"})),
+        )
+            .into_response();
+    };
+    let url = format!("{}/ask", assistant_url.trim_end_matches('/'));
+    let resp = state
+        .http_client
+        .post(&url)
+        .json(&serde_json::json!({"run_id": id, "instruction": body.instruction}))
+        .send()
+        .await;
+    match resp {
+        Ok(r) => {
+            let status = StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+            let text = r.text().await.unwrap_or_else(|e| serde_json::json!({"error": format!("could not read assistant response body: {e}")}).to_string());
+            (status, [(axum::http::header::CONTENT_TYPE, "application/json")], text).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"error": format!("could not reach devsystem.assistant bridge at {url}: {e}")})),
+        )
+            .into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -684,8 +748,18 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_state() -> (AppState, tempfile::TempDir) {
+        test_state_with_assistant(None)
+    }
+
+    fn test_state_with_assistant(assistant_url: Option<&str>) -> (AppState, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let state = AppState { runs_dir: Arc::new(dir.path().to_path_buf()), write_lock: Arc::new(tokio::sync::Mutex::new(())), offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())) };
+        let state = AppState {
+            runs_dir: Arc::new(dir.path().to_path_buf()),
+            write_lock: Arc::new(tokio::sync::Mutex::new(())),
+            offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            assistant_url: assistant_url.map(Arc::from),
+            http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().expect("build http client"),
+        };
         (state, dir)
     }
 
@@ -1311,7 +1385,13 @@ mod tests {
         fs::create_dir_all(&runs_dir).unwrap();
         fs::write(dir.path().join("state.json"), r#"{"run_id":"OUTSIDE","consecutive_failures":0,"history":[],"added_stages":[],"criteria":{"max_iterations":20,"max_consecutive_failures":3,"checkin_every":5}}"#).unwrap();
 
-        let state = AppState { runs_dir: Arc::new(runs_dir), write_lock: Arc::new(tokio::sync::Mutex::new(())), offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())) };
+        let state = AppState {
+            runs_dir: Arc::new(runs_dir),
+            write_lock: Arc::new(tokio::sync::Mutex::new(())),
+            offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            assistant_url: None,
+            http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().expect("build http client"),
+        };
         let app = api_router(state);
 
         for uri in ["/api/runs/..", "/api/runs/../checkin", "/api/runs/../memory"] {
@@ -1475,5 +1555,116 @@ mod tests {
         let bids = body["roles"][0]["bids"].as_array().unwrap();
         assert_eq!(bids.len(), 1, "the same holder resubmitting must replace, not accumulate, its offer");
         assert_eq!(bids[0]["price"], 20, "the latest resubmission's price must be the one in effect");
+    }
+
+    /// A real mock `devsystem_assistant --serve` bridge -- a tiny axum server
+    /// bound to an OS-assigned localhost port, not a hand-waved fixture. Returns
+    /// the port so tests can point `AppState.assistant_url` at it, and a
+    /// receiver that yields the exact JSON body the real handler forwarded.
+    async fn spawn_mock_assistant(
+        status: StatusCode,
+        response_body: serde_json::Value,
+    ) -> (u16, tokio::sync::oneshot::Receiver<serde_json::Value>) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let tx = Arc::new(std::sync::Mutex::new(Some(tx)));
+        let mock_app = Router::new().route(
+            "/ask",
+            post(move |Json(body): Json<serde_json::Value>| {
+                let tx = tx.clone();
+                let status = status;
+                let response_body = response_body.clone();
+                async move {
+                    if let Some(sender) = tx.lock().expect("mock mutex poisoned").take() {
+                        let _ = sender.send(body);
+                    }
+                    (status, Json(response_body))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind mock listener");
+        let port = listener.local_addr().expect("local addr").port();
+        tokio::spawn(async move {
+            axum::serve(listener, mock_app).await.expect("serve mock");
+        });
+        (port, rx)
+    }
+
+    #[tokio::test]
+    async fn assistant_reports_unconfigured_bridge_honestly_not_silently() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "asst-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/asst-run/assistant", serde_json::json!({"instruction": "what's the status?"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::SERVICE_UNAVAILABLE);
+        let body = body_json(response).await;
+        assert!(body["error"].as_str().unwrap().contains("not configured"));
+    }
+
+    #[tokio::test]
+    async fn assistant_rejects_an_empty_instruction() {
+        let (state, _dir) = test_state_with_assistant(Some("http://127.0.0.1:1"));
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "asst-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/asst-run/assistant", serde_json::json!({"instruction": "   "})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn assistant_proxies_a_real_request_and_relays_the_real_reply() {
+        let (port, rx) = spawn_mock_assistant(StatusCode::OK, serde_json::json!({"response": "iteration 12 succeeded; nothing needs attention"})).await;
+        let (state, _dir) = test_state_with_assistant(Some(&format!("http://127.0.0.1:{port}")));
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "asst-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/asst-run/assistant", serde_json::json!({"instruction": "anything need attention?"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["response"], "iteration 12 succeeded; nothing needs attention");
+
+        let forwarded = rx.await.expect("mock received a request");
+        assert_eq!(forwarded["run_id"], "asst-run", "the real selected run_id must reach the bridge");
+        assert_eq!(forwarded["instruction"], "anything need attention?");
+    }
+
+    #[tokio::test]
+    async fn assistant_relays_the_bridges_own_error_status_and_body() {
+        let (port, _rx) = spawn_mock_assistant(StatusCode::TOO_MANY_REQUESTS, serde_json::json!({"error": "too many requests for this run -- wait a few seconds"})).await;
+        let (state, _dir) = test_state_with_assistant(Some(&format!("http://127.0.0.1:{port}")));
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "asst-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/asst-run/assistant", serde_json::json!({"instruction": "again, right away"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::TOO_MANY_REQUESTS);
+        let body = body_json(response).await;
+        assert!(body["error"].as_str().unwrap().contains("too many requests"));
+    }
+
+    #[tokio::test]
+    async fn assistant_reports_an_unreachable_bridge_as_bad_gateway_not_a_fabricated_reply() {
+        // Port 1 is a privileged, unassigned port -- nothing is listening, and a
+        // non-root test process can never bind it, so the connection reliably fails.
+        let (state, _dir) = test_state_with_assistant(Some("http://127.0.0.1:1"));
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "asst-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/asst-run/assistant", serde_json::json!({"instruction": "hello?"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_GATEWAY);
     }
 }
