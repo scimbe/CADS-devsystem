@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Development System -- control panel</title>
+<style>
+ :root{--bg:#0d1117;--panel:#141b24;--border:#242c38;--text:#e6edf3;--muted:#8b949e;
+       --accent:#d98a4f;--accent-ink:#20130a;--accent2:#5fb8ab;--danger:#e5534b;
+       --mono:ui-monospace,"SF Mono",Consolas,monospace;--serif:ui-serif,Georgia,serif}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--serif);line-height:1.5}
+ .wrap{max-width:960px;margin:0 auto;padding:2rem 1.25rem 4rem}
+ header{margin-bottom:2rem}
+ .eyebrow{font-family:var(--mono);font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
+ h1{font-size:1.9rem;margin:.3rem 0 .5rem}
+ h2{font-size:1.15rem;margin:0 0 .75rem;font-family:var(--mono)}
+ .lede{color:var(--muted);max-width:60ch}
+ .layout{display:grid;grid-template-columns:260px 1fr;gap:1.5rem;align-items:start}
+ @media (max-width:800px){.layout{grid-template-columns:1fr}}
+ .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:1.1rem}
+ .runs{display:flex;flex-direction:column;gap:.5rem;margin-bottom:1rem}
+ .run-item{display:block;width:100%;text-align:left;background:transparent;border:1px solid var(--border);
+           border-radius:8px;padding:.6rem .8rem;color:var(--text);cursor:pointer;font-family:var(--mono);font-size:.85rem}
+ .run-item:hover{border-color:var(--accent)}
+ .run-item.active{border-color:var(--accent2);background:rgba(95,184,171,.08)}
+ .run-item .meta{color:var(--muted);font-size:.75rem;margin-top:.2rem}
+ form.inline{display:flex;gap:.4rem}
+ input,textarea,select{background:#0d1117;border:1px solid var(--border);border-radius:6px;color:var(--text);
+        padding:.45rem .6rem;font-family:var(--mono);font-size:.85rem;width:100%}
+ textarea{min-height:5rem;resize:vertical}
+ label{display:block;font-size:.78rem;color:var(--muted);margin:.7rem 0 .25rem;font-family:var(--mono)}
+ button{background:var(--accent);color:var(--accent-ink);border:none;border-radius:6px;padding:.5rem .9rem;
+        font-weight:700;font-family:var(--mono);font-size:.82rem;cursor:pointer}
+ button:hover{filter:brightness(1.08)}
+ button.secondary{background:transparent;border:1px solid var(--border);color:var(--text)}
+ .roles{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:1rem}
+ .role{font-family:var(--mono);font-size:.75rem;background:rgba(95,184,171,.12);color:var(--accent2);
+       border-radius:5px;padding:.15rem .5rem}
+ .history{display:flex;flex-direction:column;gap:.6rem;max-height:22rem;overflow-y:auto}
+ .iter{border:1px solid var(--border);border-radius:8px;padding:.65rem .8rem;font-size:.85rem}
+ .iter .head{font-family:var(--mono);font-size:.75rem;color:var(--muted);display:flex;justify-content:space-between}
+ .ok{color:var(--accent2)}
+ .fail{color:var(--danger)}
+ .status-line{font-family:var(--mono);font-size:.82rem;color:var(--muted);margin-top:.6rem;min-height:1.2em}
+ .status-line.ok{color:var(--accent2)}
+ .status-line.err{color:var(--danger)}
+ pre.checkin{white-space:pre-wrap;font-family:var(--mono);font-size:.8rem;background:#0d1117;
+             border:1px solid var(--border);border-radius:8px;padding:1rem;max-height:24rem;overflow:auto}
+ code{background:#0d1117;border:1px solid var(--border);border-radius:5px;padding:.1rem .35rem;font-size:.9em;font-family:var(--mono)}
+ footer{margin-top:2rem;color:var(--muted);font-size:.8rem}
+ footer a{color:var(--accent2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+ <header>
+  <div class="eyebrow">CADS-Tunnel #382 · live control panel</div>
+  <h1>The Development System</h1>
+  <p class="lede">Every action below calls the same <code>devsystem-pipeline</code> library functions the
+   CLI tools use -- this is a real control surface, not a status mockup. The pipeline mechanism is
+   project-agnostic: any run below is just <code>runs/&lt;id&gt;/</code> data in git, nothing hardcoded.</p>
+ </header>
+
+ <div class="layout">
+  <div class="panel">
+   <h2>Runs</h2>
+   <div id="runs" class="runs"><span class="lede">Loading…</span></div>
+   <label>New run id</label>
+   <form class="inline" id="create-form">
+    <input id="new-run-id" placeholder="e.g. my-other-project" pattern="[A-Za-z0-9_\-]+" required>
+    <button type="submit">+</button>
+   </form>
+   <div id="create-status" class="status-line"></div>
+  </div>
+
+  <div class="panel" id="run-detail">
+   <p class="lede">Select a run on the left, or create a new one.</p>
+  </div>
+ </div>
+
+ <footer>
+  <a href="https://github.com/scimbe/CADS-devsystem">Coordination repo</a> ·
+  <a href="https://github.com/scimbe/CADS-Tunnel/issues/382">Proposal (#382)</a>
+ </footer>
+</div>
+
+<script>
+const API = '/api';
+let currentRun = null;
+
+async function fetchJSON(url, opts) {
+  const res = await fetch(url, opts);
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error((body && (body.error || JSON.stringify(body))) || res.statusText);
+  return body;
+}
+
+async function loadRuns() {
+  const el = document.getElementById('runs');
+  try {
+    const runs = await fetchJSON(`${API}/runs`);
+    if (!runs.length) {
+      el.innerHTML = '<span class="lede">No runs yet -- create one below.</span>';
+      return;
+    }
+    el.innerHTML = '';
+    for (const r of runs) {
+      const btn = document.createElement('button');
+      btn.className = 'run-item' + (r.run_id === currentRun ? ' active' : '');
+      btn.innerHTML = `${r.run_id}<div class="meta">${r.iterations} iteration(s) · ${r.roles} role(s)</div>`;
+      btn.onclick = () => selectRun(r.run_id);
+      el.appendChild(btn);
+    }
+  } catch (e) {
+    el.innerHTML = `<span class="status-line err">${e.message}</span>`;
+  }
+}
+
+async function selectRun(id) {
+  currentRun = id;
+  await loadRuns();
+  const detail = document.getElementById('run-detail');
+  detail.innerHTML = '<span class="lede">Loading…</span>';
+  try {
+    const data = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+    renderRunDetail(id, data);
+  } catch (e) {
+    detail.innerHTML = `<span class="status-line err">${e.message}</span>`;
+  }
+}
+
+function renderRunDetail(id, data) {
+  const detail = document.getElementById('run-detail');
+  const roles = data.spec.roles.map(r => `<span class="role">${r.tag}</span>`).join('');
+  const history = [...data.state.history].reverse().map(h => `
+    <div class="iter">
+      <div class="head"><span>iteration ${h.iteration} · ${h.stage}</span>
+        <span class="${h.succeeded ? 'ok' : 'fail'}">${h.succeeded ? 'ok' : 'FAILED'}</span></div>
+      <div>${escapeHtml(h.feedback)}</div>
+    </div>`).join('') || '<span class="lede">No iterations yet.</span>';
+
+  detail.innerHTML = `
+    <h2>${id}</h2>
+    <div class="roles">${roles}</div>
+
+    <label>New iteration -- stage</label>
+    <select id="it-stage">
+      <option value="devsystem.plan">plan</option>
+      <option value="devsystem.test">test</option>
+      <option value="devsystem.implement" selected>implement</option>
+      <option value="devsystem.review">review</option>
+      <option value="devsystem.verify">verify</option>
+      <option value="devsystem.remember">remember</option>
+      <option value="devsystem.improve">improve</option>
+    </select>
+    <label>Feedback (what this stage found)</label>
+    <textarea id="it-feedback" placeholder="Real, honest account of what happened this iteration…"></textarea>
+    <label><input type="checkbox" id="it-succeeded" checked style="width:auto"> succeeded</label>
+    <div style="margin-top:.6rem;display:flex;gap:.5rem">
+      <button id="submit-iter">Submit iteration</button>
+      <button class="secondary" id="view-checkin">View check-in</button>
+    </div>
+    <div id="iter-status" class="status-line"></div>
+    <div id="checkin-view"></div>
+
+    <h2 style="margin-top:1.5rem">History</h2>
+    <div class="history">${history}</div>
+  `;
+
+  document.getElementById('submit-iter').onclick = () => submitIteration(id);
+  document.getElementById('view-checkin').onclick = () => viewCheckin(id);
+}
+
+async function submitIteration(id) {
+  const status = document.getElementById('iter-status');
+  const stage = document.getElementById('it-stage').value;
+  const feedback = document.getElementById('it-feedback').value.trim();
+  const succeeded = document.getElementById('it-succeeded').checked;
+  if (!feedback) { status.textContent = 'Feedback is required.'; status.className = 'status-line err'; return; }
+  status.textContent = 'Submitting…'; status.className = 'status-line';
+  try {
+    const result = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/iterate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ stage, feedback, succeeded, proposals: [] })
+    });
+    status.textContent = `Iteration ${result.iteration} recorded -- outcome: ${result.outcome}, roles now ${result.roles_now}.`;
+    status.className = 'status-line ok';
+    await selectRun(id);
+  } catch (e) {
+    status.textContent = e.message; status.className = 'status-line err';
+  }
+}
+
+async function viewCheckin(id) {
+  const view = document.getElementById('checkin-view');
+  view.innerHTML = '<span class="lede">Loading…</span>';
+  try {
+    const data = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/checkin`);
+    view.innerHTML = `<pre class="checkin">${escapeHtml(data.markdown)}</pre>`;
+  } catch (e) {
+    view.innerHTML = `<span class="status-line err">${e.message}</span>`;
+  }
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.getElementById('create-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const status = document.getElementById('create-status');
+  const run_id = document.getElementById('new-run-id').value.trim();
+  status.textContent = 'Creating…'; status.className = 'status-line';
+  try {
+    await fetchJSON(`${API}/runs`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ run_id })
+    });
+    status.textContent = `Created ${run_id}.`; status.className = 'status-line ok';
+    document.getElementById('new-run-id').value = '';
+    await selectRun(run_id);
+  } catch (e) {
+    status.textContent = e.message; status.className = 'status-line err';
+  }
+});
+
+loadRuns();
+</script>
+</body>
+</html>

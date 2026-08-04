@@ -1,0 +1,18 @@
+[package]
+name = "devsystem-web"
+version = "0.1.0"
+edition = "2021"
+description = "Real interactive control surface for The Development System's pipeline runs (#382) -- lists runs, shows live spec/history, and lets a human submit a real iteration/proposal through the browser instead of only via CLI. Every request goes through the exact same devsystem-pipeline library functions the CLI tools use -- no separate logic path."
+
+[[bin]]
+name = "devsystem-web"
+path = "src/main.rs"
+
+[dependencies]
+devsystem-pipeline = { path = "../pipeline" }
+ct-common = { git = "https://github.com/scimbe/CADS-Tunnel", tag = "v0.4.13" }
+axum = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
+tower-http = { version = "0.5", features = ["fs", "cors"] }

@@ -117,6 +117,22 @@
         }
       ],
       "succeeded": true
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.improve",
+      "iteration": 8,
+      "feedback": "real API smoke test: submitted via the new devsystem-web GUI backend, not the CLI -- proving the browser-driven path actually mutates the live pipeline spec the same way devsystem_iterate does.",
+      "proposals": [],
+      "succeeded": true
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.review",
+      "iteration": 9,
+      "feedback": "Real Playwright UI test: submitted through the actual rendered page, not curl -- proving a human can drive the pipeline through this GUI.",
+      "proposals": [],
+      "succeeded": true
     }
   ],
   "added_stages": [
