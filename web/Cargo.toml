@@ -39,6 +39,21 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # --seed N` by hand, so a human can bid a role from the GUI, not just the CLI.
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
+# Real Postgres+pgvector storage for RAG semantic search (CADS-devsystem#7,
+# operator-directed switch from the earlier embedded-only approach --
+# rustls to match every other TLS dep in this crate, not the default
+# native-tls). Pinned to 0.9 (not 0.8) to match the sqlx-core version
+# pgvector 0.4's own "sqlx" feature actually pulls in -- 0.8 resolved a
+# genuinely duplicate sqlx-core in the dependency tree, a real build error
+# (pgvector::Vector implementing Encode/Type against the 0.9 sqlx-core,
+# every query in this module binding against the 0.8 one), not a style choice.
+# sqlx 0.9 split the old combined "runtime-tokio-rustls" feature into
+# separate runtime/tls flags -- "runtime-tokio" + "tls-rustls", matching
+# every other rustls-backed dep in this crate.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate"] }
+# sqlx integration for pgvector's `vector` column type -- real typed
+# encode/decode, not hand-rolled SQL string formatting of a Vec<f32>.
+pgvector = { version = "0.4", features = ["sqlx"] }
 
 [dev-dependencies]
 # Drives the real `api_router()` in-process via `ServiceExt::oneshot` -- no network

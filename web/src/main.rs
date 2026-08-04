@@ -7,6 +7,7 @@
 //! is just the first one, not a hardcoded case anywhere in this file.
 
 mod rag;
+mod vector_store;
 
 use axum::extract::{Path as AxPath, Query, State};
 use axum::http::StatusCode;
@@ -82,6 +83,12 @@ struct AppState {
     /// `RAG_UNSTRUCTURED_API_BASE` at startup, defaulting to the real hosted
     /// `api.unstructured.io`.
     rag_unstructured_api_base: Arc<str>,
+    /// Real Postgres+pgvector pool for RAG semantic search
+    /// (`vector_store::semantic_search`), `DATABASE_URL` at startup --
+    /// `None` when unconfigured, same honest-degrade contract as the other
+    /// two RAG credentials: `search_rag` falls back to the embedded/JSON
+    /// semantic search path rather than erroring.
+    rag_db_pool: Option<sqlx::PgPool>,
 }
 
 fn unix_now() -> u64 {
@@ -225,6 +232,25 @@ async fn main() {
         .filter(|s| !s.trim().is_empty())
         .map(Arc::from)
         .unwrap_or_else(|| Arc::from("https://api.unstructured.io"));
+    // Real, not best-effort: if DATABASE_URL is set, this deployment is
+    // declaring it wants real Postgres-backed semantic search, so a real
+    // connect/migrate failure here is a real startup error, not something to
+    // silently degrade past -- unlike the other RAG credentials, an unset
+    // DATABASE_URL (rag_db_pool: None) is the honest "not configured" case;
+    // a *set-but-broken* one should fail loudly at boot, not at the first
+    // real search request.
+    let rag_db_pool: Option<sqlx::PgPool> = match std::env::var("DATABASE_URL").ok().filter(|s| !s.trim().is_empty()) {
+        Some(url) => {
+            let pool = vector_store::connect(&url).await.expect("connect to DATABASE_URL");
+            vector_store::run_migrations(&pool).await.expect("run RAG vector_store migrations");
+            println!("DATABASE_URL configured -- RAG semantic search backed by real Postgres+pgvector");
+            Some(pool)
+        }
+        None => {
+            println!("DATABASE_URL not set -- RAG semantic search stays on the embedded/JSON-index path");
+            None
+        }
+    };
     let state = AppState {
         runs_dir: Arc::new(runs_dir),
         write_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -235,6 +261,7 @@ async fn main() {
         rag_embedding_api_base,
         rag_unstructured_api_key,
         rag_unstructured_api_base,
+        rag_db_pool,
     };
 
     let static_dir = std::env::var("DEVSYSTEM_STATIC_DIR").unwrap_or_else(|_| "web/static".to_string());
@@ -996,6 +1023,40 @@ async fn embed_index_in_place(state: &AppState, index: &mut rag::RagIndex) {
     }
 }
 
+/// Mirrors the current in-memory `index` into real Postgres (when
+/// `DATABASE_URL` is configured), source-kind by source-kind so
+/// [`vector_store::replace_chunks`]'s wholesale-replace semantics apply
+/// independently to repo-synced chunks vs. manual/uploaded documents --
+/// re-syncing a repo must not wipe uploaded documents from Postgres either,
+/// the same real invariant `sync_rag`'s own JSON-index splicing already
+/// protects. A real Postgres write failure is logged, never panics or fails
+/// the caller's request: Postgres here is a real second index alongside the
+/// JSON one, not (yet) the sole source of truth, so a transient DB error
+/// degrades to "semantic search via Postgres missed this update," not "the
+/// whole upload/sync failed."
+async fn sync_vector_store(state: &AppState, run_id: &str, index: &rag::RagIndex) {
+    let Some(pool) = &state.rag_db_pool else {
+        return;
+    };
+    let now = unix_now() as i64;
+    let repo_chunks: Vec<vector_store::ChunkToStore> = index
+        .chunks
+        .iter()
+        .map(|c| vector_store::ChunkToStore { path: c.path.clone(), chunk_index: c.index as i32, text: c.text.clone(), embedding: c.embedding.clone() })
+        .collect();
+    if let Err(e) = vector_store::replace_chunks(pool, run_id, "repo_sync", &repo_chunks, now).await {
+        eprintln!("devsystem-web: could not mirror repo-synced chunks into Postgres for run {run_id}: {e}");
+    }
+    let manual_chunks: Vec<vector_store::ChunkToStore> = index
+        .manual_documents
+        .iter()
+        .map(|d| vector_store::ChunkToStore { path: d.path.clone(), chunk_index: 0, text: d.text.clone(), embedding: d.embedding.clone() })
+        .collect();
+    if let Err(e) = vector_store::replace_chunks(pool, run_id, "manual_document", &manual_chunks, now).await {
+        eprintln!("devsystem-web: could not mirror manual documents into Postgres for run {run_id}: {e}");
+    }
+}
+
 /// `POST /api/runs/{id}/rag/sync` (#382 task 29): real fetch + chunk + index of
 /// whatever `RunState.repo_url` currently names, via [`rag::sync_repo`]. Owner-
 /// restricted like every other GUI mutation -- this hits GitHub's real API on the
@@ -1027,6 +1088,7 @@ async fn sync_rag(State(state): State<AppState>, AxPath(id): AxPath<String>, hea
         Ok(mut index) => {
             index.manual_documents = existing_manual;
             embed_index_in_place(&state, &mut index).await;
+            sync_vector_store(&state, &id, &index).await;
             let summary = serde_json::json!({
                 "repo_url": index.repo_url,
                 "branch": index.branch,
@@ -1090,7 +1152,34 @@ async fn search_rag(
         },
         None => None,
     };
-    let results = rag::combined_search(&index, q.q.trim(), query_embedding.as_deref(), 10);
+    let mut results = rag::combined_search(&index, q.q.trim(), query_embedding.as_deref(), 10);
+    // Real Postgres semantic search, additive to the embedded/JSON path
+    // above -- when both are configured, Postgres is the real source of
+    // truth for "closest embedding" (a real ANN index, not a brute-force
+    // scan of whatever's in this request's in-memory RagIndex), but a
+    // Postgres error degrades to whatever the embedded path already found
+    // rather than failing the whole search.
+    if let (Some(pool), Some(qe)) = (&state.rag_db_pool, &query_embedding) {
+        match vector_store::semantic_search(pool, &id, qe, 10).await {
+            Ok(hits) => {
+                for hit in hits {
+                    let snippet: String = hit.text.trim().chars().take(400).collect();
+                    let score = (hit.score * 100.0).round() as u32;
+                    match results.iter_mut().find(|r| r.path == hit.path && r.snippet == snippet) {
+                        Some(existing) if score > existing.score => {
+                            existing.score = score;
+                            existing.match_kind = rag::MatchKind::Semantic;
+                        }
+                        Some(_) => {}
+                        None => results.push(rag::RagSearchResult { path: hit.path, score, snippet, match_kind: rag::MatchKind::Semantic }),
+                    }
+                }
+                results.sort_by(|a, b| b.score.cmp(&a.score));
+                results.truncate(10);
+            }
+            Err(e) => eprintln!("devsystem-web: real Postgres semantic search failed for run {id}, falling back to the embedded results already found: {e}"),
+        }
+    }
     // Metadata only (id/path/added_at) -- the real text is only ever returned
     // via a search match's snippet, not the management listing, so the GUI's
     // document list doesn't have to fetch (and the network doesn't have to
@@ -1168,6 +1257,7 @@ async fn add_rag_document(
     let doc = rag::RagDocument { id: format!("{:016x}", rand::random::<u64>()), path, text: body.text, added_at: unix_now(), embedding: None };
     index.manual_documents.push(doc.clone());
     embed_index_in_place(&state, &mut index).await;
+    sync_vector_store(&state, &id, &index).await;
     match persist_rag_index(&state, &id, &index) {
         Ok(()) => Json(serde_json::json!({"id": doc.id, "path": doc.path, "added_at": doc.added_at})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the index: {e}")).into_response(),
@@ -1254,6 +1344,7 @@ async fn upload_rag_file(State(state): State<AppState>, AxPath(id): AxPath<Strin
     let doc = rag::RagDocument { id: format!("{:016x}", rand::random::<u64>()), path: filename, text, added_at: unix_now(), embedding: None };
     index.manual_documents.push(doc.clone());
     embed_index_in_place(&state, &mut index).await;
+    sync_vector_store(&state, &id, &index).await;
     match persist_rag_index(&state, &id, &index) {
         Ok(()) => Json(serde_json::json!({
             "id": doc.id,
@@ -1294,10 +1385,16 @@ async fn remove_rag_document(
     let Some(mut index) = load_rag_index(&state, &id) else {
         return (StatusCode::NOT_FOUND, "no RAG index for this run yet").into_response();
     };
+    let removed_path = index.manual_documents.iter().find(|d| d.id == doc_id).map(|d| d.path.clone());
     let before = index.manual_documents.len();
     index.manual_documents.retain(|d| d.id != doc_id);
     if index.manual_documents.len() == before {
         return (StatusCode::NOT_FOUND, format!("no manual document with id {doc_id:?}")).into_response();
+    }
+    if let (Some(pool), Some(path)) = (&state.rag_db_pool, &removed_path) {
+        if let Err(e) = vector_store::delete_by_path(pool, &id, "manual_document", path).await {
+            eprintln!("devsystem-web: could not remove {path:?} from Postgres for run {id}: {e}");
+        }
     }
     match persist_rag_index(&state, &id, &index) {
         Ok(()) => Json(serde_json::json!({"removed": doc_id})).into_response(),
@@ -1895,6 +1992,7 @@ mod tests {
             rag_embedding_api_base: Arc::from("https://api.openai.com/v1"),
             rag_unstructured_api_key: None,
             rag_unstructured_api_base: Arc::from("https://api.unstructured.io"),
+            rag_db_pool: None,
         };
         (state, dir)
     }
@@ -3208,6 +3306,7 @@ mod tests {
             rag_embedding_api_base: Arc::from("https://api.openai.com/v1"),
             rag_unstructured_api_key: None,
             rag_unstructured_api_base: Arc::from("https://api.unstructured.io"),
+            rag_db_pool: None,
         };
         let app = api_router(state);
 
