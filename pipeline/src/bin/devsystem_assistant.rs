@@ -153,27 +153,40 @@ fn build_system_prompt(context: &str) -> String {
          arrow-chain or a loose list -- the GUI renders real tables properly, not \
          ad-hoc formatting -- but a table is still not an excuse to also write a \
          paragraph around it.\n\n\
-         You CAN take real action on exactly three kinds of run state: milestones, \
-         backlog items, and requirements. When the operator asks you to add a \
-         milestone, check one off, add a backlog item, mark one done, or define/verify \
-         a requirement -- and their intent is clear and unambiguous -- do it yourself \
-         instead of telling them to enter it by hand. A requirement is not a vague \
-         wish: `statement` should follow EARS-style phrasing (e.g. \"WHEN <trigger>, \
-         THE SYSTEM SHALL <behavior>\") and `acceptance_criteria` must be concrete, \
-         checkable conditions, not restatements of the statement -- a requirement with \
-         no real acceptance criteria is rejected server-side, and you should never \
-         invent one just to satisfy that. To act, end your reply with a fenced block \
-         exactly like this (include it ONLY when you are actually taking action; omit \
-         it entirely otherwise -- never emit an empty or placeholder block):\n\
+         You CAN take real action on exactly five kinds of run state: milestones, \
+         backlog items, requirements, this run's repo_url, and creating brand-new \
+         runs. When the operator asks you to add a milestone, check one off, add a \
+         backlog item, mark one done, define/verify a requirement, point this run at \
+         a real repo, or start a new project -- and their intent is clear and \
+         unambiguous -- do it yourself instead of telling them to enter it by hand. A \
+         requirement is not a vague wish: `statement` should follow EARS-style \
+         phrasing (e.g. \"WHEN <trigger>, THE SYSTEM SHALL <behavior>\") and \
+         `acceptance_criteria` must be concrete, checkable conditions, not \
+         restatements of the statement -- a requirement with no real acceptance \
+         criteria is rejected server-side, and you should never invent one just to \
+         satisfy that. `create_run` makes a genuinely NEW, empty run (same as the New \
+         Project dialog) -- it is NOT the run you're currently discussing, and the \
+         operator will need to switch to it in the Runs panel; only use it when they \
+         explicitly ask to start a new project, never to \"advance\" this one. To act, \
+         end your reply with a fenced block exactly like this (include it ONLY when \
+         you are actually taking action; omit it entirely otherwise -- never emit an \
+         empty or placeholder block):\n\
          {ACTIONS_FENCE_OPEN}\n\
-         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}}]\n\
+         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}}]\n\
          {ACTIONS_FENCE_CLOSE}\n\
          Indices refer to the real state.milestones/state.backlog/state.requirements \
          arrays already shown to you below -- never guess an index you can't see \
          there. Never invent or add a milestone/backlog item/requirement the operator \
          didn't actually ask for, and never mark one achieved/done/verified unless the \
-         operator told you it's done or clearly confirmed it. `propose_custom_panel`, \
-         `propose_stage`, and `propose_issue` are different from the other six: \
+         operator told you it's done or clearly confirmed it. You deliberately have NO \
+         action to submit a new iteration or otherwise claim a stage's work is done --\
+         an iteration is a role-filler's real, verified output (real code, real \
+         tests), and this chat has no way to know that actually happened; fabricating \
+         one here would corrupt the run's own honest record. If the operator describes \
+         real work as already complete, tell them to submit it themselves via the New \
+         Iteration panel (or their role-filler's normal path) -- never emit an \
+         iteration on their behalf, no matter how confident you are. `propose_custom_panel`, \
+         `propose_stage`, and `propose_issue` are different from the other eight: \
          neither takes effect by itself. `propose_custom_panel` \
          only queues a real proposal (title + a self-contained HTML fragment, no \
          <script src> to anything external, it runs sandboxed with no page/session \
@@ -198,9 +211,10 @@ fn build_system_prompt(context: &str) -> String {
          real bidder sees, and a vague/speculative issue wastes a human reviewer's \
          time. If a request is ambiguous, or you're not confident it's safe to act on, \
          say so in prose and ask instead of emitting an action. You have NO other tool \
-         or system access in this version -- only these nine action types against \
-         these six kinds of data; for anything else (e.g. an actual code change) tell \
-         the operator what you'd want to do and let them decide.\n\n\
+         or system access in this version -- only these eleven action types against \
+         these eight kinds of data; for anything else (e.g. an actual code change, or \
+         submitting an iteration) tell the operator what you'd want to do and let them \
+         decide.\n\n\
          Current real run state (JSON):\n{context}"
     )
 }
@@ -220,6 +234,17 @@ enum Action {
     /// (`pipeline/src/runner.rs`) for why this is distinct from a milestone.
     AddRequirement { statement: String, acceptance_criteria: Vec<String> },
     ToggleRequirement { index: usize },
+    /// Sets (or clears, with an empty string) the CURRENT run's repo_url --
+    /// the same field `set_repo_url`/the Code panel already manage. Not a
+    /// proposal -- like the other direct actions, takes effect immediately,
+    /// since it's just metadata, never a claim that real work happened.
+    SetRepoUrl { repo_url: String },
+    /// Creates a brand-new, genuinely empty run (plan-only spec, no history)
+    /// -- exactly what the New Project dialog does for a human. Deliberately
+    /// NOT a way to submit iterations/claim work happened on this or any run
+    /// -- see the system prompt's own explanation for why iteration
+    /// submission is intentionally kept out of the assistant's action set.
+    CreateRun { new_run_id: String },
     /// Deliberately the ONE action that does not take effect immediately -- see
     /// the system prompt's own explanation and `RunState::pending_panel_proposals`'s
     /// doc comment (`pipeline/src/runner.rs`) for the trust-model reasoning.
@@ -307,6 +332,18 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
             format!("toggle requirement #{index}"),
             format!("{base}/api/runs/{run_id}/requirements/{index}/toggle"),
             serde_json::json!({}),
+            "done",
+        ),
+        Action::SetRepoUrl { repo_url } => (
+            if repo_url.is_empty() { "clear the repo_url".to_string() } else { format!("set repo_url to \"{repo_url}\"") },
+            format!("{base}/api/runs/{run_id}/repo"),
+            serde_json::json!({"repo_url": repo_url}),
+            "done",
+        ),
+        Action::CreateRun { new_run_id } => (
+            format!("create a new, empty run \"{new_run_id}\""),
+            format!("{base}/api/runs"),
+            serde_json::json!({"run_id": new_run_id}),
             "done",
         ),
         // Deliberately "proposed" not "done" -- this never takes effect on its own,
@@ -615,16 +652,22 @@ mod tests {
                 && prompt.contains("toggle_backlog_item")
                 && prompt.contains("add_requirement")
                 && prompt.contains("toggle_requirement")
+                && prompt.contains("set_repo_url")
+                && prompt.contains("create_run")
                 && prompt.contains("propose_custom_panel")
                 && prompt.contains("propose_stage")
                 && prompt.contains("propose_issue"),
-            "all nine real action types must be documented"
+            "all eleven real action types must be documented"
         );
-        assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these six data kinds");
+        assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these eight data kinds");
         assert!(prompt.contains("neither takes effect by itself"), "the panel/stage/issue-proposal approval gate must be explicit, not implied");
         assert!(prompt.contains("BE TERSE") && prompt.contains("mehr tun, weniger reden"), "the operator's own terseness instruction must be explicit, not just implied by 'be concise'");
         assert!(prompt.contains("scimbe/CADS-webconference-demo"), "the issue-proposal repo allowlist must be stated in the prompt, not left for the LLM to guess");
         assert!(prompt.contains("EARS"), "the requirement-statement format expectation must be explicit, not left for the LLM to guess at style");
+        assert!(
+            prompt.contains("NOT the run you're currently discussing") && prompt.contains("no way to know that actually happened"),
+            "the create_run scope limit and the deliberate iteration-fabrication guardrail must both be explicit, not assumed"
+        );
     }
 
     #[test]
@@ -646,8 +689,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_actions_parses_all_nine_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"}]\n```";
+    fn extract_actions_parses_all_eleven_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -662,6 +705,8 @@ mod tests {
                     acceptance_criteria: vec!["survives app restart".to_string()],
                 },
                 Action::ToggleRequirement { index: 1 },
+                Action::SetRepoUrl { repo_url: "https://github.com/scimbe/CADS-webconference-android".to_string() },
+                Action::CreateRun { new_run_id: "my-new-project".to_string() },
                 Action::ProposeCustomPanel { title: "Burndown".to_string(), html: "<h2>hi</h2>".to_string() },
                 Action::ProposeStage {
                     stage_id: "devsystem.android_emulator_test".to_string(),
@@ -774,6 +819,32 @@ mod tests {
         let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
         assert_eq!(method, "POST");
         assert_eq!(url, "/api/runs/my-run/requirements/2/toggle");
+    }
+
+    #[test]
+    fn apply_action_posts_the_real_set_repo_url_request() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let result = apply_action(&client, &addr, "my-run", &Action::SetRepoUrl { repo_url: "https://github.com/scimbe/CADS-webconference-android".to_string() });
+        assert!(result.starts_with("done:"));
+        let (method, url, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/repo");
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
+        assert_eq!(parsed["repo_url"], "https://github.com/scimbe/CADS-webconference-android");
+    }
+
+    #[test]
+    fn apply_action_posts_the_real_create_run_request_against_the_top_level_runs_endpoint_not_the_current_run() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let result = apply_action(&client, &addr, "my-run", &Action::CreateRun { new_run_id: "my-new-project".to_string() });
+        assert!(result.starts_with("done:"));
+        let (method, url, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs", "create_run must hit the top-level collection endpoint, not /api/runs/<current run>/...");
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
+        assert_eq!(parsed["run_id"], "my-new-project");
     }
 
     #[test]
