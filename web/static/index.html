@@ -276,6 +276,23 @@
  .proposal-rationale{font-size:.8rem;color:var(--muted);margin-top:.15rem}
  .ok{color:var(--accent2)}
  .fail{color:var(--danger)}
+ /* Flow panel: target (milestones) -> queue (backlog) -> what happened
+    (history), connected by one visual line -- see renderFlowPanel's doc
+    comment for why this is three honest sections, not one fabricated
+    timeline. */
+ .flow-section{margin-bottom:.75rem}
+ .flow-section-title{font-family:var(--mono);font-size:.68rem;text-transform:uppercase;
+                      letter-spacing:.05em;color:var(--muted);margin-bottom:.35rem}
+ .flow-list{display:flex;flex-direction:column;border-left:2px solid var(--border);padding-left:.7rem}
+ .flow-node{display:flex;align-items:baseline;gap:.5rem;font-size:.83rem;padding:.2rem 0}
+ .flow-marker{font-family:var(--mono);color:var(--muted);flex-shrink:0}
+ .flow-node.flow-done .flow-marker{color:var(--accent2)}
+ .flow-node.flow-done span:last-child{color:var(--muted);text-decoration:line-through}
+ .flow-node.flow-ok .flow-marker{color:var(--accent2)}
+ .flow-node.flow-next .flow-marker{color:var(--accent);font-weight:700}
+ .flow-node.flow-next span:last-child{color:var(--accent);font-weight:600}
+ .flow-node.flow-fail .flow-marker{color:var(--danger)}
+ .flow-node.flow-fail span:last-child{color:var(--danger)}
  .status-line{font-family:var(--mono);font-size:.82rem;color:var(--muted);margin-top:.6rem;min-height:1.2em}
  .status-line.ok{color:var(--accent2)}
  .status-line.err{color:var(--danger)}
@@ -376,6 +393,7 @@ const PANEL_DEFAULTS = {
   support:    { title: 'Support',            x: 728,  y: 592, w: 320, h: 220 },
   rag:        { title: 'Docs Search',        x: 16,   y: 772, w: 400, h: 320 },
   panels:     { title: 'Custom Panels',       x: 1780, y: 772, w: 380, h: 320 },
+  flow:       { title: 'Flow',               x: 420,  y: 772, w: 620, h: 480 },
 };
 
 const LAYOUT_KEY = 'devsystem-panel-layout-v1';
@@ -435,6 +453,7 @@ const REFRESHABLE_PANELS = {
   healthcrit: (data) => renderHealthCriteriaPanel(currentRun, data),
   risks: (data) => renderRisksPanel(data),
   history: (data) => renderHistoryPanel(data),
+  flow: (data) => renderFlowPanel(currentRun, data),
 };
 const REFRESH_INTERVALS = [
   { seconds: 0, label: 'off' },
@@ -1041,7 +1060,7 @@ async function selectRun(id) {
     for (const pid of Object.keys(REFRESHABLE_PANELS)) lastRefreshedAt[pid] = Date.now();
   }
   await refreshRunsList();
-  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture', 'rag', 'panels']) {
+  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture', 'rag', 'panels', 'flow']) {
     document.getElementById(`body-${panelId}`).innerHTML = '<span class="lede">Loading…</span>';
   }
   try {
@@ -1064,8 +1083,9 @@ async function selectRun(id) {
     renderRagPanel(id, data);
     renderCustomPanelsManager(id, data);
     renderCustomPanels(id, data);
+    renderFlowPanel(id, data);
   } catch (e) {
-    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture', 'rag', 'panels']) {
+    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture', 'rag', 'panels', 'flow']) {
       document.getElementById(`body-${panelId}`).innerHTML = `<span class="status-line err">${e.message}</span>`;
     }
   }
@@ -1928,6 +1948,69 @@ function renderHistoryPanel(data) {
       ${renderProposals(h.proposals)}
     </div>`).join('') || '<span class="lede">No iterations yet.</span>';
   body.innerHTML = `<div class="history">${history}</div>`;
+}
+
+// Real, new panel (#382 operator ask: "ein neues sichtbares Ablauf-Panel"):
+// combines milestones (the target), backlog (the queue feeding it), and history
+// (what actually happened) into one connected view instead of three separate
+// panels the operator has to mentally stitch together. Deliberately NOT a
+// single fabricated timeline -- Milestone/BacklogItem carry no timestamp today,
+// so a strict chronological merge would be inventing an order that isn't real.
+// Three honest, clearly-labeled sections in a fixed narrative order (target ->
+// queue -> what happened) instead, connected by one visual flow line. Read-only:
+// the Milestones/Backlog panels stay the place to actually edit these.
+function renderFlowPanel(id, data) {
+  const body = document.getElementById('body-flow');
+  if (!data || !data.state) { body.innerHTML = '<span class="lede">No data.</span>'; return; }
+  const milestones = data.state.milestones || [];
+  const backlog = (data.state.backlog || []).filter(b => !b.done);
+  const history = [...(data.state.history || [])].reverse().slice(0, 6);
+  const h = data.health;
+
+  const nextMilestone = milestones.find(m => !m.achieved);
+  const targetHtml = milestones.length
+    ? milestones.map(m => `
+        <div class="flow-node ${m.achieved ? 'flow-done' : (m === nextMilestone ? 'flow-next' : '')}">
+          <span class="flow-marker">${m.achieved ? '✓' : (m === nextMilestone ? '◎' : '○')}</span>
+          <span>${escapeHtml(m.description)}</span>
+        </div>`).join('')
+    : '<div class="lede">No milestones set -- nothing to steer toward yet.</div>';
+
+  const queueHtml = backlog.length
+    ? backlog.map(b => `<div class="flow-node"><span class="flow-marker">•</span><span>${escapeHtml(b.text)}</span></div>`).join('')
+    : '<div class="lede">Backlog is empty.</div>';
+
+  const omitted = (data.state.history || []).length - history.length;
+  const historyHtml = history.length
+    ? history.map(hi => `
+        <div class="flow-node ${hi.succeeded ? 'flow-ok' : 'flow-fail'}">
+          <span class="flow-marker">${hi.succeeded ? '✓' : '✗'}</span>
+          <span>iteration ${hi.iteration} · ${escapeHtml(hi.stage)}${hi.succeeded ? '' : ' (FAILED)'}</span>
+        </div>`).join('') + (omitted > 0 ? `<div class="lede" style="font-size:.72rem">${omitted} earlier iteration(s) -- see History panel</div>` : '')
+    : '<div class="lede">No iterations yet.</div>';
+
+  const positionHtml = h
+    ? `<div class="lede" style="font-size:.78rem">
+         position: iteration <b>${h.iterations_completed}</b> / ${h.criteria.max_iterations}
+         ${data.state.paused ? ' · <span class="flow-fail">paused</span>' : ''}
+       </div>`
+    : '';
+
+  body.innerHTML = `
+    ${positionHtml}
+    <div class="flow-section">
+      <div class="flow-section-title">target</div>
+      <div class="flow-list">${targetHtml}</div>
+    </div>
+    <div class="flow-section">
+      <div class="flow-section-title">queue</div>
+      <div class="flow-list">${queueHtml}</div>
+    </div>
+    <div class="flow-section">
+      <div class="flow-section-title">what happened</div>
+      <div class="flow-list">${historyHtml}</div>
+    </div>
+  `;
 }
 
 async function submitIteration(id) {
