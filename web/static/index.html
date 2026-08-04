@@ -30,6 +30,13 @@
  .stalled-panel{margin-bottom:1rem;padding:.6rem .8rem;border:1px solid var(--accent);
                  background:rgba(217,138,79,.08);border-radius:8px;font-size:.85rem}
  .stalled-panel .title{font-family:var(--mono);font-size:.75rem;color:var(--accent);font-weight:700;margin-bottom:.3rem}
+ .health{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem;font-family:var(--mono);font-size:.75rem}
+ .health .stat{border:1px solid var(--border);border-radius:6px;padding:.3rem .55rem;color:var(--muted)}
+ .health .stat b{color:var(--text)}
+ .health .stat.warn{border-color:var(--accent);color:var(--accent)}
+ .health .stat.warn b{color:var(--accent)}
+ .health .stat.danger{border-color:var(--danger);color:var(--danger)}
+ .health .stat.danger b{color:var(--danger)}
  form.inline{display:flex;gap:.4rem}
  input,textarea,select{background:#0d1117;border:1px solid var(--border);border-radius:6px;color:var(--text);
         padding:.45rem .6rem;font-family:var(--mono);font-size:.85rem;width:100%}
@@ -164,6 +171,17 @@ function renderRunDetail(id, data) {
       ${renderProposals(h.proposals)}
     </div>`).join('') || '<span class="lede">No iterations yet.</span>';
 
+  const h = data.health;
+  const healthPanel = h ? `
+    <div class="health">
+      <span class="stat${h.consecutive_failures >= h.criteria.max_consecutive_failures - 1 ? ' danger' : ''}">
+        consecutive failures: <b>${h.consecutive_failures}</b> / ${h.criteria.max_consecutive_failures}</span>
+      <span class="stat${h.iterations_until_checkin <= 1 ? ' warn' : ''}">
+        next check-in in: <b>${h.iterations_until_checkin}</b> iteration(s)</span>
+      <span class="stat${h.iterations_until_ceiling <= 2 ? ' danger' : ''}">
+        iterations: <b>${h.iterations_completed}</b> / ${h.criteria.max_iterations}</span>
+    </div>` : '';
+
   const stalled = data.stalled_stages || [];
   const stalledPanel = stalled.length ? `
     <div class="stalled-panel">
@@ -178,6 +196,7 @@ function renderRunDetail(id, data) {
   detail.innerHTML = `
     <h2>${id}</h2>
     <div class="roles">${roles}</div>
+    ${healthPanel}
     ${stalledPanel}
 
     <label>New iteration -- stage (pick from this run's live roles, or type a new one)</label>

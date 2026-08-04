@@ -129,9 +129,47 @@ async fn get_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -> i
     match load_or_init_run(&run_dir(&state, &id), &id) {
         Ok((spec, run_state)) => {
             let stalled = stalled_stages(&run_state);
-            Json(serde_json::json!({"spec": spec, "state": run_state, "stalled_stages": stalled})).into_response()
+            let health = run_health(&run_state);
+            Json(serde_json::json!({
+                "spec": spec,
+                "state": run_state,
+                "stalled_stages": stalled,
+                "health": health,
+            }))
+            .into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    }
+}
+
+/// The same [`AbortCriteria::default`] every real `iterate_run` call folds a record
+/// against, plus how close this run currently is to each bound -- so a human can see
+/// risk (an imminent abort, an overdue check-in) at a glance instead of only after
+/// `run_iteration` has already decided it.
+#[derive(Serialize)]
+struct RunHealth {
+    criteria: AbortCriteria,
+    consecutive_failures: u32,
+    iterations_completed: u32,
+    iterations_until_checkin: u32,
+    iterations_until_ceiling: u32,
+}
+
+fn run_health(run_state: &devsystem_pipeline::runner::RunState) -> RunHealth {
+    let criteria = AbortCriteria::default();
+    let completed = run_state.history.len() as u32;
+    let until_checkin = if criteria.checkin_every == 0 {
+        0
+    } else {
+        let rem = completed % criteria.checkin_every;
+        if rem == 0 { criteria.checkin_every } else { criteria.checkin_every - rem }
+    };
+    RunHealth {
+        criteria,
+        consecutive_failures: run_state.consecutive_failures,
+        iterations_completed: completed,
+        iterations_until_checkin: until_checkin,
+        iterations_until_ceiling: criteria.max_iterations.saturating_sub(completed),
     }
 }
 
@@ -274,6 +312,28 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn get_run_reports_health_for_a_fresh_run() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "health-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/health-run").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["health"]["consecutive_failures"], 0);
+        assert_eq!(body["health"]["iterations_completed"], 0);
+        assert_eq!(body["health"]["iterations_until_checkin"], 5, "fresh run is 5 iterations from the default checkin_every cadence");
+        assert_eq!(body["health"]["iterations_until_ceiling"], 20);
     }
 
     #[tokio::test]
