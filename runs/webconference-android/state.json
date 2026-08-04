@@ -215,6 +215,14 @@
       "feedback": "Real first slice of the operator's custom-panels/marketplace feature request: sandboxed-iframe custom GUI panels (add/list/remove), confirmed the trust model with the operator before building (allow-scripts sandbox, no allow-same-origin; assistant stays advice-only, proposes but never installs directly -- both confirmed decisions, not assumptions). Found and fixed two real bugs during verification: panelRect() crashed for any id outside PANEL_DEFAULTS (every custom panel), and the panel-visibility/overlap-avoidance logic from a prior cycle never accounted for the always-on-top prompt-dock, so a newly-added custom panel could land with its controls permanently unclickable underneath it -- reproduced live via Playwright, root-caused, and fixed (the dock's top edge is now a hard floor on usable desktop height). Also handled two real CADS-Tunnel#388 follow-ups from an external tester (Warden3): confirmed the offers/submit gate-exemption was a timing false-alarm (their test predated the fix by 6 minutes) with a live re-verified 422 trace, added them to devsystem-demo's login allowlist for full GUI testing, and gave an honest answer when asked to confirm their historical bid's auction outcome -- the in-memory offer state had been wiped by a subsequent redeploy, said so plainly rather than fabricating a result.",
       "proposals": [],
       "succeeded": true
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.web_gui",
+      "iteration": 19,
+      "feedback": "RAG slice 2: real manual document upload + per-document management, staying within the deliberately lightweight architecture (explicitly not the Unstructured/embeddings/image-support stack the operator asked about -- flagged as a separate, bigger, credential-dependent decision rather than quietly built toward). Documents survive repo re-sync (previously would have been silently wiped). Found and fixed a real UX bug during Playwright verification: uploading/removing a document was silently re-collapsing the details section holding the remove button itself, making it genuinely unclickable right after the action that would make someone want to click it.",
+      "proposals": [],
+      "succeeded": true
     }
   ],
   "added_stages": [
