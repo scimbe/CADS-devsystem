@@ -163,5 +163,7 @@
     "max_iterations": 20,
     "max_consecutive_failures": 3,
     "checkin_every": 5
-  }
+  },
+  "paused": false,
+  "backlog": []
 }
