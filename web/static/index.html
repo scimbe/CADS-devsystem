@@ -2151,6 +2151,16 @@ function renderNewIterationPanel(id, data) {
     <textarea id="it-feedback" placeholder="Real, honest account of what happened this iteration…"></textarea>
     <label><input type="checkbox" id="it-succeeded" checked style="width:auto"> succeeded</label>
 
+    ${(data.state.requirements || []).length ? `
+    <label style="margin-top:1rem">Addresses (real traceability -- #47 follow-up slice; leave all unchecked if this iteration doesn't speak to a specific requirement)</label>
+    <div id="it-requirements" style="display:flex;flex-direction:column;gap:.3rem;margin-top:.2rem">
+      ${data.state.requirements.map((r, i) => `
+        <label class="backlog-item" style="font-size:.8rem">
+          <input type="checkbox" class="it-requirement-cb" value="${i}" style="width:auto">
+          <span>${escapeHtml(truncate(r.statement, 90))}</span>
+        </label>`).join('')}
+    </div>` : ''}
+
     <label style="margin-top:1rem"><input type="checkbox" id="it-has-proposal" style="width:auto">
       Propose a new stage (the pipeline's self-optimization mechanic -- this actually grows the
       live spec, the same way a role-filler's own proposal would)</label>
@@ -2324,12 +2334,14 @@ async function submitIteration(id) {
     });
   }
 
+  const requirement_indices = Array.from(document.querySelectorAll('.it-requirement-cb:checked')).map(cb => parseInt(cb.value, 10));
+
   status.textContent = 'Submitting…'; status.className = 'status-line';
   try {
     const result = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/iterate`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ stage, feedback, succeeded, proposals })
+      body: JSON.stringify({ stage, feedback, succeeded, proposals, requirement_indices })
     });
     let text, cls, showCheckin = false;
     if (result.outcome === 'CheckinDue') {
