@@ -9,6 +9,16 @@ updates:
     schedule:
       interval: "weekly"
 
+  # web/'s real dependencies (axum, tower-http, tokio, serde_json, the same
+  # ct-common git dep) -- same class of gap /pipeline had until this file existed.
+  # Now that pipeline-ci.yml's `web` job actually builds the crate AND the real
+  # Dockerfile image (#382), a bump here gets a genuine CI signal, not just
+  # caught the next time someone manually rebuilds the deployed container.
+  - package-ecosystem: "cargo"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+
   # GitHub Actions versions used by pipeline-ci.yml itself.
   - package-ecosystem: "github-actions"
     directory: "/"
