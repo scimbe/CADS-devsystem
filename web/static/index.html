@@ -9,17 +9,34 @@
        --accent:#d98a4f;--accent-ink:#20130a;--accent2:#5fb8ab;--danger:#e5534b;
        --mono:ui-monospace,"SF Mono",Consolas,monospace;--serif:ui-serif,Georgia,serif}
  *{box-sizing:border-box}
- body{margin:0;background:var(--bg);color:var(--text);font-family:var(--serif);line-height:1.5}
- .wrap{max-width:960px;margin:0 auto;padding:2rem 1.25rem 4rem}
- header{margin-bottom:2rem}
- .eyebrow{font-family:var(--mono);font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
- h1{font-size:1.9rem;margin:.3rem 0 .5rem}
- h2{font-size:1.15rem;margin:0 0 .75rem;font-family:var(--mono)}
+ html,body{height:100%}
+ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--serif);line-height:1.5;overflow:hidden}
+ .topbar{display:flex;align-items:center;gap:1rem;padding:.6rem 1rem;border-bottom:1px solid var(--border);
+         background:var(--panel);flex-wrap:wrap}
+ .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
+ .topbar h1{font-size:1.05rem;margin:0;white-space:nowrap}
  .lede{color:var(--muted);max-width:60ch}
- .layout{display:grid;grid-template-columns:260px 1fr;gap:1.5rem;align-items:start}
- @media (max-width:800px){.layout{grid-template-columns:1fr}}
- .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:1.1rem}
- .runs{display:flex;flex-direction:column;gap:.5rem;margin-bottom:1rem}
+ .panel-toggles{display:flex;flex-wrap:wrap;gap:.35rem;flex:1}
+ .panel-chip{font-family:var(--mono);font-size:.7rem;background:transparent;border:1px solid var(--border);
+             color:var(--muted);border-radius:5px;padding:.2rem .55rem;cursor:pointer;font-weight:400}
+ .panel-chip.active{border-color:var(--accent2);color:var(--accent2)}
+ .topbar-links{font-size:.72rem;color:var(--muted);white-space:nowrap}
+ .topbar-links a{color:var(--accent2)}
+ #desktop{position:relative;width:100%;height:calc(100vh - 48px);overflow:auto}
+ .win{position:absolute;background:var(--panel);border:1px solid var(--border);border-radius:10px;
+      box-shadow:0 10px 30px rgba(0,0,0,.45);display:flex;flex-direction:column;min-width:220px;min-height:140px}
+ .win-header{cursor:move;display:flex;justify-content:space-between;align-items:center;
+             padding:.4rem .6rem;border-bottom:1px solid var(--border);font-family:var(--mono);
+             font-size:.72rem;color:var(--muted);letter-spacing:.03em;text-transform:uppercase;
+             border-radius:10px 10px 0 0;user-select:none}
+ .win-close{background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:1rem;
+            line-height:1;padding:0 .2rem;font-weight:400}
+ .win-close:hover{color:var(--danger)}
+ .win-body{padding:.8rem;overflow:auto;flex:1;font-size:.85rem}
+ .win-resize{position:absolute;right:2px;bottom:2px;width:14px;height:14px;cursor:nwse-resize;
+             border-right:2px solid var(--border);border-bottom:2px solid var(--border)}
+ h2{font-size:.95rem;margin:0 0 .6rem;font-family:var(--mono)}
+ .runs{display:flex;flex-direction:column;gap:.5rem;margin-bottom:.8rem}
  .run-item{display:block;width:100%;text-align:left;background:transparent;border:1px solid var(--border);
            border-radius:8px;padding:.6rem .8rem;color:var(--text);cursor:pointer;font-family:var(--mono);font-size:.85rem}
  .run-item:hover{border-color:var(--accent)}
@@ -31,26 +48,25 @@
                 border-radius:5px;padding:.05rem .35rem;font-weight:700;margin-left:.3rem}
  .risk-badge{float:right;font-size:.68rem;color:var(--danger);border:1px solid var(--danger);
                 border-radius:5px;padding:.05rem .35rem;font-weight:700}
- .stalled-panel{margin-bottom:1rem;padding:.6rem .8rem;border:1px solid var(--accent);
-                 background:rgba(217,138,79,.08);border-radius:8px;font-size:.85rem}
- .stalled-panel .title{font-family:var(--mono);font-size:.75rem;color:var(--accent);font-weight:700;margin-bottom:.3rem}
- .health{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem;font-family:var(--mono);font-size:.75rem}
+ .health{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:.8rem;font-family:var(--mono);font-size:.75rem}
  .health .stat{border:1px solid var(--border);border-radius:6px;padding:.3rem .55rem;color:var(--muted)}
  .health .stat b{color:var(--text)}
  .health .stat.warn{border-color:var(--accent);color:var(--accent)}
  .health .stat.warn b{color:var(--accent)}
  .health .stat.danger{border-color:var(--danger);color:var(--danger)}
  .health .stat.danger b{color:var(--danger)}
- details.criteria{margin-bottom:1rem;font-size:.85rem}
+ details.criteria{font-size:.85rem}
  details.criteria summary{cursor:pointer;color:var(--muted);font-family:var(--mono);font-size:.75rem}
  .criteria-fields{display:flex;gap:.6rem;margin-top:.5rem;flex-wrap:wrap}
  .criteria-fields label{flex:1;min-width:8rem;margin:0}
  .criteria-fields input{margin-top:.25rem}
- .risk-panel{margin-bottom:1rem;padding:.6rem .8rem;border:1px solid var(--danger);
-             background:rgba(229,83,75,.08);border-radius:8px;font-size:.85rem}
+ .risk-panel,.stalled-panel{padding:.6rem .8rem;border-radius:8px;font-size:.85rem}
+ .risk-panel{border:1px solid var(--danger);background:rgba(229,83,75,.08);margin-bottom:.6rem}
  .risk-panel .title{font-family:var(--mono);font-size:.75rem;color:var(--danger);font-weight:700;margin-bottom:.3rem}
  .risk-item{margin-top:.3rem}
  .risk-item b{color:var(--danger)}
+ .stalled-panel{border:1px solid var(--accent);background:rgba(217,138,79,.08)}
+ .stalled-panel .title{font-family:var(--mono);font-size:.75rem;color:var(--accent);font-weight:700;margin-bottom:.3rem}
  form.inline{display:flex;gap:.4rem}
  input,textarea,select{background:#0d1117;border:1px solid var(--border);border-radius:6px;color:var(--text);
         padding:.45rem .6rem;font-family:var(--mono);font-size:.85rem;width:100%}
@@ -60,13 +76,19 @@
         font-weight:700;font-family:var(--mono);font-size:.82rem;cursor:pointer}
  button:hover{filter:brightness(1.08)}
  button.secondary{background:transparent;border:1px solid var(--border);color:var(--text)}
- .roles{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:1rem}
  .role{font-family:var(--mono);font-size:.75rem;background:rgba(95,184,171,.12);color:var(--accent2);
        border-radius:5px;padding:.15rem .5rem}
  button.stalled-fill{border:1px solid var(--accent);background:rgba(217,138,79,.12);color:var(--accent);
        cursor:pointer}
  button.stalled-fill:hover{background:rgba(217,138,79,.22)}
- .history{display:flex;flex-direction:column;gap:.6rem;max-height:22rem;overflow-y:auto}
+ .role-card{border:1px solid var(--border);border-radius:8px;padding:.6rem .7rem;margin-bottom:.5rem}
+ .role-card-head{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:.3rem;margin-bottom:.35rem}
+ .role-meta{font-family:var(--mono);font-size:.68rem;color:var(--muted)}
+ .role-latest{font-size:.8rem;padding-left:.5rem;border-left:2px solid var(--border)}
+ .role-latest.ok{border-left-color:var(--accent2)}
+ .role-latest.fail{border-left-color:var(--danger)}
+ .role-count{font-size:.7rem;margin-top:.2rem}
+ .history{display:flex;flex-direction:column;gap:.6rem}
  .iter{border:1px solid var(--border);border-radius:8px;padding:.65rem .8rem;font-size:.85rem}
  .iter .head{font-family:var(--mono);font-size:.75rem;color:var(--muted);display:flex;justify-content:space-between}
  .proposal{margin-top:.5rem;padding:.4rem .6rem;border-left:2px solid var(--accent);background:rgba(217,138,79,.06);
@@ -80,8 +102,8 @@
  .status-line.err{color:var(--danger)}
  .status-line.warn{color:var(--accent);font-weight:700}
  pre.checkin{white-space:pre-wrap;font-family:var(--mono);font-size:.8rem;background:#0d1117;
-             border:1px solid var(--border);border-radius:8px;padding:1rem;max-height:24rem;overflow:auto}
- .memory-list{display:flex;flex-direction:column;gap:.5rem;max-height:24rem;overflow-y:auto;margin-top:.5rem}
+             border:1px solid var(--border);border-radius:8px;padding:1rem;overflow:auto}
+ .memory-list{display:flex;flex-direction:column;gap:.5rem;margin-top:.5rem}
  .mem-entry{border:1px solid var(--border);border-radius:8px;padding:.6rem .8rem;font-size:.82rem}
  .mem-entry .head{font-family:var(--mono);font-size:.72rem;color:var(--muted);display:flex;justify-content:space-between;margin-bottom:.3rem}
  .mem-entry .trust{border-radius:5px;padding:.05rem .35rem;font-size:.68rem;font-weight:700}
@@ -89,47 +111,178 @@
  .mem-entry .trust.governed{color:var(--accent2);border:1px solid var(--accent2)}
  .mem-entry ul{margin:.2rem 0 0;padding-left:1.1rem}
  code{background:#0d1117;border:1px solid var(--border);border-radius:5px;padding:.1rem .35rem;font-size:.9em;font-family:var(--mono)}
- footer{margin-top:2rem;color:var(--muted);font-size:.8rem}
- footer a{color:var(--accent2)}
 </style>
 </head>
 <body>
-<div class="wrap">
- <header>
+<div class="topbar">
+ <div>
   <div class="eyebrow">CADS-Tunnel #382 · live control panel</div>
   <h1>The Development System</h1>
-  <p class="lede">Every action below calls the same <code>devsystem-pipeline</code> library functions the
-   CLI tools use -- this is a real control surface, not a status mockup. The pipeline mechanism is
-   project-agnostic: any run below is just <code>runs/&lt;id&gt;/</code> data in git, nothing hardcoded.</p>
- </header>
-
- <div class="layout">
-  <div class="panel">
-   <h2>Runs</h2>
-   <div id="runs" class="runs"><span class="lede">Loading…</span></div>
-   <label>New run id</label>
-   <form class="inline" id="create-form">
-    <input id="new-run-id" placeholder="e.g. my-other-project" pattern="[A-Za-z0-9_\-]+" required>
-    <button type="submit">+</button>
-   </form>
-   <div id="create-status" class="status-line"></div>
-  </div>
-
-  <div class="panel" id="run-detail">
-   <p class="lede">Select a run on the left, or create a new one.</p>
-  </div>
  </div>
-
- <footer>
-  <a href="https://github.com/scimbe/CADS-devsystem">Coordination repo</a> ·
-  <a href="https://github.com/scimbe/CADS-Tunnel/issues/382">Proposal (#382)</a>
- </footer>
+ <div id="panel-toggles" class="panel-toggles"></div>
+ <div class="topbar-links">
+  <a href="https://github.com/scimbe/CADS-devsystem">repo</a> ·
+  <a href="https://github.com/scimbe/CADS-Tunnel/issues/382">#382</a>
+ </div>
 </div>
+<div id="desktop"></div>
 
 <script>
 const API = '/api';
 let currentRun = null;
+let currentRunData = null;
 let criteriaOpen = false;
+
+// -------------------- panel/dock system --------------------
+// Every functional area is its own window: draggable by its header, resizable
+// from the bottom-right corner, individually hideable/showable via the top
+// toggle bar, and its rect+visibility persists in localStorage so a human's
+// arrangement survives a reload. Deliberately no external layout library --
+// this repo's whole frontend stays vanilla JS/CSS, no build step.
+const PANEL_DEFAULTS = {
+  runs:       { title: 'Runs',              x: 16,   y: 16,  w: 280, h: 420 },
+  roles:      { title: 'Roles',              x: 312,  y: 16,  w: 400, h: 300 },
+  healthcrit: { title: 'Health & Criteria',  x: 728,  y: 16,  w: 320, h: 300 },
+  risks:      { title: 'Risks & Stalled',    x: 312,  y: 332, w: 400, h: 240 },
+  newiter:    { title: 'New Iteration',      x: 1064, y: 16,  w: 340, h: 556 },
+  history:    { title: 'History',            x: 728,  y: 332, w: 320, h: 480 },
+  checkin:    { title: 'Check-in',           x: 16,   y: 452, w: 280, h: 300 },
+  memory:     { title: 'Memory Log',         x: 1420, y: 16,  w: 380, h: 556 },
+};
+
+const LAYOUT_KEY = 'devsystem-panel-layout-v1';
+let layout = {};
+try { layout = JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}'); } catch (e) { layout = {}; }
+let zTop = 10;
+
+function saveLayout() {
+  try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (e) { /* storage unavailable -- layout just won't persist */ }
+}
+
+function panelRect(id) {
+  const d = PANEL_DEFAULTS[id];
+  const saved = layout[id] || {};
+  return {
+    x: saved.x ?? d.x, y: saved.y ?? d.y, w: saved.w ?? d.w, h: saved.h ?? d.h,
+    visible: saved.visible ?? true, z: saved.z ?? (zTop++),
+  };
+}
+
+function createPanel(id) {
+  const d = PANEL_DEFAULTS[id];
+  const r = panelRect(id);
+  const win = document.createElement('div');
+  win.className = 'win';
+  win.id = `win-${id}`;
+  win.style.left = r.x + 'px';
+  win.style.top = r.y + 'px';
+  win.style.width = r.w + 'px';
+  win.style.height = r.h + 'px';
+  win.style.zIndex = r.z;
+  win.style.display = r.visible ? 'flex' : 'none';
+  win.innerHTML = `
+    <div class="win-header" data-panel="${id}">
+      <span>${d.title}</span>
+      <button type="button" class="win-close" data-panel="${id}" title="Hide">×</button>
+    </div>
+    <div class="win-body" id="body-${id}"></div>
+    <div class="win-resize" data-panel="${id}"></div>
+  `;
+  document.getElementById('desktop').appendChild(win);
+  wireDrag(win, id);
+  wireResize(win, id);
+  win.addEventListener('mousedown', () => bringToFront(id));
+  win.querySelector('.win-close').onclick = (e) => { e.stopPropagation(); hidePanel(id); };
+  return win;
+}
+
+function bringToFront(id) {
+  const win = document.getElementById(`win-${id}`);
+  zTop += 1;
+  win.style.zIndex = zTop;
+  layout[id] = { ...panelRect(id), z: zTop };
+  saveLayout();
+}
+
+function hidePanel(id) {
+  document.getElementById(`win-${id}`).style.display = 'none';
+  layout[id] = { ...panelRect(id), visible: false };
+  saveLayout();
+  renderPanelToggleBar();
+}
+
+function showPanel(id) {
+  const win = document.getElementById(`win-${id}`);
+  win.style.display = 'flex';
+  layout[id] = { ...panelRect(id), visible: true };
+  saveLayout();
+  bringToFront(id);
+  renderPanelToggleBar();
+}
+
+function wireDrag(win, id) {
+  const header = win.querySelector('.win-header');
+  header.addEventListener('mousedown', (e) => {
+    if (e.target.classList.contains('win-close')) return;
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    const startLeft = win.offsetLeft, startTop = win.offsetTop;
+    function onMove(ev) {
+      win.style.left = Math.max(0, startLeft + ev.clientX - startX) + 'px';
+      win.style.top = Math.max(0, startTop + ev.clientY - startY) + 'px';
+    }
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      layout[id] = { ...panelRect(id), x: win.offsetLeft, y: win.offsetTop };
+      saveLayout();
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+function wireResize(win, id) {
+  const handle = win.querySelector('.win-resize');
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const startX = e.clientX, startY = e.clientY;
+    const startW = win.offsetWidth, startH = win.offsetHeight;
+    function onMove(ev) {
+      win.style.width = Math.max(220, startW + ev.clientX - startX) + 'px';
+      win.style.height = Math.max(140, startH + ev.clientY - startY) + 'px';
+    }
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      layout[id] = { ...panelRect(id), w: win.offsetWidth, h: win.offsetHeight };
+      saveLayout();
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+function renderPanelToggleBar() {
+  const bar = document.getElementById('panel-toggles');
+  bar.innerHTML = Object.keys(PANEL_DEFAULTS).map(id => {
+    const visible = panelRect(id).visible;
+    return `<button type="button" class="panel-chip${visible ? ' active' : ''}" data-panel="${id}">${PANEL_DEFAULTS[id].title}</button>`;
+  }).join('');
+  for (const btn of bar.querySelectorAll('.panel-chip')) {
+    btn.onclick = () => {
+      const id = btn.dataset.panel;
+      if (panelRect(id).visible) hidePanel(id); else showPanel(id);
+    };
+  }
+}
+
+function initPanels() {
+  for (const id of Object.keys(PANEL_DEFAULTS)) createPanel(id);
+  renderPanelToggleBar();
+}
+
+// -------------------- data + rendering --------------------
 
 async function fetchJSON(url, opts) {
   const res = await fetch(url, opts);
@@ -138,7 +291,42 @@ async function fetchJSON(url, opts) {
   return body;
 }
 
+function truncate(s, n) {
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
 async function loadRuns() {
+  const el = document.getElementById('body-runs');
+  el.innerHTML = `
+    <div id="runs" class="runs"><span class="lede">Loading…</span></div>
+    <label>New run id</label>
+    <form class="inline" id="create-form">
+     <input id="new-run-id" placeholder="e.g. my-other-project" pattern="[A-Za-z0-9_\\-]+" required>
+     <button type="submit">+</button>
+    </form>
+    <div id="create-status" class="status-line"></div>
+  `;
+  document.getElementById('create-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const status = document.getElementById('create-status');
+    const run_id = document.getElementById('new-run-id').value.trim();
+    status.textContent = 'Creating…'; status.className = 'status-line';
+    try {
+      await fetchJSON(`${API}/runs`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ run_id })
+      });
+      status.textContent = `Created ${run_id}.`; status.className = 'status-line ok';
+      document.getElementById('new-run-id').value = '';
+      await selectRun(run_id);
+    } catch (err) {
+      status.textContent = err.message; status.className = 'status-line err';
+    }
+  });
+  await refreshRunsList();
+}
+
+async function refreshRunsList() {
   const el = document.getElementById('runs');
   try {
     const runs = await fetchJSON(`${API}/runs`);
@@ -168,38 +356,76 @@ async function loadRuns() {
 
 async function selectRun(id) {
   currentRun = id;
-  await loadRuns();
-  const detail = document.getElementById('run-detail');
-  detail.innerHTML = '<span class="lede">Loading…</span>';
+  await refreshRunsList();
+  for (const panelId of ['roles', 'healthcrit', 'risks', 'newiter', 'history']) {
+    document.getElementById(`body-${panelId}`).innerHTML = '<span class="lede">Loading…</span>';
+  }
   try {
     const data = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
-    renderRunDetail(id, data);
+    currentRunData = data;
+    renderRolesPanel(data);
+    renderHealthCriteriaPanel(id, data);
+    renderRisksPanel(data);
+    renderNewIterationPanel(id, data);
+    renderHistoryPanel(data);
+    document.getElementById('body-checkin').innerHTML = `<button class="secondary" id="view-checkin">View check-in</button><div id="checkin-view"></div>`;
+    document.getElementById('view-checkin').onclick = () => viewCheckin(id);
+    document.getElementById('body-memory').innerHTML = `<button class="secondary" id="view-memory">View memory log</button><div id="memory-view"></div>`;
+    document.getElementById('view-memory').onclick = () => viewMemory(id);
   } catch (e) {
-    detail.innerHTML = `<span class="status-line err">${e.message}</span>`;
+    for (const panelId of ['roles', 'healthcrit', 'risks', 'newiter', 'history']) {
+      document.getElementById(`body-${panelId}`).innerHTML = `<span class="status-line err">${e.message}</span>`;
+    }
   }
 }
 
-function renderRunDetail(id, data) {
-  const detail = document.getElementById('run-detail');
-  const roles = data.spec.roles.map(r => `<span class="role">${r.tag}</span>`).join('');
-  // Custom service names come back as {"Custom": "devsystem.xxx"} (ct_common's own
-  // serde shape) -- includes every dynamically-proposed role, not just the original
-  // seven, so a human can actually pick a stage this run itself grew into.
-  const stageOptions = data.spec.roles
-    .map(r => r.service && r.service.Custom)
-    .filter(Boolean)
-    .map(s => `<option value="${escapeHtml(s)}">`)
-    .join('');
-  const history = [...data.state.history].reverse().map(h => `
-    <div class="iter">
-      <div class="head"><span>iteration ${h.iteration} · ${h.stage}</span>
-        <span class="${h.succeeded ? 'ok' : 'fail'}">${h.succeeded ? 'ok' : 'FAILED'}</span></div>
-      <div>${escapeHtml(h.feedback)}</div>
-      ${renderProposals(h.proposals)}
-    </div>`).join('') || '<span class="lede">No iterations yet.</span>';
+function placeholderIfNoRun(panelId) {
+  const el = document.getElementById(`body-${panelId}`);
+  if (!currentRun) { el.innerHTML = '<span class="lede">Select a run in the Runs panel.</span>'; return true; }
+  return false;
+}
 
+// Real per-role status view (operator feedback: "die einzelnen Rollen sehen, was
+// sie gerade machen, was ihre Ergebnisse gerade sind") -- for each role in the
+// live spec, shows its most recent real iteration (stage/feedback/outcome), not
+// a fabricated "currently running" state the async iterate-then-checkin
+// architecture doesn't actually have. Role-filler identity/host isn't tracked
+// anywhere in the data model yet -- said plainly rather than invented.
+function renderRolesPanel(data) {
+  const body = document.getElementById('body-roles');
+  const history = data.state.history;
+  const cards = data.spec.roles.map(r => {
+    const stageId = r.service && r.service.Custom;
+    const roleHistory = history.filter(h => h.stage === stageId);
+    const latest = roleHistory[roleHistory.length - 1];
+    const policy = r.selection_policy || data.spec.selection_policy || 'default';
+    const latestHtml = latest
+      ? `<div class="role-latest ${latest.succeeded ? 'ok' : 'fail'}">
+           iteration ${latest.iteration} (${latest.succeeded ? 'ok' : 'FAILED'}): ${escapeHtml(truncate(latest.feedback, 160))}
+         </div>`
+      : `<div class="role-latest lede">no iteration yet for this role</div>`;
+    return `<div class="role-card">
+      <div class="role-card-head">
+        <span class="role">${escapeHtml(r.tag)}</span>
+        <span class="role-meta">${escapeHtml(stageId)} · units ${r.units} · policy ${escapeHtml(String(policy))}</span>
+      </div>
+      ${latestHtml}
+      <div class="role-count lede">${roleHistory.length} iteration(s) total for this role</div>
+    </div>`;
+  }).join('');
+  body.innerHTML = `${cards}
+    <div class="lede" style="font-size:.72rem;margin-top:.4rem">
+      Role-filler identity/host isn't tracked yet -- only the service name and
+      auction selection policy are real data today. Flagged for a future
+      increment, not fabricated here.
+    </div>`;
+}
+
+function renderHealthCriteriaPanel(id, data) {
+  const body = document.getElementById('body-healthcrit');
   const h = data.health;
-  const healthPanel = h ? `
+  if (!h) { body.innerHTML = '<span class="lede">No health data.</span>'; return; }
+  body.innerHTML = `
     <div class="health">
       <span class="stat${h.consecutive_failures >= h.criteria.max_consecutive_failures - 1 ? ' danger' : ''}">
         consecutive failures: <b>${h.consecutive_failures}</b> / ${h.criteria.max_consecutive_failures}</span>
@@ -207,9 +433,7 @@ function renderRunDetail(id, data) {
         next check-in in: <b>${h.iterations_until_checkin}</b> iteration(s)</span>
       <span class="stat${h.iterations_until_ceiling <= 2 ? ' danger' : ''}">
         iterations: <b>${h.iterations_completed}</b> / ${h.criteria.max_iterations}</span>
-    </div>` : '';
-
-  const criteriaDetails = h ? `
+    </div>
     <details class="criteria" ${criteriaOpen ? 'open' : ''}>
       <summary>customize this run's bounded-loop criteria</summary>
       <div class="criteria-fields">
@@ -222,8 +446,15 @@ function renderRunDetail(id, data) {
       </div>
       <button type="button" class="secondary" id="save-criteria" style="margin-top:.5rem">Save criteria</button>
       <div id="criteria-status" class="status-line"></div>
-    </details>` : '';
+    </details>
+  `;
+  document.getElementById('save-criteria').onclick = () => saveCriteria(id);
+  const criteriaEl = body.querySelector('details.criteria');
+  criteriaEl.ontoggle = (e) => { criteriaOpen = e.target.open; };
+}
 
+function renderRisksPanel(data) {
+  const body = document.getElementById('body-risks');
   const risks = data.risks || [];
   const riskPanel = risks.length ? `
     <div class="risk-panel">
@@ -243,15 +474,24 @@ function renderRunDetail(id, data) {
       ).join(' ')}</div>
     </div>` : '';
 
-  detail.innerHTML = `
-    <h2>${id}</h2>
-    <div class="roles">${roles}</div>
-    ${healthPanel}
-    ${criteriaDetails}
-    ${riskPanel}
-    ${stalledPanel}
+  body.innerHTML = (riskPanel + stalledPanel) || '<span class="lede">Nothing flagged right now.</span>';
+  for (const btn of body.querySelectorAll('.stalled-fill')) {
+    btn.onclick = () => {
+      const stageInput = document.getElementById('it-stage');
+      if (stageInput) { stageInput.value = btn.dataset.stage; stageInput.focus(); }
+    };
+  }
+}
 
-    <label>New iteration -- stage (pick from this run's live roles, or type a new one)</label>
+function renderNewIterationPanel(id, data) {
+  const body = document.getElementById('body-newiter');
+  const stageOptions = data.spec.roles
+    .map(r => r.service && r.service.Custom)
+    .filter(Boolean)
+    .map(s => `<option value="${escapeHtml(s)}">`)
+    .join('');
+  body.innerHTML = `
+    <label>Stage (pick from this run's live roles, or type a new one)</label>
     <input id="it-stage" list="it-stage-list" value="devsystem.implement">
     <datalist id="it-stage-list">${stageOptions}</datalist>
     <label>Feedback (what this stage found)</label>
@@ -279,33 +519,25 @@ function renderRunDetail(id, data) {
 
     <div style="margin-top:.6rem;display:flex;gap:.5rem">
       <button id="submit-iter">Submit iteration</button>
-      <button class="secondary" id="view-checkin">View check-in</button>
-      <button class="secondary" id="view-memory">View memory log</button>
     </div>
     <div id="iter-status" class="status-line"></div>
-    <div id="checkin-view"></div>
-    <div id="memory-view"></div>
-
-    <h2 style="margin-top:1.5rem">History</h2>
-    <div class="history">${history}</div>
   `;
-
   document.getElementById('submit-iter').onclick = () => submitIteration(id);
-  document.getElementById('view-checkin').onclick = () => viewCheckin(id);
-  document.getElementById('view-memory').onclick = () => viewMemory(id);
-  const saveCriteriaBtn = document.getElementById('save-criteria');
-  if (saveCriteriaBtn) saveCriteriaBtn.onclick = () => saveCriteria(id);
-  const criteriaEl = document.querySelector('details.criteria');
-  if (criteriaEl) criteriaEl.ontoggle = (e) => { criteriaOpen = e.target.open; };
   document.getElementById('it-has-proposal').onchange = (e) => {
     document.getElementById('proposal-fields').style.display = e.target.checked ? 'block' : 'none';
   };
-  for (const btn of document.querySelectorAll('.stalled-fill')) {
-    btn.onclick = () => {
-      document.getElementById('it-stage').value = btn.dataset.stage;
-      document.getElementById('it-feedback').focus();
-    };
-  }
+}
+
+function renderHistoryPanel(data) {
+  const body = document.getElementById('body-history');
+  const history = [...data.state.history].reverse().map(h => `
+    <div class="iter">
+      <div class="head"><span>iteration ${h.iteration} · ${h.stage}</span>
+        <span class="${h.succeeded ? 'ok' : 'fail'}">${h.succeeded ? 'ok' : 'FAILED'}</span></div>
+      <div>${escapeHtml(h.feedback)}</div>
+      ${renderProposals(h.proposals)}
+    </div>`).join('') || '<span class="lede">No iterations yet.</span>';
+  body.innerHTML = `<div class="history">${history}</div>`;
 }
 
 async function submitIteration(id) {
@@ -359,14 +591,17 @@ async function submitIteration(id) {
       text = `Iteration ${result.iteration} recorded -- outcome: ${result.outcome}, roles now ${result.roles_now}.`;
       cls = 'status-line ok';
     }
-    // selectRun() re-renders the whole panel (including a fresh #iter-status
-    // element) -- set the message on the element AFTER that render, not the
-    // stale reference captured before it, or it gets wiped immediately.
+    // selectRun() re-renders every panel (fresh #iter-status included) -- set
+    // the message on the element AFTER that render, not the stale reference
+    // captured before it, or it gets wiped immediately.
     await selectRun(id);
     const freshStatus = document.getElementById('iter-status');
     freshStatus.textContent = text;
     freshStatus.className = cls;
-    if (showCheckin) await viewCheckin(id);
+    if (showCheckin) {
+      showPanel('checkin');
+      await viewCheckin(id);
+    }
   } catch (e) {
     status.textContent = e.message; status.className = 'status-line err';
   }
@@ -387,9 +622,6 @@ async function saveCriteria(id) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ max_iterations, max_consecutive_failures, checkin_every })
     });
-    // Same wiped-status pitfall as submitIteration -- selectRun() rebuilds
-    // #run-detail (including a fresh #criteria-status), so set the message
-    // on that fresh element, not this stale reference.
     await selectRun(id);
     const fresh = document.getElementById('criteria-status');
     fresh.textContent = 'Saved.'; fresh.className = 'status-line ok';
@@ -478,25 +710,11 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-document.getElementById('create-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const status = document.getElementById('create-status');
-  const run_id = document.getElementById('new-run-id').value.trim();
-  status.textContent = 'Creating…'; status.className = 'status-line';
-  try {
-    await fetchJSON(`${API}/runs`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ run_id })
-    });
-    status.textContent = `Created ${run_id}.`; status.className = 'status-line ok';
-    document.getElementById('new-run-id').value = '';
-    await selectRun(run_id);
-  } catch (e) {
-    status.textContent = e.message; status.className = 'status-line err';
-  }
-});
-
+initPanels();
 loadRuns();
+for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'checkin', 'memory']) {
+  placeholderIfNoRun(id);
+}
 </script>
 </body>
 </html>
