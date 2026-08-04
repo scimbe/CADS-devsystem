@@ -1965,18 +1965,32 @@ function renderRequirementsPanel(id, data) {
       if (addressedBy[i]) addressedBy[i].push(h.iteration);
     }
   }
+  // Real, purely additive per-criterion tracking (2026-08-05 follow-up):
+  // verified_criteria may be shorter than acceptance_criteria (or entirely
+  // absent) for any requirement that predates this field or simply hasn't
+  // had a criterion checked yet -- render every position as unchecked by
+  // default rather than assuming the arrays are the same length.
   const items = requirements.length
-    ? requirements.map((r, i) => `
+    ? requirements.map((r, i) => {
+        const verifiedCriteria = r.verified_criteria || [];
+        const checkedCount = r.acceptance_criteria.filter((_, ci) => verifiedCriteria[ci]).length;
+        return `
         <div class="role-card">
           <label class="backlog-item${r.verified ? ' done' : ''}" style="align-items:flex-start">
             <input type="checkbox" class="requirement-toggle" data-index="${i}" ${r.verified ? 'checked' : ''}>
             <span>${escapeHtml(r.statement)}</span>
           </label>
-          <ul style="margin:.3rem 0 0 1.6rem;padding:0;font-size:.75rem" class="lede">
-            ${r.acceptance_criteria.map(c => `<li>${escapeHtml(c)}</li>`).join('')}
-          </ul>
+          <div style="margin:.3rem 0 0 1.6rem;font-size:.7rem" class="lede">acceptance criteria (${checkedCount}/${r.acceptance_criteria.length} confirmed):</div>
+          <div style="margin:.2rem 0 0 1.6rem;display:flex;flex-direction:column;gap:.15rem">
+            ${r.acceptance_criteria.map((c, ci) => `
+              <label class="backlog-item${verifiedCriteria[ci] ? ' done' : ''}" style="font-size:.75rem">
+                <input type="checkbox" class="criterion-toggle" data-req-index="${i}" data-criterion-index="${ci}" ${verifiedCriteria[ci] ? 'checked' : ''}>
+                <span>${escapeHtml(c)}</span>
+              </label>`).join('')}
+          </div>
           <div class="lede" style="font-size:.7rem;margin-top:.3rem">${addressedBy[i].length ? `addressed by iteration(s) ${addressedBy[i].join(', ')}` : 'not yet addressed by any iteration'}</div>
-        </div>`).join('')
+        </div>`;
+      }).join('')
     : '<span class="lede">No requirements yet.</span>';
   body.innerHTML = `
     <div class="backlog-list">${items}</div>
@@ -1990,6 +2004,9 @@ function renderRequirementsPanel(id, data) {
   `;
   for (const cb of body.querySelectorAll('.requirement-toggle')) {
     cb.onchange = () => toggleRequirement(id, parseInt(cb.dataset.index, 10));
+  }
+  for (const cb of body.querySelectorAll('.criterion-toggle')) {
+    cb.onchange = () => toggleAcceptanceCriterion(id, parseInt(cb.dataset.reqIndex, 10), parseInt(cb.dataset.criterionIndex, 10));
   }
   document.getElementById('requirement-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -2013,6 +2030,16 @@ function renderRequirementsPanel(id, data) {
 async function toggleRequirement(id, index) {
   try {
     await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements/${index}/toggle`, { method: 'POST' });
+    await selectRun(id);
+  } catch (e) {
+    const status = document.getElementById('requirement-status');
+    if (status) { status.textContent = e.message; status.className = 'status-line err'; }
+  }
+}
+
+async function toggleAcceptanceCriterion(id, reqIndex, criterionIndex) {
+  try {
+    await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements/${reqIndex}/criteria/${criterionIndex}/toggle`, { method: 'POST' });
     await selectRun(id);
   } catch (e) {
     const status = document.getElementById('requirement-status');

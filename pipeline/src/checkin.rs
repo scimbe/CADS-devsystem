@@ -228,6 +228,7 @@ mod tests {
             statement: "WHEN a user sends a text message over an established channel, THE SYSTEM SHALL persist it locally before confirming delivery to the UI".into(),
             acceptance_criteria: vec!["message survives an app restart".into()],
             verified: false,
+            verified_criteria: Vec::new(),
         });
         state.history.push(IterationRecord {
             run_id: "run-req-checkin".into(),

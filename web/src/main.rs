@@ -18,8 +18,8 @@ use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::preflight_annotations;
 use devsystem_pipeline::runner::{
-    load_or_init_run, persist_run, run_iteration, toggle_milestone, toggle_requirement, BacklogItem, CustomPanel, Milestone, PendingIssueProposal,
-    PendingPanelProposal, PendingStageProposal, Requirement, RoleFillMode, RunOutcome,
+    load_or_init_run, persist_run, run_iteration, toggle_acceptance_criterion, toggle_milestone, toggle_requirement, BacklogItem, CustomPanel,
+    Milestone, PendingIssueProposal, PendingPanelProposal, PendingStageProposal, Requirement, RoleFillMode, RunOutcome,
 };
 use devsystem_pipeline::{apply_proposal, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
@@ -105,6 +105,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/milestones/{index}/toggle", post(toggle_milestone_handler))
         .route("/api/runs/{id}/requirements", post(add_requirement))
         .route("/api/runs/{id}/requirements/{index}/toggle", post(toggle_requirement_handler))
+        .route("/api/runs/{id}/requirements/{index}/criteria/{criterion_index}/toggle", post(toggle_acceptance_criterion_handler))
         .route("/api/runs/{id}/repo", post(set_repo_url))
         .route("/api/runs/{id}/roles/{tag}/fill-mode", post(set_role_fill_mode))
         .route("/api/runs/{id}/rag/sync", post(sync_rag))
@@ -887,7 +888,7 @@ async fn add_requirement(
     if run_state.requirements.len() >= MAX_LIST_ITEMS {
         return (StatusCode::BAD_REQUEST, format!("requirements is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
     }
-    run_state.requirements.push(Requirement { statement, acceptance_criteria, verified: false });
+    run_state.requirements.push(Requirement { statement, acceptance_criteria, verified: false, verified_criteria: Vec::new() });
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
@@ -915,6 +916,38 @@ async fn toggle_requirement_handler(
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
     }
     if let Err(e) = toggle_requirement(&mut run_state, index) {
+        return (StatusCode::NOT_FOUND, e).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// Real, purely additive follow-up (2026-08-05) to `toggle_requirement_handler`
+/// -- see `Requirement::verified_criteria`'s own doc comment for why this is a
+/// separate signal from the whole-requirement `verified` flag.
+async fn toggle_acceptance_criterion_handler(
+    State(state): State<AppState>,
+    AxPath((id, req_index, criterion_index)): AxPath<(String, usize, usize)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    if let Err(e) = toggle_acceptance_criterion(&mut run_state, req_index, criterion_index) {
         return (StatusCode::NOT_FOUND, e).into_response();
     }
     match persist_run(&dir, &spec, &run_state) {
@@ -2905,6 +2938,64 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::OK, "verifying a requirement must never block the next iteration");
+    }
+
+    #[tokio::test]
+    async fn acceptance_criteria_can_be_toggled_independently_of_the_whole_requirement() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "criteria-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/criteria-run/requirements",
+                serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["criterion A", "criterion B"]}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/criteria-run/requirements/0/criteria/1/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["requirements"][0]["verified_criteria"], serde_json::json!([false, true]), "must grow with real false padding, not just record index 1 alone");
+        assert_eq!(body["requirements"][0]["verified"], false, "toggling one criterion must never silently flip the independent whole-requirement flag");
+
+        // Independently confirms it actually persisted, not just the response.
+        let response = app.oneshot(Request::builder().uri("/api/runs/criteria-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["state"]["requirements"][0]["verified_criteria"], serde_json::json!([false, true]));
+    }
+
+    #[tokio::test]
+    async fn toggling_an_out_of_range_acceptance_criterion_404s() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "criteria-oob-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/criteria-oob-run/requirements",
+                serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["only one criterion"]}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/criteria-oob-run/requirements/0/criteria/5/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/criteria-oob-run/requirements/9/criteria/0/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND, "an out-of-range requirement index must also 404, not panic");
     }
 
     #[tokio::test]

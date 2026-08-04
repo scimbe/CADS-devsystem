@@ -181,6 +181,7 @@ mod tests {
             statement: "WHEN a user sends a text message over an established channel, THE SYSTEM SHALL persist it locally before confirming delivery to the UI".into(),
             acceptance_criteria: vec!["message survives an app restart".into()],
             verified: false,
+            verified_criteria: Vec::new(),
         }];
         let mut rec = record(vec![]);
         rec.requirement_indices = vec![0];
