@@ -114,6 +114,16 @@ fn condense_history(body: &str) -> String {
                 "iteration": entry.get("iteration"),
                 "stage": entry.get("stage"),
                 "succeeded": entry.get("succeeded"),
+                // Real bug found+fixed 2026-08-05: requirement_indices didn't
+                // exist when this function was first written, so it wasn't
+                // kept here -- once it shipped, any run past KEEP_FULL
+                // iterations silently lost the assistant's visibility into
+                // which OLDER iterations addressed which requirement, which
+                // would make it honestly-but-wrongly say "not yet addressed"
+                // for something an earlier, condensed-away iteration already
+                // covered. Compact (a handful of small integers), so unlike
+                // feedback text it costs nothing real to always keep.
+                "requirement_indices": entry.get("requirement_indices"),
             })
         })
         .collect();
@@ -964,6 +974,27 @@ mod tests {
 
         let parsed: serde_json::Value = serde_json::from_str(&condensed).expect("condensed output is still valid JSON");
         assert!(parsed.pointer("/state/history").unwrap().is_array());
+    }
+
+    #[test]
+    fn condensing_an_old_iteration_keeps_its_requirement_indices_not_just_recent_ones() {
+        // Real bug this reproduces: requirement_indices didn't exist when
+        // condense_history was first written, so an iteration condensed away
+        // (anything before the most recent KEEP_FULL) used to silently lose
+        // it -- the assistant would then honestly-but-wrongly report a
+        // requirement as unaddressed just because the iteration that really
+        // addressed it fell outside the kept window.
+        let mut entries: Vec<_> = (1..=13).map(|i| history_entry(i, "short real feedback")).collect();
+        // Iteration 2 -- well outside the 6 most recent of 13 -- really
+        // addressed requirement index 0.
+        entries[1]["requirement_indices"] = serde_json::json!([0]);
+        let body = serde_json::json!({"state": {"history": entries}}).to_string();
+        let condensed = condense_history(&body);
+
+        let parsed: serde_json::Value = serde_json::from_str(&condensed).expect("condensed output is still valid JSON");
+        let history = parsed.pointer("/state/history").unwrap().as_array().unwrap();
+        let iter2 = history.iter().find(|e| e.get("iteration") == Some(&serde_json::json!(2))).expect("iteration 2 must still be present, even condensed");
+        assert_eq!(iter2["requirement_indices"], serde_json::json!([0]), "a condensed (non-recent) iteration must still carry its real requirement_indices");
     }
 
     #[test]
