@@ -18,7 +18,9 @@ path = "src/main.rs"
 # wire-compatible CapacityOffer/PipelineSpec shapes.
 ct-common = { git = "https://github.com/scimbe/CADS-Tunnel", tag = "v0.4.13" }
 devsystem-pipeline = { path = "../pipeline" }
-axum = "0.8"
+# "multipart" for POST /api/runs/{id}/rag/upload-file -- the operator's real
+# image/document upload endpoint accepts a real multipart file, not JSON.
+axum = { version = "0.8", features = ["multipart"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util"] }

@@ -74,6 +74,14 @@ struct AppState {
     /// OpenAI-compatible provider (or a test's own mock server) never requires
     /// a code change, only a different env var.
     rag_embedding_api_base: Arc<str>,
+    /// Real Unstructured API credential (`rag::parse_with_unstructured`),
+    /// `RAG_UNSTRUCTURED_API_KEY` at startup -- `None` when unconfigured, same
+    /// honest-degrade contract: `upload_rag_file` reports a clear "not
+    /// configured" error rather than pretending to extract anything.
+    rag_unstructured_api_key: Option<Arc<str>>,
+    /// `RAG_UNSTRUCTURED_API_BASE` at startup, defaulting to the real hosted
+    /// `api.unstructured.io`.
+    rag_unstructured_api_base: Arc<str>,
 }
 
 fn unix_now() -> u64 {
@@ -113,6 +121,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/rag/sync", post(sync_rag))
         .route("/api/runs/{id}/rag/search", get(search_rag))
         .route("/api/runs/{id}/rag/documents", post(add_rag_document))
+        .route("/api/runs/{id}/rag/upload-file", post(upload_rag_file))
         .route("/api/runs/{id}/rag/documents/{doc_id}/remove", post(remove_rag_document))
         .route("/api/runs/{id}/panels", post(add_custom_panel))
         .route("/api/runs/{id}/panels/{panel_id}/remove", post(remove_custom_panel))
@@ -207,6 +216,15 @@ async fn main() {
     }
     let rag_embedding_api_base: Arc<str> =
         std::env::var("RAG_EMBEDDING_API_BASE").ok().filter(|s| !s.trim().is_empty()).map(Arc::from).unwrap_or_else(|| Arc::from("https://api.openai.com/v1"));
+    let rag_unstructured_api_key: Option<Arc<str>> = std::env::var("RAG_UNSTRUCTURED_API_KEY").ok().filter(|s| !s.trim().is_empty()).map(Arc::from);
+    if rag_unstructured_api_key.is_none() {
+        println!("RAG_UNSTRUCTURED_API_KEY not set -- POST /rag/upload-file will report itself unconfigured");
+    }
+    let rag_unstructured_api_base: Arc<str> = std::env::var("RAG_UNSTRUCTURED_API_BASE")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(Arc::from)
+        .unwrap_or_else(|| Arc::from("https://api.unstructured.io"));
     let state = AppState {
         runs_dir: Arc::new(runs_dir),
         write_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -215,6 +233,8 @@ async fn main() {
         http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().expect("build http client"),
         rag_embedding_api_key,
         rag_embedding_api_base,
+        rag_unstructured_api_key,
+        rag_unstructured_api_base,
     };
 
     let static_dir = std::env::var("DEVSYSTEM_STATIC_DIR").unwrap_or_else(|_| "web/static".to_string());
@@ -1154,6 +1174,99 @@ async fn add_rag_document(
     }
 }
 
+/// Real cap on a raw upload's bytes before it's even sent to Unstructured --
+/// the requirements doc's own ask ("an image file needs its own real, stated
+/// size cap"), separate from [`rag::MAX_UNSTRUCTURED_EXTRACTED_CHARS`] (which
+/// caps the *extracted text*, not the upload itself). 10MB covers a real
+/// scanned page or a typical PDF without letting an unbounded upload spend
+/// unbounded real Unstructured API cost on this operator's behalf.
+const MAX_RAG_UPLOAD_BYTES: usize = 10_000_000;
+
+/// `POST /api/runs/{id}/rag/upload-file` -- real image/PDF/DOCX upload via the
+/// real Unstructured API (`rag::parse_with_unstructured`), the operator's
+/// explicit image-OCR ask from CADS-devsystem#7. `multipart/form-data`, one
+/// field named `file`. Owner-restricted like every other GUI mutation; a real
+/// `503` (not a silent no-op) when `RAG_UNSTRUCTURED_API_KEY` isn't
+/// configured, matching `ask_assistant`'s own "not configured" precedent
+/// rather than pretending to accept a file it can't actually process.
+async fn upload_rag_file(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap, mut multipart: axum::extract::Multipart) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let Some(api_key) = state.rag_unstructured_api_key.clone() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "RAG_UNSTRUCTURED_API_KEY is not configured on this deployment").into_response();
+    };
+    let _guard = state.write_lock.lock().await;
+    let run_state = match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, s)) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let mut filename = String::new();
+    let mut bytes: Vec<u8> = Vec::new();
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => return (StatusCode::BAD_REQUEST, format!("malformed multipart upload: {e}")).into_response(),
+        };
+        if field.name() != Some("file") {
+            continue;
+        }
+        filename = field.file_name().unwrap_or("upload").to_string();
+        bytes = match field.bytes().await {
+            Ok(b) => b.to_vec(),
+            Err(e) => return (StatusCode::BAD_REQUEST, format!("could not read the uploaded file: {e}")).into_response(),
+        };
+    }
+    if bytes.is_empty() {
+        return (StatusCode::BAD_REQUEST, "no file field found in the upload (expected a multipart field named 'file')").into_response();
+    }
+    if bytes.len() > MAX_RAG_UPLOAD_BYTES {
+        return (StatusCode::BAD_REQUEST, format!("upload must be under {MAX_RAG_UPLOAD_BYTES} bytes")).into_response();
+    }
+    let elements = match rag::parse_with_unstructured(&state.http_client, &state.rag_unstructured_api_base, &api_key, &filename, bytes).await {
+        Ok(e) => e,
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("Unstructured extraction failed: {e}")).into_response(),
+    };
+    let (text, truncated) = rag::elements_to_text(&elements);
+    if text.trim().is_empty() {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "Unstructured extracted no text from this file", "elements": elements.len()})),
+        )
+            .into_response();
+    }
+    let mut index = load_rag_index(&state, &id).unwrap_or_else(|| rag::RagIndex {
+        repo_url: run_state.repo_url.clone().unwrap_or_default(),
+        synced_at: 0,
+        branch: String::new(),
+        files_seen: 0,
+        files_indexed: 0,
+        chunks: Vec::new(),
+        manual_documents: Vec::new(),
+    });
+    let doc = rag::RagDocument { id: format!("{:016x}", rand::random::<u64>()), path: filename, text, added_at: unix_now(), embedding: None };
+    index.manual_documents.push(doc.clone());
+    embed_index_in_place(&state, &mut index).await;
+    match persist_rag_index(&state, &id, &index) {
+        Ok(()) => Json(serde_json::json!({
+            "id": doc.id,
+            "path": doc.path,
+            "added_at": doc.added_at,
+            "elements_extracted": elements.len(),
+            "extracted_text_truncated": truncated,
+        }))
+        .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the index: {e}")).into_response(),
+    }
+}
+
 /// `POST /api/runs/{id}/rag/documents/{doc_id}/remove` -- real per-document
 /// delete, the other half of the operator's "kann ich die Dokumente
 /// verwalten" ask. Only ever removes from `manual_documents`; a repo-synced
@@ -1780,6 +1893,8 @@ mod tests {
             http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().expect("build http client"),
             rag_embedding_api_key: None,
             rag_embedding_api_base: Arc::from("https://api.openai.com/v1"),
+            rag_unstructured_api_key: None,
+            rag_unstructured_api_base: Arc::from("https://api.unstructured.io"),
         };
         (state, dir)
     }
@@ -1788,6 +1903,13 @@ mod tests {
         let (mut state, dir) = test_state();
         state.rag_embedding_api_key = Some(Arc::from(api_key));
         state.rag_embedding_api_base = Arc::from(api_base);
+        (state, dir)
+    }
+
+    fn test_state_with_rag_unstructured(api_key: &str, api_base: &str) -> (AppState, tempfile::TempDir) {
+        let (mut state, dir) = test_state();
+        state.rag_unstructured_api_key = Some(Arc::from(api_key));
+        state.rag_unstructured_api_base = Arc::from(api_base);
         (state, dir)
     }
 
@@ -3084,6 +3206,8 @@ mod tests {
             http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().expect("build http client"),
             rag_embedding_api_key: None,
             rag_embedding_api_base: Arc::from("https://api.openai.com/v1"),
+            rag_unstructured_api_key: None,
+            rag_unstructured_api_base: Arc::from("https://api.unstructured.io"),
         };
         let app = api_router(state);
 
@@ -3440,6 +3564,125 @@ mod tests {
             app.oneshot(Request::builder().uri("/api/runs/rag-keyword-run/rag/search?q=hello").body(Body::empty()).unwrap()).await.unwrap();
         let body = body_json(response).await;
         assert_eq!(body["results"][0]["match_kind"], "keyword", "no credential configured must never fabricate a semantic result");
+    }
+
+    /// Real `multipart/form-data` body, hand-built rather than via `reqwest`'s
+    /// multipart builder -- this drives `api_router()` in-process via
+    /// `tower::ServiceExt::oneshot`, no real socket, so the request has to be
+    /// assembled as raw bytes the same way a real client's would arrive.
+    fn multipart_file_request(uri: &str, filename: &str, content: &[u8]) -> Request<Body> {
+        let boundary = "----ragtestboundary";
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes());
+        body.extend_from_slice(content);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+            .body(Body::from(body))
+            .unwrap()
+    }
+
+    async fn spawn_mock_unstructured_server(status: SC, response_body: serde_json::Value) -> String {
+        let mock_app = Router::new().route(
+            "/general/v0/general",
+            post(move || {
+                let status = status;
+                let response_body = response_body.clone();
+                async move { (status, Json(response_body)) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind mock listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, mock_app).await.expect("serve mock");
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn upload_rag_file_reports_unconfigured_honestly_not_silently() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-upload-run"}))).await.unwrap();
+
+        let response = app.oneshot(multipart_file_request("/api/runs/rag-upload-run/rag/upload-file", "scan.png", b"fake-image-bytes")).await.unwrap();
+        assert_eq!(response.status(), SC::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn upload_rag_file_extracts_real_text_and_makes_it_searchable() {
+        let base = spawn_mock_unstructured_server(
+            SC::OK,
+            serde_json::json!([
+                {"text": "Invoice Number 4471", "type": "Title"},
+                {"text": "A real OCR pass over the uploaded image extracted this line.", "type": "NarrativeText"}
+            ]),
+        )
+        .await;
+        let (state, _dir) = test_state_with_rag_unstructured("fake-key", &base);
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-upload-run"}))).await.unwrap();
+
+        let response = app.clone().oneshot(multipart_file_request("/api/runs/rag-upload-run/rag/upload-file", "invoice.png", b"fake-image-bytes")).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let created = body_json(response).await;
+        assert_eq!(created["path"], "invoice.png");
+        assert_eq!(created["elements_extracted"], 2);
+        assert_eq!(created["extracted_text_truncated"], false);
+
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/rag-upload-run/rag/search?q=Invoice+4471").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["results"][0]["path"], "invoice.png", "the real extracted text must be genuinely searchable, not just stored");
+    }
+
+    #[tokio::test]
+    async fn upload_rag_file_with_no_file_field_is_a_real_400() {
+        let (state, _dir) = test_state_with_rag_unstructured("fake-key", "http://127.0.0.1:1");
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-upload-run"}))).await.unwrap();
+
+        let boundary = "----empty";
+        let body = format!("--{boundary}--\r\n");
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/runs/rag-upload-run/rag/upload-file")
+            .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+            .body(Body::from(body))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn upload_rag_file_of_a_genuinely_blank_image_is_a_real_422_not_a_placeholder_document() {
+        let base = spawn_mock_unstructured_server(SC::OK, serde_json::json!([])).await;
+        let (state, _dir) = test_state_with_rag_unstructured("fake-key", &base);
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-upload-run"}))).await.unwrap();
+
+        let response = app.oneshot(multipart_file_request("/api/runs/rag-upload-run/rag/upload-file", "blank.png", b"fake-blank-image")).await.unwrap();
+        assert_eq!(response.status(), SC::UNPROCESSABLE_ENTITY, "an upload that extracts no real text must not silently become an empty stored document");
+    }
+
+    #[tokio::test]
+    async fn a_different_account_cannot_upload_a_rag_file_to_someone_elses_run() {
+        let base = spawn_mock_unstructured_server(SC::OK, serde_json::json!([{"text": "text", "type": "Title"}])).await;
+        let (state, _dir) = test_state_with_rag_unstructured("fake-key", &base);
+        let app = api_router(state);
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "owner@example.com", Some(serde_json::json!({"run_id": "rag-upload-owned-run"}))))
+            .await
+            .unwrap();
+
+        let mut request = multipart_file_request("/api/runs/rag-upload-owned-run/rag/upload-file", "scan.png", b"fake-image-bytes");
+        request.headers_mut().insert("x-gate-email", "someone-else@example.com".parse().unwrap());
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), SC::FORBIDDEN);
     }
 
     #[tokio::test]

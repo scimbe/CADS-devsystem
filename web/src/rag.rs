@@ -529,6 +529,14 @@ pub fn elements_to_text(elements: &[UnstructuredElement]) -> (String, bool) {
         if !text.is_empty() {
             text.push('\n');
         }
+        // Real use of Unstructured's own classification, not a discarded
+        // field: a Title element becomes a markdown heading, so a title
+        // extracted from a scanned image/PDF page carries the same
+        // score_chunk exact-phrase weight a real README's `# Heading` line
+        // already gets, rather than being indistinguishable body text.
+        if el.element_type == "Title" {
+            text.push_str("# ");
+        }
         text.push_str(el.text.trim());
     }
     if text.chars().count() > MAX_UNSTRUCTURED_EXTRACTED_CHARS {
@@ -791,7 +799,7 @@ mod tests {
             UnstructuredElement { text: "Body text extracted from the image.".into(), element_type: "NarrativeText".into() },
         ];
         let (text, truncated) = elements_to_text(&elements);
-        assert_eq!(text, "Title Here\nBody text extracted from the image.");
+        assert_eq!(text, "# Title Here\nBody text extracted from the image.", "a real Title element becomes a markdown heading, a real NarrativeText element does not");
         assert!(!truncated);
     }
 
