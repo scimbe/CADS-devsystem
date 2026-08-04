@@ -106,6 +106,13 @@ async fn main() {
     axum::serve(listener, app).await.expect("serve");
 }
 
+/// Defensive cap on backlog/milestone growth -- both persist to state.json on every
+/// add, and (unlike history, which only grows one entry per real iteration) nothing
+/// stops a client from adding items in a tight loop. Generous enough that no real
+/// human workflow hits it, small enough that a runaway script can't grow a run's
+/// state.json without bound (matches the host's real, limited disk headroom).
+const MAX_LIST_ITEMS: usize = 500;
+
 /// Real path-traversal guard: `create_run` was the only handler that ever validated
 /// `id`'s charset. Every other handler (`get_run`, `iterate_run`, `checkin_run`,
 /// `memory_run`, `govern_memory`, `update_criteria`) took `id` straight from the URL
@@ -482,6 +489,9 @@ async fn add_backlog_item(
         Ok(v) => v,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
     };
+    if run_state.backlog.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("backlog is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
+    }
     run_state.backlog.push(BacklogItem { text, done: false });
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"backlog": run_state.backlog})).into_response(),
@@ -542,6 +552,9 @@ async fn add_milestone(
         Ok(v) => v,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
     };
+    if run_state.milestones.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("milestones is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
+    }
     run_state.milestones.push(Milestone { description, achieved: false });
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"milestones": run_state.milestones})).into_response(),
@@ -1086,6 +1099,45 @@ mod tests {
             .unwrap();
         let reread = body_json(response).await;
         assert_eq!(reread["state"]["backlog"][0]["done"], true);
+    }
+
+    #[tokio::test]
+    async fn backlog_and_milestones_reject_additions_past_the_defensive_cap() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "cap-run"})))
+            .await
+            .unwrap();
+
+        for i in 0..MAX_LIST_ITEMS {
+            let response = app
+                .clone()
+                .oneshot(json_request("POST", "/api/runs/cap-run/backlog", serde_json::json!({"text": format!("item {i}")})))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::OK, "item {i} should still fit under the cap");
+        }
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/cap-run/backlog", serde_json::json!({"text": "one too many"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "the (MAX_LIST_ITEMS + 1)th backlog item must be rejected");
+
+        for i in 0..MAX_LIST_ITEMS {
+            let response = app
+                .clone()
+                .oneshot(json_request("POST", "/api/runs/cap-run/milestones", serde_json::json!({"description": format!("milestone {i}")})))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::OK, "milestone {i} should still fit under the cap");
+        }
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/cap-run/milestones", serde_json::json!({"description": "one too many"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "the (MAX_LIST_ITEMS + 1)th milestone must be rejected");
     }
 
     #[tokio::test]
