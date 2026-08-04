@@ -30,15 +30,32 @@
 //! for it, so a repeated request for the same real gap never files a
 //! duplicate GitHub issue -- it honestly reports the existing one instead.
 //!
-//! SCOPE OF THIS SLICE: this binary's own request-handling logic (parse,
-//! allowlist, memory dedup, the real GitHub POST) is built and hermetically
-//! tested here, and has been live-verified standalone (see this repo's commit
-//! history for the manual stdin/stdout run against a real token). Actually
-//! running this behind a live `ct-agent channel --serve` process and cutting
-//! devsystem-web/devsystem_assistant over to call it as a channel initiator
-//! (rather than POSTing to GitHub directly, which is still how
-//! `approve_issue_proposal` in `web/src/main.rs` works today) is the next
-//! slice -- deliberately not rushed into the same firing as this one.
+//! Live-verified end to end over a REAL `ct-agent channel` call (2026-08-04,
+//! two local `ct-agent channel init` identities, direct-address per the docs
+//! -- no control-plane registration needed): a real Noise-encrypted session,
+//! `CT_CHANNEL_CALL_SERVICE=text_generation` on the initiator side,
+//! `CT_AGENT_SERVICE_HANDLER_CMD` pointed at this binary on the accept side.
+//! That run surfaced a real, non-obvious integration bug, now fixed: a
+//! non-zero handler exit is treated by ct-agent as a hard transport-level RPC
+//! error and its stdout is dropped entirely -- the first live attempt (no
+//! token configured, handler correctly exiting 1) came back as an opaque
+//! `"service handler exited exit status: 1"` instead of the real
+//! `IssueResponse::Error` JSON this binary actually printed. `main()` now
+//! always exits 0 once it has produced a valid response line; success/failure
+//! is encoded purely in the JSON body, never the process exit code -- see
+//! `main()`'s own doc comment.
+//!
+//! SCOPE OF THIS SLICE: the agent's own request-handling logic AND its real
+//! behavior when invoked as an actual channel service handler are both now
+//! proven, hermetically tested, and live-verified. Cutting devsystem-web/
+//! devsystem_assistant over to call this via a channel initiator instead of
+//! POSTing to GitHub directly (still how `approve_issue_proposal` in
+//! `web/src/main.rs` works today) -- and deciding where this agent's
+//! long-lived accept-side process should actually run (the direct-address
+//! accept path serves exactly one session then exits per the docs; a
+//! persistent multi-call deployment needs either a respawn-loop wrapper or
+//! real broker-mediated channel registration, a real operator-level hosting
+//! decision, not guessed at here) -- is the deliberately separate next slice.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -169,6 +186,15 @@ fn handle(req: &IssueRequest, memory: &mut Memory, post: impl FnOnce(&str, &str,
     }
 }
 
+/// Real finding from live-verifying this over an actual `ct-agent channel`
+/// call (2026-08-04): a non-zero handler exit is treated by ct-agent as a
+/// hard TRANSPORT-level RPC error ("service handler exited exit status: 1")
+/// and the handler's own stdout is NOT forwarded to the real caller in that
+/// case -- confirmed by direct observation, not assumed. So this process must
+/// always exit 0 once it has produced a valid `IssueResponse` line on stdout,
+/// no matter what that response says; success/failure is encoded purely in
+/// the JSON body's `status` field. Exiting non-zero is reserved for the case
+/// this function can't even get that far (can't read stdin at all).
 fn main() -> std::process::ExitCode {
     let mut input = String::new();
     if let Err(e) = io::stdin().read_to_string(&mut input) {
@@ -176,45 +202,35 @@ fn main() -> std::process::ExitCode {
         println!("{}", serde_json::to_string(&resp).expect("IssueResponse always serializes"));
         return std::process::ExitCode::FAILURE;
     }
+
     // CT_AGENT_SERVICE_HANDLER_CMD's own documented contract is one line, but a
     // caller may still include a trailing newline (or, per this repo's own
     // established `read_line`-on-EOF caution elsewhere, none at all) -- trim
     // rather than assume either.
-    let req: IssueRequest = match serde_json::from_str(input.trim()) {
-        Ok(r) => r,
-        Err(e) => {
-            let resp = IssueResponse::Error { error: format!("invalid request JSON: {e}") };
-            println!("{}", serde_json::to_string(&resp).expect("IssueResponse always serializes"));
-            return std::process::ExitCode::FAILURE;
+    let response = match serde_json::from_str::<IssueRequest>(input.trim()) {
+        Ok(req) => {
+            let path = memory_path();
+            let mut memory = load_memory(&path);
+            let response = match env::var("GITHUB_ISSUE_AGENT_TOKEN") {
+                Ok(token) => {
+                    let client = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(15)).build().expect("build blocking http client");
+                    handle(&req, &mut memory, |repo, title, body| post_to_github(&client, &token, repo, title, body))
+                }
+                Err(_) => IssueResponse::Error { error: "GITHUB_ISSUE_AGENT_TOKEN is not configured on this agent -- cannot post to GitHub".to_string() },
+            };
+            if matches!(response, IssueResponse::Created { .. }) {
+                if let Err(e) = save_memory(&path, &memory) {
+                    eprintln!("warning: created the issue but failed to persist memory to {path:?}: {e}");
+                }
+            }
+            response
         }
+        Err(e) => IssueResponse::Error { error: format!("invalid request JSON: {e}") },
     };
 
-    let path = memory_path();
-    let mut memory = load_memory(&path);
-
-    let response = match env::var("GITHUB_ISSUE_AGENT_TOKEN") {
-        Ok(token) => {
-            let client = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(15)).build().expect("build blocking http client");
-            handle(&req, &mut memory, |repo, title, body| post_to_github(&client, &token, repo, title, body))
-        }
-        Err(_) => IssueResponse::Error { error: "GITHUB_ISSUE_AGENT_TOKEN is not configured on this agent -- cannot post to GitHub".to_string() },
-    };
-
-    if matches!(response, IssueResponse::Created { .. }) {
-        if let Err(e) = save_memory(&path, &memory) {
-            eprintln!("warning: created the issue but failed to persist memory to {path:?}: {e}");
-        }
-    }
-
-    let out = serde_json::to_string(&response).expect("IssueResponse always serializes");
-    let ok = !matches!(response, IssueResponse::Error { .. });
-    println!("{out}");
+    println!("{}", serde_json::to_string(&response).expect("IssueResponse always serializes"));
     io::stdout().flush().ok();
-    if ok {
-        std::process::ExitCode::SUCCESS
-    } else {
-        std::process::ExitCode::FAILURE
-    }
+    std::process::ExitCode::SUCCESS
 }
 
 #[cfg(test)]
