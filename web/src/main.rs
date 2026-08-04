@@ -286,17 +286,27 @@ struct RunSummary {
     stalled_stages: Vec<String>,
     risk_count: usize,
     needs_attention: bool,
+    /// Real count of proposals (custom panel / pipeline stage / GitHub issue)
+    /// genuinely awaiting a human decision on this run -- gap found 2026-08-04:
+    /// a run could sit with e.g. a stage proposal unresolved for many loop
+    /// firings without ever surfacing in the Runs list, only visible after
+    /// opening that run's Pipeline panel specifically. Each of these already
+    /// has its own real "propose, human approves" gate (#38/#39/#45); this is
+    /// just making the fact that one is WAITING visible where a human
+    /// actually looks first, not a new decision mechanism.
+    pending_reviews: usize,
     paused: bool,
     owner_email: Option<String>,
 }
 
 /// True when a run is close enough to its own bound that a human should notice it
 /// before opening the run, not just after -- the same danger/warn thresholds the
-/// GUI's health panel already uses, just evaluated once here so the run list can
-/// surface it too (matches the stalled-stage badge precedent: proactive, not
+/// GUI's health panel already uses -- OR a real proposal is genuinely waiting on a
+/// human decision (`pending_reviews`), evaluated once here so the run list can
+/// surface either case (matches the stalled-stage badge precedent: proactive, not
 /// only-on-click).
-fn needs_attention(health: &RunHealth) -> bool {
-    health.consecutive_failures + 1 >= health.criteria.max_consecutive_failures || health.iterations_until_checkin <= 1
+fn needs_attention(health: &RunHealth, pending_reviews: usize) -> bool {
+    pending_reviews > 0 || health.consecutive_failures + 1 >= health.criteria.max_consecutive_failures || health.iterations_until_checkin <= 1
 }
 
 async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap) -> impl IntoResponse {
@@ -316,7 +326,8 @@ async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap
             let stalled = stalled_stages(&run_state);
             let risk_count = preflight_annotations(&run_state).len();
             let health = run_health(&run_state);
-            let alert = needs_attention(&health);
+            let pending_reviews = run_state.pending_panel_proposals.len() + run_state.pending_stage_proposals.len() + run_state.pending_issue_proposals.len();
+            let alert = needs_attention(&health, pending_reviews);
             let paused = run_state.paused;
             let owner_email = run_state.owner_email.clone();
             runs.push(RunSummary {
@@ -327,6 +338,7 @@ async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap
                 stalled_stages: stalled,
                 risk_count,
                 needs_attention: alert,
+                pending_reviews,
                 paused,
                 owner_email,
             });
@@ -2121,6 +2133,7 @@ mod tests {
         let body = body_json(response).await;
         assert_eq!(body[0]["risk_count"], 0);
         assert_eq!(body[0]["needs_attention"], false);
+        assert_eq!(body[0]["pending_reviews"], 0);
 
         // Push it to 2 consecutive failures against the default max of 3 --
         // one away from the abort bound, so the list should flag it now.
@@ -2143,6 +2156,36 @@ mod tests {
         let body = body_json(response).await;
         assert!(body[0]["risk_count"].as_u64().unwrap() > 0, "the security-keyword feedback should register as a real risk");
         assert_eq!(body[0]["needs_attention"], true, "2/3 consecutive failures should already flag needs_attention");
+    }
+
+    #[tokio::test]
+    async fn list_runs_flags_needs_attention_for_a_real_pending_proposal_even_when_health_is_fine() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "list-pending-run"}))).await.unwrap();
+
+        // A fresh, healthy run -- must NOT flag attention on health grounds.
+        let response = app.clone().oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body[0]["needs_attention"], false);
+        assert_eq!(body[0]["pending_reviews"], 0);
+
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/list-pending-run/stages/propose",
+                serde_json::json!({"stage_id": "devsystem.android_emulator_test", "tag": "android_emulator_test", "rationale": "need real emulator coverage"}),
+            ))
+            .await
+            .unwrap();
+
+        // Same fresh, healthy run, but now with one real pending proposal --
+        // must surface in the run LIST, not just be discoverable after
+        // opening that run's own Pipeline panel.
+        let response = app.oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body[0]["pending_reviews"], 1);
+        assert_eq!(body[0]["needs_attention"], true, "a real pending proposal must flag needs_attention on its own, independent of health thresholds");
     }
 
     #[tokio::test]
