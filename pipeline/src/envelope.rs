@@ -92,6 +92,28 @@ pub fn read_memory_log(path: &Path) -> io::Result<Vec<EnvelopeRecord>> {
     Ok(contents.lines().filter(|line| !line.trim().is_empty()).filter_map(|line| serde_json::from_str(line).ok()).collect())
 }
 
+/// Promote the entry at `index` (0-based, in `read_memory_log`'s write order) from
+/// `Trust::Unreviewed` to `Trust::Governed` and persist every entry back to `path`.
+/// `Trust::Governed` was documented ("promoted after a human review", modeled on
+/// ECC's vault/governed-artifact split) but nothing anywhere ever actually set it --
+/// this is the only place that should: an explicit human action through the GUI,
+/// never automatic. Returns `NotFound` for an out-of-range index rather than
+/// silently doing nothing, so a stale GUI reference fails loudly.
+pub fn govern_memory_entry(path: &Path, index: usize) -> io::Result<Vec<EnvelopeRecord>> {
+    let mut entries = read_memory_log(path)?;
+    let entry = entries
+        .get_mut(index)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no memory entry at index {index}")))?;
+    entry.trust = Trust::Governed;
+
+    let mut file = std::fs::File::create(path)?;
+    for e in &entries {
+        let line = serde_json::to_string(e).expect("EnvelopeRecord always serializes");
+        writeln!(file, "{line}")?;
+    }
+    Ok(entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +186,47 @@ mod tests {
         let parsed2: EnvelopeRecord = serde_json::from_str(lines[1]).unwrap();
         assert_eq!(parsed1, env1);
         assert_eq!(parsed2, env2);
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn governing_an_entry_persists_governed_and_leaves_other_entries_untouched() {
+        let dir = std::env::temp_dir().join(format!("devsystem-envelope-govern-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("memory.jsonl");
+        let _ = std::fs::remove_file(&path);
+
+        let env1 = envelope_from_iteration(&record(vec![]));
+        let mut rec2 = record(vec![]);
+        rec2.iteration = 5;
+        rec2.feedback = "second iteration's real feedback".into();
+        let env2 = envelope_from_iteration(&rec2);
+        append_to_memory_log(&path, &env1).unwrap();
+        append_to_memory_log(&path, &env2).unwrap();
+
+        let returned = govern_memory_entry(&path, 1).unwrap();
+        assert_eq!(returned[0].trust, Trust::Unreviewed, "only the targeted entry should change");
+        assert_eq!(returned[1].trust, Trust::Governed);
+
+        let reread = read_memory_log(&path).unwrap();
+        assert_eq!(reread, returned, "the promotion must actually persist to disk, not just the in-memory return value");
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    fn governing_an_out_of_range_index_fails_loudly_instead_of_silently_no_opping() {
+        let dir = std::env::temp_dir().join(format!("devsystem-envelope-govern-oob-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("memory.jsonl");
+        let _ = std::fs::remove_file(&path);
+        append_to_memory_log(&path, &envelope_from_iteration(&record(vec![]))).unwrap();
+
+        let err = govern_memory_entry(&path, 5).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
 
         std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir(&dir).unwrap();

@@ -410,20 +410,39 @@ async function viewMemory(id) {
       return;
     }
     view.innerHTML = `<div class="memory-list">${entries.map(renderMemoryEntry).join('')}</div>`;
+    for (const btn of view.querySelectorAll('.govern-entry')) {
+      btn.onclick = () => governMemoryEntry(id, parseInt(btn.dataset.index, 10));
+    }
   } catch (e) {
     view.innerHTML = `<span class="status-line err">${e.message}</span>`;
   }
 }
 
-function renderMemoryEntry(e) {
+async function governMemoryEntry(id, index) {
+  try {
+    await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/memory/${index}/govern`, { method: 'POST' });
+    await viewMemory(id);
+  } catch (e) {
+    const view = document.getElementById('memory-view');
+    view.insertAdjacentHTML('afterbegin', `<div class="status-line err">${escapeHtml(e.message)}</div>`);
+  }
+}
+
+function renderMemoryEntry(e, index) {
   const findings = e.envelope.key_findings.map(f => `<li>${escapeHtml(f)}</li>`).join('');
   const constraints = e.envelope.constraints.length
     ? `<div style="margin-top:.3rem;color:var(--muted)">constraints: <ul>${e.envelope.constraints.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul></div>`
     : '';
+  const governBtn = e.trust === 'unreviewed'
+    ? `<button type="button" class="secondary govern-entry" data-index="${index}" style="padding:.1rem .5rem;font-size:.68rem">mark reviewed</button>`
+    : '';
   return `<div class="mem-entry">
     <div class="head">
       <span>${escapeHtml(e.stage)} · role ${escapeHtml(e.role)}</span>
-      <span class="trust ${e.trust}">${e.trust}</span>
+      <span style="display:flex;align-items:center;gap:.4rem">
+        <span class="trust ${e.trust}">${e.trust}</span>
+        ${governBtn}
+      </span>
     </div>
     <ul>${findings}</ul>
     ${constraints}

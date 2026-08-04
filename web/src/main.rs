@@ -12,7 +12,7 @@ use axum::response::{IntoResponse, Json};
 use axum::routing::{get, post};
 use axum::Router;
 use devsystem_pipeline::checkin::render_plan_markdown;
-use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration, read_memory_log};
+use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration, govern_memory_entry, read_memory_log};
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::preflight_annotations;
 use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, RunOutcome};
@@ -40,6 +40,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/checkin", get(checkin_run))
         .route("/api/runs/{id}/criteria", post(update_criteria))
         .route("/api/runs/{id}/memory", get(memory_run))
+        .route("/api/runs/{id}/memory/{index}/govern", post(govern_memory))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -265,6 +266,20 @@ async fn memory_run(State(state): State<AppState>, AxPath(id): AxPath<String>) -
     }
 }
 
+/// The only place `Trust::Governed` should ever get set: a human, through the GUI,
+/// explicitly marking one memory entry as reviewed. Never automatic.
+async fn govern_memory(State(state): State<AppState>, AxPath((id, index)): AxPath<(String, usize)>) -> impl IntoResponse {
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let memory_path = run_dir(&state, &id).join("memory.jsonl");
+    match govern_memory_entry(&memory_path, index) {
+        Ok(entries) => Json(entries).into_response(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (StatusCode::NOT_FOUND, e.to_string()).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
 #[derive(Deserialize)]
 struct UpdateCriteriaRequest {
     max_iterations: u32,
@@ -411,6 +426,62 @@ mod tests {
         let app = api_router(state);
         let response = app
             .oneshot(Request::builder().uri("/api/runs/does-not-exist/memory").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn govern_memory_promotes_the_targeted_entry_and_persists_it() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "govern-run"})))
+            .await
+            .unwrap();
+        for feedback in ["first", "second"] {
+            app.clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/runs/govern-run/iterate",
+                    serde_json::json!({"stage": "devsystem.implement", "feedback": feedback, "succeeded": true}),
+                ))
+                .await
+                .unwrap();
+        }
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/govern-run/memory/0/govern").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body[0]["trust"], "governed");
+        assert_eq!(body[1]["trust"], "unreviewed", "only the targeted entry should be promoted");
+
+        // Re-fetching independently proves it actually persisted to disk, not just
+        // the response of the call that made the change.
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/govern-run/memory").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let reread = body_json(response).await;
+        assert_eq!(reread[0]["trust"], "governed");
+    }
+
+    #[tokio::test]
+    async fn govern_memory_404_for_an_out_of_range_index() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "govern-oob-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/govern-oob-run/memory/9/govern").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), SC::NOT_FOUND);
