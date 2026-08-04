@@ -165,5 +165,7 @@
     "checkin_every": 5
   },
   "paused": false,
-  "backlog": []
+  "backlog": [],
+  "milestones": [],
+  "repo_url": "https://github.com/scimbe/CADS-webconference-android"
 }
