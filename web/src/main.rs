@@ -17,7 +17,7 @@ use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::preflight_annotations;
 use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, toggle_milestone, BacklogItem, Milestone, RunOutcome};
 use devsystem_pipeline::{AbortCriteria, IterationRecord, StageProposal};
-use ct_common::channel::CapacityOffer;
+use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
 use ct_common::pipeline::SelectionState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -94,6 +94,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/milestones/{index}/toggle", post(toggle_milestone_handler))
         .route("/api/runs/{id}/repo", post(set_repo_url))
         .route("/api/runs/{id}/offers/submit", post(submit_offer))
+        .route("/api/runs/{id}/offers/quick-submit", post(quick_submit_offer))
         .route("/api/runs/{id}/auction", get(view_auction))
         .route("/api/runs/{id}/assistant", post(ask_assistant))
         .route("/api/assistant/status", get(assistant_status))
@@ -703,6 +704,65 @@ async fn submit_offer(State(state): State<AppState>, AxPath(id): AxPath<String>,
     run_offers.retain(|o| o.holder_pubkey != offer.holder_pubkey);
     run_offers.push(offer);
     (StatusCode::OK, Json(serde_json::json!({"accepted": true}))).into_response()
+}
+
+#[derive(Deserialize)]
+struct QuickOfferReq {
+    stage_id: String,
+    price: u64,
+    #[serde(default = "default_units")]
+    units: u64,
+}
+fn default_units() -> u64 {
+    1
+}
+
+/// The browser-driven equivalent of running `devsystem_offer` by hand -- a real
+/// signed `CapacityOffer`, not a fixture, built server-side with a fresh,
+/// ephemeral ed25519 key generated per submission (a real CSPRNG, `rand::rngs::OsRng`
+/// -- the same one `devsystem_offer --key-file` uses to mint a first-time
+/// identity). Each submission is a genuinely new bidder identity, matching how
+/// this run's roles have been staffed by hand via the CLI so far: an honest
+/// "someone just bid this," not a persistent account -- account-scoped
+/// resource ownership is a separate, larger increment (see the Architecture
+/// panel's own note on this). Goes through the exact same acceptance path as
+/// a real external agent's offer (`submit_offer`'s validation), just called
+/// directly instead of round-tripping through HTTP to itself.
+async fn quick_submit_offer(State(state): State<AppState>, AxPath(id): AxPath<String>, Json(body): Json<QuickOfferReq>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    if body.stage_id.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "stage_id is required").into_response();
+    }
+    if body.units == 0 {
+        return (StatusCode::BAD_REQUEST, "units must be at least 1").into_response();
+    }
+
+    let mut csprng = rand::rngs::OsRng;
+    let signing_key = ed25519_dalek::SigningKey::generate(&mut csprng);
+    let now = unix_now();
+    let offer = CapacityOffer::sign_new_with_services(
+        &signing_key,
+        CapacityKind::CloudApiQuota,
+        vec!["devsystem-web-quick-offer".to_string()],
+        body.units,
+        body.price,
+        "usd".to_string(),
+        now,
+        now + 300,
+        vec![ServiceType::Custom(body.stage_id.clone())],
+    );
+    let holder_hex: String = signing_key.verifying_key().to_bytes().iter().take(4).map(|b| format!("{b:02x}")).collect();
+
+    let mut offers = state.offers.lock().await;
+    let run_offers = offers.entry(id).or_default();
+    run_offers.retain(|o| o.holder_pubkey != offer.holder_pubkey);
+    run_offers.push(offer);
+    (StatusCode::OK, Json(serde_json::json!({"accepted": true, "holder": holder_hex}))).into_response()
 }
 
 /// The real auction, not a fixture: runs `PipelineSpec::auction_view` (the same
@@ -1618,6 +1678,87 @@ mod tests {
         let bids = body["roles"][0]["bids"].as_array().unwrap();
         assert_eq!(bids.len(), 1, "the same holder resubmitting must replace, not accumulate, its offer");
         assert_eq!(bids[0]["price"], 20, "the latest resubmission's price must be the one in effect");
+    }
+
+    #[tokio::test]
+    async fn quick_submit_offer_signs_a_real_offer_and_it_wins_its_role() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "quick-offer-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/quick-offer-run/offers/quick-submit", serde_json::json!({"stage_id": "devsystem.plan", "price": 7})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert!(body["accepted"].as_bool().unwrap());
+        assert!(body["holder"].as_str().unwrap().len() == 8, "a real holder identity, not a placeholder");
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/quick-offer-run/auction").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        let bids = body["roles"][0]["bids"].as_array().unwrap();
+        assert_eq!(bids.len(), 1);
+        assert_eq!(bids[0]["price"], 7);
+        assert_eq!(bids[0]["win"], true, "the only real offer for this role must win it");
+    }
+
+    #[tokio::test]
+    async fn quick_submit_offer_rejects_an_empty_stage_id() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "quick-offer-run2"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/quick-offer-run2/offers/quick-submit", serde_json::json!({"stage_id": "  ", "price": 7})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn quick_submit_offer_rejects_zero_units() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "quick-offer-run3"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/quick-offer-run3/offers/quick-submit",
+                serde_json::json!({"stage_id": "devsystem.plan", "price": 7, "units": 0}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn two_quick_submissions_for_the_same_role_are_two_distinct_real_bidders() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "quick-offer-run4"}))).await.unwrap();
+
+        for price in [9, 4] {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/runs/quick-offer-run4/offers/quick-submit",
+                    serde_json::json!({"stage_id": "devsystem.plan", "price": price}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::OK);
+        }
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/quick-offer-run4/auction").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        let bids = body["roles"][0]["bids"].as_array().unwrap();
+        assert_eq!(bids.len(), 2, "two separately-generated keys are two real distinct bidders, not a resubmission");
+        let winner = bids.iter().find(|b| b["win"] == true).unwrap();
+        assert_eq!(winner["price"], 4, "LowestFloor policy: the cheaper real bid must win");
     }
 
     /// A real mock `devsystem_assistant --serve` bridge -- a tiny axum server

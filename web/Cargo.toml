@@ -28,12 +28,15 @@ tower-http = { version = "0.7", features = ["fs"] }
 # runnable on a different host" per operator direction). Async client, not the
 # pipeline crate's blocking one: this runs inside axum's tokio runtime.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Real, not a dev-only fixture anymore: /api/runs/{id}/offers/quick-submit signs
+# a real CapacityOffer server-side with a fresh, ephemeral, real ed25519 key per
+# submission -- the browser-driven equivalent of running `devsystem_offer
+# --seed N` by hand, so a human can bid a role from the GUI, not just the CLI.
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
 
 [dev-dependencies]
 # Drives the real `api_router()` in-process via `ServiceExt::oneshot` -- no network
 # socket, no fixture data, exercises the exact handlers `main()` serves.
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
-# Signs real CapacityOffers in tests -- the exact constructor devsystem-pipeline's
-# own tests use, not a hand-rolled fixture.
-ed25519-dalek = { version = "2", features = ["rand_core"] }

@@ -152,6 +152,13 @@
  .arch-badge.warn{color:var(--accent);border:1px solid var(--accent)}
  .arch-badge.err{color:var(--danger);border:1px solid var(--danger)}
  .arch-badge.unknown{color:var(--muted);border:1px solid var(--border)}
+ .arch-offer-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:.5rem;margin-bottom:.3rem;
+                   padding:.5rem .65rem;border:1px solid var(--border);border-radius:8px}
+ .arch-offer-form label{display:flex;flex-direction:column;gap:.2rem;font-size:.7rem;color:var(--muted)}
+ .arch-offer-form input,.arch-offer-form select{font-family:var(--mono);font-size:.8rem;padding:.25rem .4rem}
+ .arch-offer-form input[type=number]{width:5rem}
+ .arch-offer-form button{align-self:flex-end}
+ .arch-offer-form .status-line{flex-basis:100%;font-size:.72rem}
  .backlog-list{display:flex;flex-direction:column;gap:.4rem}
  .backlog-item{display:flex;align-items:flex-start;gap:.5rem;font-size:.85rem;cursor:pointer}
  .backlog-item input{width:auto;margin-top:.2rem}
@@ -747,6 +754,19 @@ async function renderArchitecturePanel(id, data) {
         until then, not guessed.</div>`
     : '';
 
+  const roleOptions = data.spec.roles.map(r => `<option value="${escapeHtml(r.service.Custom)}">${escapeHtml(r.tag)}</option>`).join('');
+  const offerFormHtml = `
+    <form class="arch-offer-form" id="quick-offer-form">
+      <label>bid a role<select id="quick-offer-role">${roleOptions}</select></label>
+      <label>price<input id="quick-offer-price" type="number" min="0" value="10" required></label>
+      <label>units<input id="quick-offer-units" type="number" min="1" value="1" required></label>
+      <button type="submit">Submit offer</button>
+      <span id="quick-offer-status" class="status-line"></span>
+    </form>
+    <div class="arch-note" style="margin-bottom:.6rem">Real, signed, and accepted the same way as a CLI agent's bid --
+      each submission generates a fresh, throwaway signing identity server-side (like running
+      <code>devsystem_offer --seed N</code> by hand). Not a persistent account/identity yet.</div>`;
+
   const roleRows = data.spec.roles.map(r => {
     const stageId = r.service && r.service.Custom;
     const isAssistant = stageId === 'devsystem.assistant';
@@ -774,7 +794,33 @@ async function renderArchitecturePanel(id, data) {
     </div>`;
   }).join('');
 
-  body.innerHTML = viewerHtml + specHtml + auctionNoteHtml + roleRows;
+  body.innerHTML = viewerHtml + specHtml + auctionNoteHtml + offerFormHtml + roleRows;
+
+  document.getElementById('quick-offer-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const status = document.getElementById('quick-offer-status');
+    const stage_id = document.getElementById('quick-offer-role').value;
+    const price = parseInt(document.getElementById('quick-offer-price').value, 10);
+    const units = parseInt(document.getElementById('quick-offer-units').value, 10);
+    if (!Number.isInteger(price) || price < 0 || !Number.isInteger(units) || units < 1) {
+      status.textContent = 'price/units must be valid numbers'; status.className = 'status-line err';
+      return;
+    }
+    status.textContent = 'Signing and submitting…'; status.className = 'status-line';
+    try {
+      const result = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/offers/quick-submit`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ stage_id, price, units })
+      });
+      await renderArchitecturePanel(id, data);
+      // The re-render above replaced #quick-offer-status with a fresh, blank one --
+      // re-find it and show the real outcome, rather than let it vanish silently.
+      const freshStatus = document.getElementById('quick-offer-status');
+      if (freshStatus) { freshStatus.textContent = `Accepted -- holder ${result.holder}`; freshStatus.className = 'status-line ok'; }
+    } catch (err) {
+      status.textContent = err.message; status.className = 'status-line err';
+    }
+  });
 }
 
 function renderHealthCriteriaPanel(id, data) {

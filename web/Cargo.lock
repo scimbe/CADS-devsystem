@@ -340,6 +340,7 @@ dependencies = [
  "ct-common",
  "devsystem-pipeline",
  "ed25519-dalek",
+ "rand 0.8.7",
  "reqwest",
  "serde",
  "serde_json",
