@@ -28,6 +28,19 @@ struct AppState {
     runs_dir: Arc<PathBuf>,
 }
 
+/// The real API router, no static-file fallback -- separated out so tests can
+/// exercise the exact same routes/handlers `main()` serves, via `tower::ServiceExt`,
+/// without binding a real socket or needing a static dir on disk.
+fn api_router(state: AppState) -> Router {
+    Router::new()
+        .route("/api/runs", get(list_runs).post(create_run))
+        .route("/api/runs/{id}", get(get_run))
+        .route("/api/runs/{id}/iterate", post(iterate_run))
+        .route("/api/runs/{id}/checkin", get(checkin_run))
+        .layer(CorsLayer::permissive())
+        .with_state(state)
+}
+
 #[tokio::main]
 async fn main() {
     let runs_dir = PathBuf::from(std::env::var("DEVSYSTEM_RUNS_DIR").unwrap_or_else(|_| "runs".to_string()));
@@ -36,14 +49,7 @@ async fn main() {
 
     let static_dir = std::env::var("DEVSYSTEM_STATIC_DIR").unwrap_or_else(|_| "web/static".to_string());
 
-    let app = Router::new()
-        .route("/api/runs", get(list_runs).post(create_run))
-        .route("/api/runs/{id}", get(get_run))
-        .route("/api/runs/{id}/iterate", post(iterate_run))
-        .route("/api/runs/{id}/checkin", get(checkin_run))
-        .layer(CorsLayer::permissive())
-        .with_state(state)
-        .fallback_service(ServeDir::new(static_dir));
+    let app = api_router(state).fallback_service(ServeDir::new(static_dir));
 
     let addr = "0.0.0.0:8790";
     println!("devsystem-web listening on {addr}");
@@ -198,5 +204,121 @@ async fn checkin_run(State(state): State<AppState>, AxPath(id): AxPath<String>) 
     match render_plan_markdown(&run_state) {
         Some(markdown) => Json(serde_json::json!({"markdown": markdown})).into_response(),
         None => (StatusCode::NOT_FOUND, "no iteration history yet").into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode as SC};
+    use tower::ServiceExt;
+
+    fn test_state() -> (AppState, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = AppState { runs_dir: Arc::new(dir.path().to_path_buf()) };
+        (state, dir)
+    }
+
+    async fn body_json(response: axum::response::Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.expect("read body");
+        serde_json::from_slice(&bytes).expect("valid json body")
+    }
+
+    fn json_request(method: &str, uri: &str, body: serde_json::Value) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("build request")
+    }
+
+    #[tokio::test]
+    async fn list_runs_empty_dir_returns_empty_array() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        assert_eq!(body_json(response).await, serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn create_run_success_then_duplicate_conflicts() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "demo-run"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::CREATED);
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "demo-run"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn create_run_rejects_invalid_characters() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        let response = app
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "not a valid id!"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn get_run_404_for_nonexistent_run() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/does-not-exist").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn iterate_run_round_trip_persists_real_state_change() {
+        let (state, dir) = test_state();
+        let runs_dir = dir.path().to_path_buf();
+        let app = api_router(state);
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "iter-run"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::CREATED);
+
+        let state_path = runs_dir.join("iter-run").join("state.json");
+        let before = fs::read_to_string(&state_path).expect("state.json exists after create");
+        assert!(before.contains("\"history\": []"));
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/iter-run/iterate",
+                serde_json::json!({"stage": "implement", "feedback": "real progress", "succeeded": true}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["outcome"], "Continue");
+        assert_eq!(body["iteration"], 1);
+
+        let after = fs::read_to_string(&state_path).expect("state.json still exists");
+        assert!(after.contains("\"real progress\""), "iteration feedback should be persisted to disk");
+        assert!(!after.contains("\"history\": []"), "history should no longer be empty on disk");
     }
 }
