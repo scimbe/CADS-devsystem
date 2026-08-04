@@ -57,6 +57,22 @@
  .assistant-role{display:block;font-family:var(--mono);font-size:.65rem;text-transform:uppercase;
                   letter-spacing:.05em;color:var(--muted);margin-bottom:.25rem}
  .assistant-text{white-space:pre-wrap;overflow-wrap:anywhere}
+ /* Rendered-markdown variant (real LLM replies only) -- no pre-wrap here,
+    the generated block elements (p/h4-6/ul/ol/pre) already carry their own
+    spacing; combining pre-wrap with them would double it up. */
+ .assistant-text.md{white-space:normal;overflow-wrap:anywhere}
+ .assistant-text.md > *:first-child{margin-top:0}
+ .assistant-text.md > *:last-child{margin-bottom:0}
+ .assistant-text.md p{margin:.5rem 0}
+ .assistant-text.md h4,.assistant-text.md h5,.assistant-text.md h6{margin:.7rem 0 .3rem;font-size:.95em;color:var(--accent2)}
+ .assistant-text.md ul,.assistant-text.md ol{margin:.4rem 0;padding-left:1.3rem}
+ .assistant-text.md li{margin:.15rem 0}
+ .assistant-text.md code{background:#0d1117;border:1px solid var(--border);border-radius:4px;
+                          padding:.05rem .3rem;font-size:.9em;font-family:var(--mono)}
+ .assistant-text.md pre.md-code-block{background:#0d1117;border:1px solid var(--border);border-radius:6px;
+                                       padding:.5rem .6rem;margin:.5rem 0;overflow-x:auto;font-size:.82em}
+ .assistant-text.md pre.md-code-block code{background:none;border:none;padding:0}
+ .assistant-text.md strong{color:var(--text)}
  .assistant-thinking{display:inline-flex;gap:.2rem}
  .assistant-thinking span{width:.35rem;height:.35rem;border-radius:50%;background:var(--muted);
                            animation:assistant-pulse 1.1s infinite ease-in-out}
@@ -1425,6 +1441,83 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// Small, hand-rolled Markdown -> HTML renderer for real LLM output (operator:
+// "die LLMs koennen formatiert antworten, es muss einen mechanismus geben
+// der diese formatierung erkennt und korrekt darstellt"). No external
+// library -- this frontend stays vanilla JS/CSS, no build step, by
+// established convention. Covers the practical subset LLM prose actually
+// uses (headers, bold, inline code, fenced code blocks, bullet/numbered
+// lists, paragraphs) -- not a full CommonMark implementation.
+//
+// Safety: escapeHtml() runs FIRST, over the raw text, before any markdown
+// syntax is interpreted -- every subsequent regex only ever wraps already-
+// escaped text in safe, hardcoded tags. Raw HTML/script in an LLM response
+// can never execute; at worst it renders as inert escaped text.
+function renderMarkdown(raw) {
+  const escaped = escapeHtml(raw);
+  const codeBlocks = [];
+  // Fenced code blocks first (may contain characters that would otherwise
+  // be misread as other markdown syntax) -- stashed out and restored after
+  // every other transform, so nothing inside a code block gets reformatted.
+  let text = escaped.replace(/```[\w-]*\n([\s\S]*?)```/g, (_, code) => {
+    codeBlocks.push(`<pre class="md-code-block"><code>${code.replace(/\n$/, '')}</code></pre>`);
+    return ` CODEBLOCK${codeBlocks.length - 1} `;
+  });
+
+  const lines = text.split('\n');
+  const out = [];
+  let listType = null; // 'ul' | 'ol' | null
+  let paragraph = [];
+
+  function flushParagraph() {
+    if (paragraph.length) {
+      out.push(`<p>${inline(paragraph.join(' '))}</p>`);
+      paragraph = [];
+    }
+  }
+  function closeList() {
+    if (listType) { out.push(`</${listType}>`); listType = null; }
+  }
+  function inline(s) {
+    return s
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+  }
+
+  for (const line of lines) {
+    const h = line.match(/^(#{1,4})\s+(.*)$/);
+    const bullet = line.match(/^[-*]\s+(.*)$/);
+    const numbered = line.match(/^\d+\.\s+(.*)$/);
+    if (h) {
+      flushParagraph(); closeList();
+      const level = Math.min(h[1].length + 2, 6); // ## -> h4, keeps assistant text visually subordinate to real panel headings
+      out.push(`<h${level}>${inline(h[2])}</h${level}>`);
+    } else if (bullet) {
+      flushParagraph();
+      if (listType !== 'ul') { closeList(); out.push('<ul>'); listType = 'ul'; }
+      out.push(`<li>${inline(bullet[1])}</li>`);
+    } else if (numbered) {
+      flushParagraph();
+      if (listType !== 'ol') { closeList(); out.push('<ol>'); listType = 'ol'; }
+      out.push(`<li>${inline(numbered[1])}</li>`);
+    } else if (line.trim() === '') {
+      flushParagraph(); closeList();
+    } else if (/^ CODEBLOCK\d+ $/.test(line.trim())) {
+      flushParagraph(); closeList();
+      out.push(line.trim());
+    } else {
+      closeList();
+      paragraph.push(line);
+    }
+  }
+  flushParagraph(); closeList();
+
+  let html = out.join('\n');
+  html = html.replace(/ CODEBLOCK(\d+) /g, (_, i) => codeBlocks[Number(i)]);
+  return html;
+}
+
 // -------------------- Process Prompt: persistent panel control + shortcuts --------------------
 // Operator feedback: "die 'Prozess Prompt' mit dem ich das gesamt steuern,
 // parametrieren, kontrollieren kann, wo ich Fenster anordne, Fenster einblende
@@ -1603,7 +1696,13 @@ function appendAssistantEntry(role, text) {
   if (!transcript) return null;
   const entry = document.createElement('div');
   entry.className = `assistant-entry ${role}`;
-  entry.innerHTML = `<span class="assistant-role">${escapeHtml(role)}</span><div class="assistant-text">${escapeHtml(text)}</div>`;
+  // Only the real LLM's own replies get markdown-rendered -- what the human
+  // typed (role "you") and error text are shown verbatim/escaped, since
+  // there's no reason to interpret a literal "*" a user typed as emphasis.
+  const bodyHtml = role === 'assistant'
+    ? `<div class="assistant-text md">${renderMarkdown(text)}</div>`
+    : `<div class="assistant-text">${escapeHtml(text)}</div>`;
+  entry.innerHTML = `<span class="assistant-role">${escapeHtml(role)}</span>${bodyHtml}`;
   transcript.appendChild(entry);
   transcript.scrollTop = transcript.scrollHeight;
   return entry;
