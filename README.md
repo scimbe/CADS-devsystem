@@ -10,13 +10,14 @@ target software actually being built by a pipeline run lives in its own,
 separate repo (per the proposal's own separation of concerns) — nothing about
 the software gets built *in* this repo.
 
-**Live status page: [devsystem-demo.bunsenbrenner.org](https://devsystem-demo.bunsenbrenner.org/)**
-— a real CADS-Tunnel Browser-Plane tunnel (own Keycloak account, own
-`admin_provision_tunnel`-tracked subdomain, own agent/origin pair; source in
-[`demo-site/`](demo-site/)), not a mockup. Currently Gelb-tier (shared
+**Live control panel: [devsystem-demo.bunsenbrenner.org](https://devsystem-demo.bunsenbrenner.org/)**
+— a real, interactive GUI (`web/`, see Status below), not a static status
+page, served over a real CADS-Tunnel Browser-Plane tunnel (own Keycloak
+account, own `admin_provision_tunnel`-tracked subdomain, own agent/origin
+pair; source in [`demo-site/`](demo-site/)). Currently Gelb-tier (shared
 wildcard cert) — will move to `tls` + a real cert once promoted to Grün.
 
-## Status (2026-08-03)
+## Status (2026-08-05)
 
 Driven as an ongoing loop effort, one real, tested increment at a time — not
 a single large push, and explicitly **not** a static, pre-declared pipeline:
@@ -31,9 +32,8 @@ design. Landed so far:
 - ✅ **This coordination repo**, with a real `PipelineSpec` for all seven
   stages (`pipeline/`) and a hermetically-tested proof that `convene()`
   clears a real auction for a devsystem-declared role — see
-  [`pipeline/src/lib.rs`](pipeline/src/lib.rs). 28 tests, continuously verified
-  on every push via [`.github/workflows/pipeline-ci.yml`](.github/workflows/pipeline-ci.yml)
-  (had none until this cycle — manual `cargo test` in Docker only, before).
+  [`pipeline/src/lib.rs`](pipeline/src/lib.rs), continuously verified
+  on every push via [`.github/workflows/pipeline-ci.yml`](.github/workflows/pipeline-ci.yml).
 - ✅ **The `plan` stage's human-review gate**: ECC ([affaan-m/ECC](https://github.com/affaan-m/ECC),
   MIT, `npm i -g ecc-universal`) is a real, public, harness-agnostic package —
   its `ecc-plan-canvas` CLI is installed and used for real, not just verified
@@ -41,8 +41,8 @@ design. Landed so far:
 - ✅ **The self-optimization mechanism** (`pipeline/src/runner.rs`):
   `StageProposal`/`apply_proposal` mutate a *live* `PipelineSpec` mid-run;
   `AbortCriteria`/`should_checkin`/`should_abort` bound the "super loop" —
-  proven not just by unit tests but by a real run's mandatory 5-iteration
-  check-in genuinely firing (`RunOutcome::CheckinDue`), not a manual pause.
+  proven not just by unit tests but by a real run's mandatory check-in
+  genuinely firing (`RunOutcome::CheckinDue`), not a manual pause.
 - ✅ **`devsystem.remember`'s first piece** (`pipeline/src/envelope.rs`): the
   zylos envelope (documented since the first commit, unimplemented until
   now) is real code — every iteration appends its `EnvelopeRecord` to
@@ -52,25 +52,55 @@ design. Landed so far:
   `stalled_stages()` mechanically finds proposals live in the spec with no
   iteration run as that stage yet — surfaced automatically in every
   check-in artifact.
+- ✅ **A real, interactive control GUI** (`web/`) — not the static status page
+  this section used to describe. A real axum backend
+  ([`web/src/main.rs`](web/src/main.rs)) + a vanilla-JS/no-build-step
+  frontend ([`web/static/index.html`](web/static/index.html)), deployed live
+  at [devsystem-demo.bunsenbrenner.org](https://devsystem-demo.bunsenbrenner.org/):
+  lists/creates runs, submits real iterations and check-ins, drives the
+  auction (quick-submit/direct-accept/fill-mode), manages milestones,
+  backlog, structured requirements (EARS-style statements + per-criterion
+  acceptance tracking + real cross-iteration traceability), custom panels,
+  RAG-indexed docs, and self-service GitHub issue proposals — every one of
+  these already went through a real "propose, human approves" gate where the
+  action genuinely warrants it.
+- ✅ **`devsystem.assistant`** — a real, swappable LLM role (any
+  non-interactive CLI via `CT_LLM_CMD`) with narrow, real write access to
+  milestones/backlog/requirements/`repo_url`/new-run-creation, and a
+  "propose, human approves" path for custom panels, new pipeline stages, and
+  self-healing GitHub issues. Deliberately does **not** have a generic
+  "submit iteration" action — an iteration is a role-filler's real, verified
+  output; letting advisory chat fabricate one would corrupt a run's own
+  honest record.
+- ✅ **A real GitHub-issue channel agent** (`pipeline/src/bin/github_issue_channel_*`,
+  `scripts/github_issue_agent_serve_loop.sh`) — moves the GitHub-posting
+  credential off this (resource-constrained) host and behind a real
+  Agent-Fabric channel, with its own on-disk dedup memory. Fully built and
+  live-verified end to end (including a real respawn-loop wrapper solving a
+  real discovered bug: `ct-agent` mints a fresh listen cert on every
+  restart); not yet cut into production traffic pending a real hosting
+  decision.
 - ✅ **Flagship proof, real and building**: [`CADS-webconference-android`](https://github.com/scimbe/CADS-webconference-android)
   has a real Kotlin/Gradle scaffold, a hermetically-verified signed debug
-  APK, a real Robolectric unit test, a real GitHub Actions CI workflow
-  (watched to a passing run, not assumed), and two real review-found fixes
-  (`allowBackup`, density-aware padding).
-- ✅ **A real run** (`runs/webconference-android/`) has driven 5 genuine
-  iterations (`implement → test → verify → review → improve`), growing the
-  live spec from 1 role to 6 entirely through real proposals.
-- ⏸ **Currently paused, on purpose**: iteration 5 raised
-  `devsystem.android_native_bridge` (`cargo-ndk` vs `UniFFI` for a JNI bridge
-  to CADS-Tunnel's existing Rust Noise_IK/Agent-Fabric code) as a real
-  architecture-defining decision — per the runner's own contract, no further
-  iteration on this run happens until [CADS-Tunnel#382](https://github.com/scimbe/CADS-Tunnel/issues/382)
-  gets an answer.
+  APK, a real UniFFI + `cargo-ndk` native bridge with real Noise_IK
+  public-key generation wired into `MainActivity`, and a real GitHub Actions
+  CI workflow with several consecutive green runs.
+- 🔓 **Real external capacity, not just a demo**: [CADS-Tunnel#382](https://github.com/scimbe/CADS-Tunnel/issues/382)'s
+  onboarding thread ([CADS-Tunnel#388](https://github.com/scimbe/CADS-Tunnel/issues/388))
+  has real external parties registered and bidding on this run's roles with
+  real signed offers — the auction mechanism is genuinely live, not just
+  internally exercised.
+- ⏸ **`runs/webconference-android/`'s spec is currently plan-only on
+  purpose**: reset by the operator for a fresh re-test of the whole setup
+  flow. A real, already-verified stage proposal to re-add
+  `devsystem.android_native_bridge` (the real, CI-green native-bridge work
+  above) is queued and awaiting the operator's own approval, not
+  auto-applied.
 - ❌ Not started: mem0/Qdrant actually loading `memory.jsonl` (the log format
-  is ready; nothing consumes it yet), the visual pipeline editor, the
-  resource/SaaS/agent catalog, the local git server — all explicitly
-  deferred until this flagship run proves the mechanics end to end, per the
-  operator's own phased sequencing.
+  is ready; nothing consumes it yet), the resource/SaaS/agent catalog, the
+  local git server, and automatic (LLM-judged) acceptance-criteria
+  verification — all real, explicitly deferred design questions, not
+  guessed at.
 
 ## What's reused from CADS-Tunnel/ct-agent, unchanged
 
