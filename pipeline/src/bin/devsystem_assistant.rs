@@ -185,7 +185,7 @@ fn build_system_prompt(context: &str) -> String {
          you are actually taking action; omit it entirely otherwise -- never emit an \
          empty or placeholder block):\n\
          {ACTIONS_FENCE_OPEN}\n\
-         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}}]\n\
+         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}}]\n\
          {ACTIONS_FENCE_CLOSE}\n\
          Indices refer to the real state.milestones/state.backlog/state.requirements \
          arrays already shown to you below -- never guess an index you can't see \
@@ -199,7 +199,7 @@ fn build_system_prompt(context: &str) -> String {
          real work as already complete, tell them to submit it themselves via the New \
          Iteration panel (or their role-filler's normal path) -- never emit an \
          iteration on their behalf, no matter how confident you are. `propose_custom_panel`, \
-         `propose_stage`, and `propose_issue` are different from the other eight: \
+         `propose_stage`, and `propose_issue` are different from the other nine: \
          neither takes effect by itself. `propose_custom_panel` \
          only queues a real proposal (title + a self-contained HTML fragment, no \
          <script src> to anything external, it runs sandboxed with no page/session \
@@ -224,7 +224,7 @@ fn build_system_prompt(context: &str) -> String {
          real bidder sees, and a vague/speculative issue wastes a human reviewer's \
          time. If a request is ambiguous, or you're not confident it's safe to act on, \
          say so in prose and ask instead of emitting an action. You have NO other tool \
-         or system access in this version -- only these eleven action types against \
+         or system access in this version -- only these twelve action types against \
          these eight kinds of data; for anything else (e.g. an actual code change, or \
          submitting an iteration) tell the operator what you'd want to do and let them \
          decide.\n\n\
@@ -247,6 +247,12 @@ enum Action {
     /// (`pipeline/src/runner.rs`) for why this is distinct from a milestone.
     AddRequirement { statement: String, acceptance_criteria: Vec<String> },
     ToggleRequirement { index: usize },
+    /// Real gap closed (#382 goal doc §7.2, gap #4 -- "beyond the current fixed
+    /// Action enum"): a human can already toggle one acceptance criterion
+    /// independently of the whole requirement (`toggle_acceptance_criterion_handler`,
+    /// the Requirements panel's per-criterion checkboxes); the assistant had no
+    /// matching action at all until now.
+    ToggleAcceptanceCriterion { requirement_index: usize, criterion_index: usize },
     /// Sets (or clears, with an empty string) the CURRENT run's repo_url --
     /// the same field `set_repo_url`/the Code panel already manage. Not a
     /// proposal -- like the other direct actions, takes effect immediately,
@@ -347,6 +353,12 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
         Action::ToggleRequirement { index } => (
             format!("toggle requirement #{index}"),
             format!("{base}/api/runs/{run_id}/requirements/{index}/toggle"),
+            serde_json::json!({}),
+            "done",
+        ),
+        Action::ToggleAcceptanceCriterion { requirement_index, criterion_index } => (
+            format!("toggle requirement #{requirement_index}'s acceptance criterion #{criterion_index}"),
+            format!("{base}/api/runs/{run_id}/requirements/{requirement_index}/criteria/{criterion_index}/toggle"),
             serde_json::json!({}),
             "done",
         ),
@@ -752,12 +764,13 @@ mod tests {
                 && prompt.contains("toggle_backlog_item")
                 && prompt.contains("add_requirement")
                 && prompt.contains("toggle_requirement")
+                && prompt.contains("toggle_acceptance_criterion")
                 && prompt.contains("set_repo_url")
                 && prompt.contains("create_run")
                 && prompt.contains("propose_custom_panel")
                 && prompt.contains("propose_stage")
                 && prompt.contains("propose_issue"),
-            "all eleven real action types must be documented"
+            "all twelve real action types must be documented"
         );
         assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these eight data kinds");
         assert!(prompt.contains("neither takes effect by itself"), "the panel/stage/issue-proposal approval gate must be explicit, not implied");
@@ -789,8 +802,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_actions_parses_all_eleven_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"}]\n```";
+    fn extract_actions_parses_all_twelve_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -805,6 +818,7 @@ mod tests {
                     acceptance_criteria: vec!["survives app restart".to_string()],
                 },
                 Action::ToggleRequirement { index: 1 },
+                Action::ToggleAcceptanceCriterion { requirement_index: 1, criterion_index: 0 },
                 Action::SetRepoUrl { repo_url: "https://github.com/scimbe/CADS-webconference-android".to_string() },
                 Action::CreateRun { new_run_id: "my-new-project".to_string() },
                 Action::ProposeCustomPanel { title: "Burndown".to_string(), html: "<h2>hi</h2>".to_string() },
@@ -923,6 +937,20 @@ mod tests {
         let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
         assert_eq!(method, "POST");
         assert_eq!(url, "/api/runs/my-run/requirements/2/toggle");
+    }
+
+    #[test]
+    /// Real gap closed (#382 goal doc §7.2, gap #4): a human could already toggle
+    /// one acceptance criterion independently of the whole requirement; the
+    /// assistant had no matching action until now.
+    fn apply_action_posts_the_real_toggle_acceptance_criterion_request() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let result = apply_action(&client, &addr, "my-run", &Action::ToggleAcceptanceCriterion { requirement_index: 2, criterion_index: 1 });
+        assert!(result.starts_with("done:"));
+        let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/requirements/2/criteria/1/toggle");
     }
 
     #[test]
