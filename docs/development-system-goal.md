@@ -367,6 +367,16 @@ the gap: the same historical data that showed zero risks before this fix now cor
 risk annotation, no resubmission needed. Five real stress-test runs, five real gaps found and closed
 the same day.
 
+**A real DAU-lens finding, 2026-08-05**: rejecting a stage/panel/issue proposal is exactly as
+permanent as removing a custom panel or un-verifying a requirement -- `reject_stage_proposal`'s own
+doc comment says it plainly ("there's nothing to undo beyond removing it from the pending list") --
+but only those other two destructive actions asked for confirmation first. Live-verified before this
+fix: a real pending proposal, one click on Reject, gone with zero trace anywhere in the run's state.
+Fixed all three reject buttons (panel, stage, issue) with a specific `confirm()` naming exactly
+what's being discarded (`CADS-devsystem@645a88d`). Verified live via a real Playwright browser, not
+just curl: the real dialog names the exact stage, cancelling genuinely preserves the proposal,
+accepting genuinely discards it.
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
