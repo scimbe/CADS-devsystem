@@ -33,11 +33,14 @@
 //! same env var flappy-demo's handlers read, so this role is genuinely swappable
 //! for a different backend without a code change.
 
+use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
+use ed25519_dalek::SigningKey;
 use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn fetch_context(api_base: &str, run_id: &str) -> Result<String, String> {
     let url = format!("{}/api/runs/{}", api_base.trim_end_matches('/'), run_id);
@@ -535,6 +538,67 @@ fn json_response(status: u16, body: &str) -> tiny_http::Response<std::io::Cursor
 /// needed), on whatever host actually has a real LLM CLI available. Per-run rate
 /// limit (10s) is a deliberate safety backstop against a double-click or a stuck
 /// retry loop burning real LLM spend -- not a security control, just a sane floor.
+fn unix_now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock before 1970").as_secs()
+}
+
+/// Same real, persisted-identity pattern `devsystem_offer`'s own
+/// `signing_key_from_file` uses, deliberately duplicated rather than shared
+/// (this crate's own established convention -- see `github_issue_channel_client`'s
+/// doc comment on why sibling binaries don't share request/response types either).
+/// A distinct default key file from `devsystem_offer`'s own `./devsystem-agent.key`
+/// -- the assistant is its own real identity, not borrowing another role's.
+fn assistant_signing_key() -> SigningKey {
+    let path = env::var("DEVSYSTEM_ASSISTANT_KEY_FILE").unwrap_or_else(|_| "./devsystem-assistant-agent.key".to_string());
+    if let Ok(bytes) = fs::read(&path) {
+        if let Ok(arr) = <[u8; 32]>::try_from(bytes.as_slice()) {
+            return SigningKey::from_bytes(&arr);
+        }
+        eprintln!("warning: {path} exists but is not a 32-byte key -- regenerating");
+    }
+    let mut csprng = rand::rngs::OsRng;
+    let key = SigningKey::generate(&mut csprng);
+    if let Err(e) = fs::write(&path, key.to_bytes()) {
+        eprintln!("warning: could not persist key to {path}: {e} -- this identity will not survive the next restart");
+    }
+    key
+}
+
+/// Real gap closed (CADS-Tunnel#382, 2026-08-04 check-in): `devsystem.assistant`
+/// was proposed and live in a run's spec, but no iteration had ever run *as* that
+/// role -- it needed a real signed `CapacityOffer`, same as any other real
+/// participant (`devsystem_offer`'s own doc comment: "the smallest thing that can
+/// authentically bid for a role"). This submits one for `run_id`, same
+/// no-redirect-ever client `devsystem_offer` uses (#388: a still-gated deploy must
+/// fail loudly, never silently follow a login redirect and report a fabricated
+/// success). Best-effort: a failure here is logged, never allowed to fail the
+/// real `/ask` request that triggered it -- the assistant's actual answer matters
+/// more than its own auction bookkeeping.
+fn submit_assistant_offer(api_base: &str, run_id: &str, signing_key: &SigningKey) -> Result<(), String> {
+    let now = unix_now();
+    let offer = CapacityOffer::sign_new_with_services(
+        signing_key,
+        CapacityKind::CloudApiQuota,
+        vec!["devsystem-assistant".to_string()],
+        1,
+        0, // real, genuinely free capacity -- this process already runs regardless, advisory-only
+        "usd".to_string(),
+        now,
+        now + 300,
+        vec![ServiceType::Custom("devsystem.assistant".to_string())],
+    );
+    let url = format!("{}/api/runs/{}/offers/submit", api_base.trim_end_matches('/'), run_id);
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or_else(|_| reqwest::blocking::Client::new());
+    match client.post(&url).json(&offer).send() {
+        Ok(resp) if resp.status().is_success() => Ok(()),
+        Ok(resp) => Err(format!("offer rejected ({}): {}", resp.status(), resp.text().unwrap_or_default())),
+        Err(e) => Err(format!("could not reach {url}: {e}")),
+    }
+}
+
 fn serve(listen_addr: &str, api_base: &str) -> ExitCode {
     let server = match tiny_http::Server::http(listen_addr) {
         Ok(s) => s,
@@ -547,6 +611,15 @@ fn serve(listen_addr: &str, api_base: &str) -> ExitCode {
 
     let last_request: Mutex<HashMap<String, Instant>> = Mutex::new(HashMap::new());
     const MIN_INTERVAL: Duration = Duration::from_secs(10);
+
+    // Real, persisted identity for this process's own CapacityOffer -- one key
+    // for the whole server lifetime, not re-generated per request.
+    let assistant_key = assistant_signing_key();
+    let last_offer: Mutex<HashMap<String, Instant>> = Mutex::new(HashMap::new());
+    // Comfortably under the 5-minute floor `submit_assistant_offer` signs into
+    // every offer, so a real `/ask` traffic keeps this run's auction presence
+    // continuously live without ever letting the previous offer actually expire.
+    const OFFER_REFRESH_INTERVAL: Duration = Duration::from_secs(240);
 
     for mut request in server.incoming_requests() {
         if request.url() != "/ask" || *request.method() != tiny_http::Method::Post {
@@ -584,6 +657,20 @@ fn serve(listen_addr: &str, api_base: &str) -> ExitCode {
                 }
             }
             guard.insert(run_id.clone(), now);
+        }
+
+        {
+            let mut guard = last_offer.lock().expect("offer rate-limit mutex poisoned");
+            let now = Instant::now();
+            let needs_refresh = guard.get(&run_id).is_none_or(|prev| now.duration_since(*prev) >= OFFER_REFRESH_INTERVAL);
+            if needs_refresh {
+                match submit_assistant_offer(api_base, &run_id, &assistant_key) {
+                    Ok(()) => {
+                        guard.insert(run_id.clone(), now);
+                    }
+                    Err(e) => eprintln!("devsystem_assistant: could not refresh the devsystem.assistant offer for {run_id}: {e}"),
+                }
+            }
         }
 
         match ask(api_base, &run_id, &instruction) {
@@ -1044,5 +1131,58 @@ mod tests {
         let body = serde_json::json!({"state": {"history": entries, "custom_panels": []}}).to_string();
         let condensed = condense_context(&body);
         assert!(condensed.len() < body.len() / 2, "history condensing must still happen via condense_context");
+    }
+
+    /// CADS-Tunnel#382, 2026-08-04 check-in gap: `devsystem.assistant` needs a
+    /// real signed CapacityOffer to actually appear as an auction participant.
+    #[test]
+    fn submit_assistant_offer_posts_a_real_signed_offer_for_the_declared_service() {
+        let (addr, rx) = spawn_capturing_server();
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let result = submit_assistant_offer(&addr, "my-run", &key);
+        assert!(result.is_ok(), "a 200 response must be reported as success: {result:?}");
+
+        let (method, url, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/offers/submit");
+
+        let offer: CapacityOffer = serde_json::from_str(&body).expect("body must be a real CapacityOffer");
+        assert_eq!(offer.services, vec![ServiceType::Custom("devsystem.assistant".to_string())]);
+        assert_eq!(offer.holder_pubkey, key.verifying_key().to_bytes(), "offer must be signed by the real key passed in");
+        assert!(offer.expires_at > offer.issued_at, "a real, non-degenerate expiry window");
+    }
+
+    #[test]
+    fn submit_assistant_offer_surfaces_a_real_rejection_honestly() {
+        let server = tiny_http::Server::http("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = format!("http://{}", server.server_addr());
+        std::thread::spawn(move || {
+            if let Ok(req) = server.recv() {
+                let _ = req.respond(tiny_http::Response::from_string("nope").with_status_code(422));
+            }
+        });
+        let key = SigningKey::from_bytes(&[9u8; 32]);
+        let err = submit_assistant_offer(&addr, "my-run", &key).expect_err("a real 422 must be a real error, not a fabricated success");
+        assert!(err.contains("422"), "got: {err}");
+    }
+
+    #[test]
+    fn assistant_signing_key_persists_the_same_real_identity_across_calls() {
+        let dir = std::env::temp_dir().join(format!("devsystem-assistant-key-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("assistant.key");
+        // SAFETY (test-only): env::set_var races other tests that also mutate
+        // process env; this crate's own established precedent (github_issue_
+        // channel_client's cert-env tests) accepts this for single-threaded-enough
+        // test suites rather than adding a process-wide lock for every env-reading
+        // function.
+        env::set_var("DEVSYSTEM_ASSISTANT_KEY_FILE", path.to_string_lossy().to_string());
+
+        let first = assistant_signing_key();
+        let second = assistant_signing_key();
+        assert_eq!(first.to_bytes(), second.to_bytes(), "the real identity must survive a fresh call, not regenerate every time");
+
+        env::remove_var("DEVSYSTEM_ASSISTANT_KEY_FILE");
+        fs::remove_dir_all(&dir).ok();
     }
 }
