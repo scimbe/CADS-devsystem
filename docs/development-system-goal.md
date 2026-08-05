@@ -408,6 +408,19 @@ FAILED iteration honestly saying it's broken is the behavior this wants to encou
 the same historical data that showed no relevant risk before now correctly surfaces it. Advisory,
 not a hard gate, and honestly beatable by different phrasing -- named as such, not oversold.
 
+**The stress test's seventh real run, 2026-08-05**: this whole requirements feature is built around
+EARS notation, and acceptance criteria already had real content validation -- but the `statement`
+field itself had none. Live-verified before this fix: `{"statement":"asdf","acceptance_criteria":
+["a real criterion"]}` got a real `200`. Fixed as a hard gate (not advisory, matching the
+acceptance-criteria precedent): the statement must contain "SHALL" (case-insensitive) -- the one
+universal, defining keyword across every real EARS requirement type, deliberately not also
+requiring "WHEN" since a real ubiquitous EARS requirement (no trigger clause) is legitimate
+(`CADS-devsystem@17339d0`). Real test-fixture blast radius (8 existing tests used non-EARS
+placeholder statements) handled carefully -- each updated to a real EARS-shaped statement that
+still contains the original placeholder text verbatim, not relying on accidental double-rejection
+to stay green. Re-verified live: the exact same `"asdf"` statement that got a `200` before now gets
+a real `400`; a genuine EARS statement, with or without a `WHEN` clause, still gets a clean `200`.
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
