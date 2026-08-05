@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
 # Real, reproducible devsystem-web deploy -- this container has never had a
 # tracked deploy script (only ad-hoc `docker run` invocations), which is
-# exactly how a real regression shipped silently: a redeploy at some point
-# dropped the `-p 127.0.0.1:8790:8790` port publish, breaking
-# devsystem_assistant's own outbound calls back to this API (its --serve
-# process's api_base is the fixed http://127.0.0.1:8790, no service
-# discovery) for an unknown period -- found and fixed 2026-08-05 while
-# deploying an unrelated devsystem_assistant change, not by design.
+# exactly how TWO real regressions shipped silently, both found and fixed
+# 2026-08-05 while deploying an unrelated devsystem_assistant change, not by
+# design:
+#   1. A redeploy at some point dropped the `-p 127.0.0.1:8790:8790` port
+#      publish, breaking devsystem_assistant's own outbound calls back to
+#      this API (its --serve process's api_base is the fixed
+#      http://127.0.0.1:8790, no service discovery).
+#   2. This script's own FIRST version (committed, then immediately proven
+#      wrong by a real live Playwright walkthrough) still missed
+#      `--add-host=host.docker.internal:host-gateway` -- without it,
+#      `host.docker.internal` never resolves inside the container at all, so
+#      DEVSYSTEM_ASSISTANT_URL (the OTHER direction: this container calling
+#      OUT to the assistant bridge) silently can't connect either. Both
+#      directions of the same integration were broken by two different
+#      missing flags -- verified live via the actual GUI, not assumed fixed
+#      from a curl check on only one direction.
 #
 # Usage: scripts/deploy-devsystem-web.sh [image-tag]
 #   Builds devsystem-web:latest (or [image-tag] if given) from this repo's
@@ -33,6 +43,7 @@ docker rm devsystem-web >/dev/null 2>&1 || true
 echo "Starting devsystem-web ..."
 docker run -d --name devsystem-web \
   --network ct-selfhost_default \
+  --add-host=host.docker.internal:host-gateway \
   --restart unless-stopped \
   -p 127.0.0.1:8790:8790 \
   -e CT_CHANNEL_NOISE_KEY="${CT_CHANNEL_NOISE_KEY:?set CT_CHANNEL_NOISE_KEY -- this container's own real channel identity}" \
@@ -51,12 +62,32 @@ docker run -d --name devsystem-web \
   "$IMAGE_TAG"
 
 echo "Waiting for a real 200 from the container's own published port ..."
+UP=0
 for _ in $(seq 1 30); do
   if curl -sS --max-time 2 -o /dev/null -w '' http://127.0.0.1:8790/api/runs 2>/dev/null; then
-    echo "devsystem-web is up: http://127.0.0.1:8790"
-    exit 0
+    UP=1
+    break
   fi
   sleep 1
 done
-echo "devsystem-web did not answer http://127.0.0.1:8790/api/runs within 30s -- check: docker logs devsystem-web" >&2
-exit 1
+if [ "$UP" -ne 1 ]; then
+  echo "devsystem-web did not answer http://127.0.0.1:8790/api/runs within 30s -- check: docker logs devsystem-web" >&2
+  exit 1
+fi
+echo "devsystem-web is up: http://127.0.0.1:8790"
+
+# The OTHER direction (this container -> devsystem_assistant --serve, if one is
+# running on the host) -- a real, unauthenticated status probe, not just "the
+# port answers." This is exactly the direction that broke silently on
+# 2026-08-05 (missing --add-host), so it's checked here, not assumed working
+# just because /api/runs did.
+STATUS_BODY="$(curl -sS --max-time 5 http://127.0.0.1:8790/api/assistant/status 2>/dev/null || true)"
+CONFIGURED="$(echo "$STATUS_BODY" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("configured"))' 2>/dev/null || echo "unknown")"
+REACHABLE="$(echo "$STATUS_BODY" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("reachable"))' 2>/dev/null || echo "unknown")"
+if [ "$CONFIGURED" = "True" ] && [ "$REACHABLE" != "True" ]; then
+  echo "WARNING: devsystem.assistant is configured but NOT reachable from this container -- check devsystem_assistant --serve is running and --add-host=host.docker.internal:host-gateway took effect (getent hosts host.docker.internal inside the container)." >&2
+elif [ "$CONFIGURED" = "True" ]; then
+  echo "devsystem.assistant bridge: reachable"
+else
+  echo "devsystem.assistant bridge: not configured on this deployment (DEVSYSTEM_ASSISTANT_URL unset) -- expected if none is meant to run here"
+fi
