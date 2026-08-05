@@ -203,6 +203,16 @@ live against the actual deployment after shipping: a `"lgtm"` review is now a re
 methodology proving itself on the very first real attempt — not a demonstration that was staged to
 succeed.
 
+**The stress test's second real run, same day**: tried the next realistic incompetent-agent move --
+a vague requirement ("WHEN the user does anything, THE SYSTEM SHALL work correctly") with trivial
+acceptance criteria: `"ok"`, `"."`, `"done"`, and (found along the way, not planned) a criterion that
+was ONLY a zero-width space (U+200B) — invisible in the GUI, since `.trim()` doesn't strip it
+(Unicode category Cf/Format, not White_Space). **All four sailed through** as real, checkable
+criteria. Fixed for real: acceptance criteria now need a minimum count of alphanumeric characters,
+not just non-empty content (`CADS-devsystem@425597c`) — one mechanical rule catches both the
+trivial-word case and the invisible-character case, since the latter has zero alphanumeric
+characters under this count. Re-verified live: `"ok"` is now a real `400`.
+
 **First real groundwork step, 2026-08-05 (iteration 8)**: the mandatory review gate (gap #2) only
 has teeth on a run that actually declares `devsystem.review` as a role — `webconference-android`
 itself never had. Added it for real via a `devsystem.improve` proposal, the same immediately-applied
