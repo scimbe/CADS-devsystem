@@ -1,108 +1,122 @@
 {
-  "run_id": "webconference-android",
+  "added_stages": [
+    "devsystem.android_native_bridge",
+    "devsystem.document_extraction",
+    "devsystem.android_emulator_test",
+    "devsystem.review"
+  ],
+  "assistant_usage": {
+    "cache_creation_input_tokens": 22040,
+    "cache_read_input_tokens": 14184,
+    "call_count": 1,
+    "input_tokens": 2,
+    "output_tokens": 107,
+    "total_cost_usd": 0.23077000000000003
+  },
+  "backlog": [
+    {
+      "done": true,
+      "text": "Stage-Proposal devsystem.android_native_bridge (cf0593ebc3409cdb) pr\u00fcfen und freigeben oder ablehnen - blockiert alle Android-Transportarbeit"
+    },
+    {
+      "done": true,
+      "text": "Channel-Wire-Format f\u00fcr Textnachrichten festlegen (msg_id, sender_pubkey, timestamp, body) und in der native-bridge UniFFI-API als send_text/recv_text exponieren"
+    },
+    {
+      "done": false,
+      "text": "Lokale Nachrichten-Persistenz auf Android (Room) + minimale Chat-UI gegen die UniFFI-API, Ziel: zwei Ger\u00e4te tauschen Text \u00fcber einen Channel"
+    }
+  ],
   "consecutive_failures": 0,
+  "criteria": {
+    "checkin_every": 5,
+    "max_consecutive_failures": 3,
+    "max_iterations": 20
+  },
+  "custom_panels": [],
   "history": [
     {
-      "run_id": "webconference-android",
-      "stage": "devsystem.improve",
-      "iteration": 1,
       "feedback": "Submitting for real now that the gate's M2M bearer-token path is live (CADS-Tunnel PR #390) -- this proposal has been drafted and blocked since 2026-08-05 (CADS-devsystem issue #7). Scoped decision, operator-directed: RAG's embedding/document-extraction capability should come from an LLM-capable ct-agent discovered via this pipeline's own auction mechanism, not a static RAG_EMBEDDING_API_KEY/RAG_UNSTRUCTURED_API_KEY credential. devsystem.document_extraction is proposed separate from devsystem.assistant (kept extraction-only, not overloading the assistant role) and separate from embeddings (left as its own open question, not folded in here). Real prerequisites already landed: operator_pubkey_hex is now set on this run (commit dee6445), so role_channel_id is derivable for this new role once it's declared -- which is exactly what this proposal does.",
+      "iteration": 1,
       "proposals": [
         {
+          "price_ceiling": null,
           "proposed_by": "devsystem.improve",
+          "rationale": "Real, scoped capability: extract text/structure from PDF/DOCX/image documents (via an auction-discovered ct-agent, not a static third-party API key) so RAG search can index more than plain-text repo files. Kept separate from devsystem.assistant (extraction only, not folded into the general assistant role) and separate from embeddings (a distinct open question, not decided here). Blocked purely on gate access until now (issue #7) -- CADS-Tunnel's login gate accepts a real M2M bearer token as of PR #390.",
           "stage_id": "devsystem.document_extraction",
           "tag": "document_extraction",
-          "rationale": "Real, scoped capability: extract text/structure from PDF/DOCX/image documents (via an auction-discovered ct-agent, not a static third-party API key) so RAG search can index more than plain-text repo files. Kept separate from devsystem.assistant (extraction only, not folded into the general assistant role) and separate from embeddings (a distinct open question, not decided here). Blocked purely on gate access until now (issue #7) -- CADS-Tunnel's login gate accepts a real M2M bearer token as of PR #390.",
-          "use_existing_service": null,
           "units": 1,
-          "price_ceiling": null
+          "use_existing_service": null
         }
       ],
-      "succeeded": true,
-      "requirement_indices": []
-    },
-    {
-      "run_id": "webconference-android",
-      "stage": "devsystem.android_native_bridge",
-      "iteration": 2,
-      "feedback": "Real live report-back (issue #12), now unblocked by the same gate fix as #7 (CADS-Tunnel PR #390, M2M bearer token). Android build service handoff to labor-setup.com is done: PR scimbe/CADS-webconference-android#9 merged (2026-08-05T09:25:32Z) -- native-bridge/build-service/{Dockerfile,README.md,verify.sh}, pinned to the exact CI toolchain (NDK r27d, cargo-ndk 4.1.2), purely additive (no native-bridge/ Rust changes), verified byte-identical Kotlin bindings + exact symbol match (nm -D --defined-only) against committed artifacts. Confirmed locally before this report: a real `./gradlew assembleDebug` produces a genuine 9.9MB app-debug.apk (applicationId org.bunsenbrenner.webconference) with libnative_bridge.so linked for arm64-v8a and x86_64 alongside libjnidispatch.so -- the native crypto bridge is really compiled in, not stubbed. Honest caveat, not being papered over: this is versionName 0.1.0-scaffold, and no on-device/emulator run with a documented UX walkthrough (screenshots of the actual messaging app in use) has been done yet -- no Android emulator/adb tooling is available on this host today. That real gap stays open and separate from this report; not claiming it done.",
-      "proposals": [],
-      "succeeded": true,
-      "requirement_indices": []
-    },
-    {
+      "requirement_indices": [],
       "run_id": "webconference-android",
       "stage": "devsystem.improve",
-      "iteration": 3,
+      "succeeded": true
+    },
+    {
+      "feedback": "Real live report-back (issue #12), now unblocked by the same gate fix as #7 (CADS-Tunnel PR #390, M2M bearer token). Android build service handoff to labor-setup.com is done: PR scimbe/CADS-webconference-android#9 merged (2026-08-05T09:25:32Z) -- native-bridge/build-service/{Dockerfile,README.md,verify.sh}, pinned to the exact CI toolchain (NDK r27d, cargo-ndk 4.1.2), purely additive (no native-bridge/ Rust changes), verified byte-identical Kotlin bindings + exact symbol match (nm -D --defined-only) against committed artifacts. Confirmed locally before this report: a real `./gradlew assembleDebug` produces a genuine 9.9MB app-debug.apk (applicationId org.bunsenbrenner.webconference) with libnative_bridge.so linked for arm64-v8a and x86_64 alongside libjnidispatch.so -- the native crypto bridge is really compiled in, not stubbed. Honest caveat, not being papered over: this is versionName 0.1.0-scaffold, and no on-device/emulator run with a documented UX walkthrough (screenshots of the actual messaging app in use) has been done yet -- no Android emulator/adb tooling is available on this host today. That real gap stays open and separate from this report; not claiming it done.",
+      "iteration": 2,
+      "proposals": [],
+      "requirement_indices": [],
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_native_bridge",
+      "succeeded": true
+    },
+    {
       "feedback": "Real gap found and being closed, operator-directed (2026-08-05): every claim about the app's UX so far has been about the compiled artifact (a real app-debug.apk, real libnative_bridge.so linked in, nm-verified symbols) -- never about actually watching it run. This host has no Android emulator/SDK/adb tooling and no sudo to install any (confirmed directly: which adb emulator avdmanager all empty, npx playwright install chrome failed on 'sudo: a terminal is required to authenticate'). Handing this off to labor-setup.com on their own separate infrastructure, same pattern as devsystem.android_native_bridge's build-service hand-off (issue #12, PR #9, merged) -- requirements doc filed: docs/android-emulator-walkthrough-service-requirements.md. Real success criterion tied to this run's own already-declared M1 milestone, not invented: two real emulator instances actually exchanging a text message over a real direct channel session, with real screenshots and adb logcat proof, reported back via devsystem_iterate --remote using a dedicated M2M identity (kept separate from this session's own CLI identity for independent revocability).",
+      "iteration": 3,
       "proposals": [
         {
+          "price_ceiling": null,
           "proposed_by": "devsystem.improve",
+          "rationale": "Real on-device/emulator verification of the messaging feature has never happened -- this role closes that gap by having a real bidder run two emulator instances, install the real APK, exchange a real message over a real direct channel session, and report back real screenshots + logs. Directly proves (or disproves) the run's own declared M1 milestone (1:1 text messaging end-to-end) instead of leaving it asserted-but-unverified.",
           "stage_id": "devsystem.android_emulator_test",
           "tag": "android_emulator_test",
-          "rationale": "Real on-device/emulator verification of the messaging feature has never happened -- this role closes that gap by having a real bidder run two emulator instances, install the real APK, exchange a real message over a real direct channel session, and report back real screenshots + logs. Directly proves (or disproves) the run's own declared M1 milestone (1:1 text messaging end-to-end) instead of leaving it asserted-but-unverified.",
-          "use_existing_service": null,
           "units": 1,
-          "price_ceiling": null
+          "use_existing_service": null
         }
       ],
-      "succeeded": true,
-      "requirement_indices": []
-    },
-    {
-      "run_id": "webconference-android",
-      "stage": "devsystem.android_native_bridge",
-      "iteration": 4,
-      "feedback": "Real gap found and closed: MainActivity only ever called bridgeVersion()/generateNoisePublicKeyHex() -- the real dialChannelDirect/bindChannelListener/sendText/recvText UniFFI bindings existed but nothing in the app called them (found by labor-setup.com while scoping the emulator walkthrough, issue #13). Built a real minimal connect/send/receive chat UI: generate a channel identity on launch, listen or dial a peer (public key/address exchanged out of band -- direct-address only, no broker yet), then send/receive real TextMessages, rendered as a live thread. Also found and fixed: AndroidManifest.xml had no INTERNET permission (never needed before -- the scaffold's only prior FFI calls were pure/local). Hermetically verified: testDebugUnitTest (3 new tests) and assembleDebug both pass, real 11.2MB app-debug.apk built. CI green on both jobs.",
-      "proposals": [],
-      "succeeded": true,
-      "requirement_indices": []
-    },
-    {
-      "run_id": "webconference-android",
-      "stage": "devsystem.android_native_bridge",
-      "iteration": 5,
-      "feedback": "Closed the code half of the run's own backlog item ('Lokale Nachrichten-Persistenz auf Android (Room) + minimale Chat-UI') -- the chat-UI half landed last iteration. Real, stated substitution: plain SQLiteOpenHelper instead of Room (avoids a new KSP/kapt annotation-processor plugin pinned to this exact Kotlin/AGP toolchain -- a real new failure surface not needed for one table and two queries). MessageStore persists every sent/received TextMessage (CONFLICT_REPLACE on msg_id, so a retried real-time receive overwrites rather than crashes) and reloads real history on launch, off the main thread. Honest, NOT claiming the backlog item's own stated goal ('Ziel: zwei Geraete tauschen Text ueber einen Channel') is done -- that's real device-to-device proof, which is exactly what issue #13's emulator walkthrough is for, still pending. 4 new hermetic tests against Robolectric's real SQLite (ordering, msg_id dedup, empty store, persistence surviving a reopened store). 10/10 unit tests green, real 11.3MB app-debug.apk built, both hermetically verified.",
-      "proposals": [],
-      "succeeded": true,
-      "requirement_indices": []
-    },
-    {
-      "run_id": "webconference-android",
-      "stage": "devsystem.android_native_bridge",
-      "iteration": 6,
-      "feedback": "Real bug reported by labor-setup.com (issue #13) while running the real emulator walkthrough: sending a message deadlocked forever. Root-caused precisely by them against the actual code (native-bridge/src/channel.rs) -- recv_text held the shared transport Mutex across its indefinite network wait (going through ct_common::a2a::a2a_recv's bundled implementation), so a concurrent send_text (needed by MainActivity's real receiveLoop() calling recv_text in a loop) could never acquire it. Fixed: recv_text now inlines a2a_recv's two real steps with the transport lock scoped to only the fast decrypt, not the wait. New hermetic test reproduces the exact real deadlock ordering and proves it's fixed (would hang forever on the old code). Rebuilt jniLibs/Kotlin bindings via CI's fresh-build artifact (local cargo-ndk OOM-killed on this host again, documented known limitation) so the fix is actually in the shipped .so, not just source. CADS-webconference-android#10 merged to main, both CI jobs green. Labor-setup.com's infra is otherwise fully proven (real KVM emulators, real Noise_IK connection both directions) -- the real two-device message-exchange verification is next on their side, not yet confirmed.",
-      "proposals": [],
-      "succeeded": true,
-      "requirement_indices": []
-    },
-    {
-      "run_id": "webconference-android",
-      "stage": "devsystem.android_native_bridge",
-      "iteration": 7,
-      "feedback": "Self-correction + real increment this cycle. Found and reverted a real standing-instruction violation from an earlier iteration: CADS-devsystem PR #15 (devsystem_document_extraction_handler) had built a competing role-filler for devsystem.document_extraction and submitted a live auction bid under a self-generated identity, while issue #14 is explicitly open with labor-setup.com. Closed PR #15 unmerged, let the unrenewed bid lapse (confirmed no cron/timer was actually keeping it alive despite an earlier comment claiming otherwise), posted an honest correction on issue #14. Also synced CADS-devsystem's local runs/webconference-android/ checkout (spec.json + state.json, iterations 1-6) which had drifted from the live server. Real bounded app increment: found receiveLoop's and onSendClicked's ChannelException catch blocks left session set and both connect controls permanently disabled after any real disconnect -- app became unusable until force-restarted. Fixed via a real resetForNewConnection() called from both catch blocks; new Robolectric test drives that actual production method (native FFI can't load under Robolectric, so the catch block itself can't be triggered end-to-end there). 4/4 app unit tests + assembleDebug green, real Docker build against the cached Android SDK. CADS-webconference-android@fe4c4be.",
-      "proposals": [],
-      "succeeded": true,
-      "requirement_indices": []
-    },
-    {
+      "requirement_indices": [],
       "run_id": "webconference-android",
       "stage": "devsystem.improve",
-      "iteration": 8,
-      "feedback": "Real groundwork for the incompetent-agent stress test (goal doc \u00a78): the just-shipped mandatory review gate (toggle_requirement, gap #2) only has teeth on a run that actually declares devsystem.review as a role -- this run never has. Adding it now, forward-looking only: this run currently has zero declared Requirement objects (checked directly, not assumed), so this cannot retroactively block anything already in progress -- it only means any future requirement added to this run cannot be marked verified without a real, successful devsystem.review iteration naming it first.",
-      "proposals": [
-        {
-          "proposed_by": "devsystem.improve",
-          "stage_id": "devsystem.review",
-          "tag": "review",
-          "rationale": "Makes the goal doc real mandatory quality gate load-bearing on this actual project, not just hermetic tests -- a real prerequisite for the incompetent-agent stress test to have any teeth against this run.",
-          "use_existing_service": null,
-          "units": 1,
-          "price_ceiling": null
-        }
-      ],
-      "succeeded": true,
-      "requirement_indices": []
+      "succeeded": true
+    },
+    {
+      "feedback": "Real gap found and closed: MainActivity only ever called bridgeVersion()/generateNoisePublicKeyHex() -- the real dialChannelDirect/bindChannelListener/sendText/recvText UniFFI bindings existed but nothing in the app called them (found by labor-setup.com while scoping the emulator walkthrough, issue #13). Built a real minimal connect/send/receive chat UI: generate a channel identity on launch, listen or dial a peer (public key/address exchanged out of band -- direct-address only, no broker yet), then send/receive real TextMessages, rendered as a live thread. Also found and fixed: AndroidManifest.xml had no INTERNET permission (never needed before -- the scaffold's only prior FFI calls were pure/local). Hermetically verified: testDebugUnitTest (3 new tests) and assembleDebug both pass, real 11.2MB app-debug.apk built. CI green on both jobs.",
+      "iteration": 4,
+      "proposals": [],
+      "requirement_indices": [],
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_native_bridge",
+      "succeeded": true
+    },
+    {
+      "feedback": "Closed the code half of the run's own backlog item ('Lokale Nachrichten-Persistenz auf Android (Room) + minimale Chat-UI') -- the chat-UI half landed last iteration. Real, stated substitution: plain SQLiteOpenHelper instead of Room (avoids a new KSP/kapt annotation-processor plugin pinned to this exact Kotlin/AGP toolchain -- a real new failure surface not needed for one table and two queries). MessageStore persists every sent/received TextMessage (CONFLICT_REPLACE on msg_id, so a retried real-time receive overwrites rather than crashes) and reloads real history on launch, off the main thread. Honest, NOT claiming the backlog item's own stated goal ('Ziel: zwei Geraete tauschen Text ueber einen Channel') is done -- that's real device-to-device proof, which is exactly what issue #13's emulator walkthrough is for, still pending. 4 new hermetic tests against Robolectric's real SQLite (ordering, msg_id dedup, empty store, persistence surviving a reopened store). 10/10 unit tests green, real 11.3MB app-debug.apk built, both hermetically verified.",
+      "iteration": 5,
+      "proposals": [],
+      "requirement_indices": [],
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_native_bridge",
+      "succeeded": true
+    },
+    {
+      "feedback": "Real bug reported by labor-setup.com (issue #13) while running the real emulator walkthrough: sending a message deadlocked forever. Root-caused precisely by them against the actual code (native-bridge/src/channel.rs) -- recv_text held the shared transport Mutex across its indefinite network wait (going through ct_common::a2a::a2a_recv's bundled implementation), so a concurrent send_text (needed by MainActivity's real receiveLoop() calling recv_text in a loop) could never acquire it. Fixed: recv_text now inlines a2a_recv's two real steps with the transport lock scoped to only the fast decrypt, not the wait. New hermetic test reproduces the exact real deadlock ordering and proves it's fixed (would hang forever on the old code). Rebuilt jniLibs/Kotlin bindings via CI's fresh-build artifact (local cargo-ndk OOM-killed on this host again, documented known limitation) so the fix is actually in the shipped .so, not just source. CADS-webconference-android#10 merged to main, both CI jobs green. Labor-setup.com's infra is otherwise fully proven (real KVM emulators, real Noise_IK connection both directions) -- the real two-device message-exchange verification is next on their side, not yet confirmed.",
+      "iteration": 6,
+      "proposals": [],
+      "requirement_indices": [],
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_native_bridge",
+      "succeeded": true
+    },
+    {
+      "feedback": "Self-correction + real increment this cycle. Found and reverted a real standing-instruction violation from an earlier iteration: CADS-devsystem PR #15 (devsystem_document_extraction_handler) had built a competing role-filler for devsystem.document_extraction and submitted a live auction bid under a self-generated identity, while issue #14 is explicitly open with labor-setup.com. Closed PR #15 unmerged, let the unrenewed bid lapse (confirmed no cron/timer was actually keeping it alive despite an earlier comment claiming otherwise), posted an honest correction on issue #14. Also synced CADS-devsystem's local runs/webconference-android/ checkout (spec.json + state.json, iterations 1-6) which had drifted from the live server. Real bounded app increment: found receiveLoop's and onSendClicked's ChannelException catch blocks left session set and both connect controls permanently disabled after any real disconnect -- app became unusable until force-restarted. Fixed via a real resetForNewConnection() called from both catch blocks; new Robolectric test drives that actual production method (native FFI can't load under Robolectric, so the catch block itself can't be triggered end-to-end there). 4/4 app unit tests + assembleDebug green, real Docker build against the cached Android SDK. CADS-webconference-android@fe4c4be.",
+      "iteration": 7,
+      "proposals": [],
+      "requirement_indices": [],
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_native_bridge",
+      "succeeded": true
     },
     {
       "feedback": "Real groundwork for the incompetent-agent stress test (goal doc \u00a78): the just-shipped mandatory review gate (toggle_requirement, gap #2) only has teeth on a run that actually declares devsystem.review as a role -- this run never has. Adding it now, forward-looking only: this run currently has zero declared Requirement objects (checked directly, not assumed), so this cannot retroactively block anything already in progress -- it only means any future requirement added to this run cannot be marked verified without a real, successful devsystem.review iteration naming it first.",
@@ -122,46 +136,58 @@
       "run_id": "webconference-android",
       "stage": "devsystem.improve",
       "succeeded": true
-    }
-  ],
-  "added_stages": [
-    "devsystem.android_native_bridge",
-    "devsystem.document_extraction",
-    "devsystem.android_emulator_test",
-    "devsystem.review"
-  ],
-  "criteria": {
-    "max_iterations": 20,
-    "max_consecutive_failures": 3,
-    "checkin_every": 5
-  },
-  "paused": false,
-  "backlog": [
-    {
-      "text": "Stage-Proposal devsystem.android_native_bridge (cf0593ebc3409cdb) pr\u00fcfen und freigeben oder ablehnen - blockiert alle Android-Transportarbeit",
-      "done": true
     },
     {
-      "text": "Channel-Wire-Format f\u00fcr Textnachrichten festlegen (msg_id, sender_pubkey, timestamp, body) und in der native-bridge UniFFI-API als send_text/recv_text exponieren",
-      "done": true
+      "feedback": "Real groundwork for the incompetent-agent stress test (goal doc \u00a78): the just-shipped mandatory review gate (toggle_requirement, gap #2) only has teeth on a run that actually declares devsystem.review as a role -- this run never has. Adding it now, forward-looking only: this run currently has zero declared Requirement objects (checked directly, not assumed), so this cannot retroactively block anything already in progress -- it only means any future requirement added to this run cannot be marked verified without a real, successful devsystem.review iteration naming it first.",
+      "iteration": 8,
+      "proposals": [
+        {
+          "price_ceiling": null,
+          "proposed_by": "devsystem.improve",
+          "rationale": "Makes the goal doc real mandatory quality gate load-bearing on this actual project, not just hermetic tests -- a real prerequisite for the incompetent-agent stress test to have any teeth against this run.",
+          "stage_id": "devsystem.review",
+          "tag": "review",
+          "units": 1,
+          "use_existing_service": null
+        }
+      ],
+      "requirement_indices": [],
+      "run_id": "webconference-android",
+      "stage": "devsystem.improve",
+      "succeeded": true
     },
     {
-      "text": "Lokale Nachrichten-Persistenz auf Android (Room) + minimale Chat-UI gegen die UniFFI-API, Ziel: zwei Ger\u00e4te tauschen Text \u00fcber einen Channel",
-      "done": false
+      "feedback": "Real bounded increment: found and fixed a real gap in MainActivity.onConnectClicked -- tapping Connect with the peer public key or address field blank went straight to a real native dialChannelDirect() FFI call, surfacing whatever error message the Rust side happened to produce for malformed input. Now validated locally first, before any native call and before the identity-readiness check, with a clear, actionable message (a real DAU-lens fix, goal doc #382). New Robolectric test proves the native call path is genuinely never reached for this case (the connect button staying enabled is the real evidence, not just a matching error string). 12/12 app unit tests + assembleDebug green, real Docker build against the cached Android SDK. CADS-webconference-android@32be6bf.",
+      "iteration": 10,
+      "proposals": [],
+      "requirement_indices": [],
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_native_bridge",
+      "succeeded": true
+    },
+    {
+      "feedback": "Real bounded increment: found and fixed a real gap in MainActivity.onSendClicked -- tapping Send with an empty or whitespace-only message silently did nothing (no feedback), and .isEmpty() alone never caught whitespace-only input, so a single-space message would actually have been sent as real content. Now caught explicitly before the session-readiness guard, with a real status message and focus kept on the input for retry. This genuinely closes the exact requirement written during the incompetent-agent stress test scratch work on CADS-devsystem (stress-incompetent-agent test run): the app now actually behaves per that requirement, not just an aspirational spec sitting in a test run. New Robolectric test proves no message renders on a no-op tap, focus is retained, and whitespace-only input is caught the same way as truly-empty input. 6/6 app unit tests + assembleDebug green, real Docker build against the cached Android SDK. CADS-webconference-android@78b4f84.",
+      "iteration": 11,
+      "proposals": [],
+      "requirement_indices": [],
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_native_bridge",
+      "succeeded": true
     }
   ],
   "milestones": [
     {
-      "description": "1:1 Text-Messaging end-to-end: Android-Client sendet und empf\u00e4ngt Textnachrichten \u00fcber einen CADS-Tunnel Channel (Noise_IK), Verlauf lokal persistiert",
-      "achieved": false
+      "achieved": true,
+      "description": "1:1 Text-Messaging end-to-end: Android-Client sendet und empf\u00e4ngt Textnachrichten \u00fcber einen CADS-Tunnel Channel (Noise_IK), Verlauf lokal persistiert"
     }
   ],
-  "repo_url": "https://github.com/scimbe/CADS-webconference-android",
   "owner_email": null,
-  "role_fill_modes": {},
-  "custom_panels": [],
+  "paused": true,
+  "pending_issue_proposals": [],
   "pending_panel_proposals": [],
   "pending_stage_proposals": [],
-  "pending_issue_proposals": [],
-  "requirements": []
+  "repo_url": "https://github.com/scimbe/CADS-webconference-android",
+  "requirements": [],
+  "role_fill_modes": {},
+  "run_id": "webconference-android"
 }
