@@ -1,0 +1,27 @@
+# Real fix (2026-08-05): web/Dockerfile's builder stage only ever COPYs
+# pipeline/ and web/ (COPY pipeline ./pipeline, COPY web ./web) -- everything
+# else at repo root was still being uploaded into the build context on every
+# single `docker build .` because there was no .dockerignore at all, with no
+# functional purpose (none of it is ever COPY'd into the image). Found the
+# hard way while redeploying for #48 slice 6: a stray host-side `cargo build`
+# had left root-owned target/ dirs inside pipeline/ and web/ themselves (a
+# different, already-understood problem -- BuildKit cache mounts, see this
+# Dockerfile's own comment, don't touch a bind-mounted host checkout), and the
+# resulting multi-GB build context transfer filled this host's already-tight
+# root disk to 100% mid-build (matches this project's own memory note about
+# the prior 46GB accumulation incident -- same class of root cause, a
+# previously-undiagnosed contributor to it, not a one-off).
+.git
+.cargo-home
+.claude
+.claude-flow
+.swarm
+target
+pipeline/target
+web/target
+runs
+test-runs
+docs
+demo-site
+.gitignore
+.mcp.json

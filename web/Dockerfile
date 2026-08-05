@@ -21,17 +21,41 @@ COPY web ./web
 # host has zero swap and has frozen before under concurrent heavy builds
 # (confirmed by CADS-a2a-demo's own Dockerfile comment, same host, same
 # constraint) -- not worth risking here for a small speed gain.
+# #48 slice 6: also build the real github_issue_channel_client binary into this
+# same image -- approve_issue_proposal shells out to it (as a subprocess, same
+# process this container already runs) to relay an approved issue through the
+# separate, isolated github_issue_channel_handler agent instead of POSTing to
+# GitHub directly. Built from the same pipeline/ checkout, same cache mounts,
+# in the one cargo invocation so this doesn't double the dependency-compile cost.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/work/target \
     cargo build --release --manifest-path web/Cargo.toml --jobs 1 \
-    && cp web/target/release/devsystem-web /tmp/devsystem-web
+    && cargo build --release --manifest-path pipeline/Cargo.toml --jobs 1 --bin github_issue_channel_client \
+    && cp web/target/release/devsystem-web /tmp/devsystem-web \
+    && cp pipeline/target/release/github_issue_channel_client /tmp/github_issue_channel_client
 
-FROM debian:bookworm-slim
+# Real fix (2026-08-05): rust:1-slim above now tracks Debian 13 (trixie,
+# glibc 2.41) upstream, not bookworm -- discovered the hard way when this
+# stage was still `debian:bookworm-slim` (Debian 12, glibc 2.36) and the
+# resulting binary refused to start at all: "GLIBC_2.39 not found". Runtime
+# base has to track whatever Debian release the `rust:1-slim` builder tag
+# currently resolves to, not a version pinned when this Dockerfile was first
+# written.
+FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /tmp/devsystem-web /app/devsystem-web
+COPY --from=builder /tmp/github_issue_channel_client /app/github_issue_channel_client
 COPY web/static /app/web/static
 ENV DEVSYSTEM_STATIC_DIR=/app/web/static
 ENV DEVSYSTEM_RUNS_DIR=/app/runs
+# #48 slice 6: where approve_issue_proposal finds its own copy of the client
+# subprocess, baked into this same image -- CT_AGENT_BIN (the real ct-agent
+# binary, a different architecture-sensitive artifact this repo doesn't build)
+# and the channel/key material are deliberately NOT set here: those are real,
+# host-specific/secret values the operator supplies at `docker run` time (see
+# scripts/github_issue_agent_serve_loop.sh's own doc comment for the matching
+# handler-side contract), same as this image never bakes in DEVSYSTEM_GITHUB_TOKEN.
+ENV ISSUE_CHANNEL_CLIENT_BIN=/app/github_issue_channel_client
 EXPOSE 8790
 CMD ["/app/devsystem-web"]

@@ -23,7 +23,13 @@ devsystem-pipeline = { path = "../pipeline" }
 axum = { version = "0.8", features = ["multipart"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
+# "process" added for #48 slice 6: approve_issue_proposal now shells out to a
+# real github_issue_channel_client subprocess (relaying through the isolated
+# github_issue_channel_handler agent over a real channel) when that's
+# configured, instead of always POSTing to GitHub directly with this process's
+# own token -- async spawn/await via tokio::process::Command, not a blocking
+# std::process::Command call inside this axum handler.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "process"] }
 tower-http = { version = "0.7", features = ["fs"] }
 # Proxies /api/runs/{id}/assistant to the real devsystem_assistant --serve bridge
 # (a separate process, possibly a separate host -- "every component should be

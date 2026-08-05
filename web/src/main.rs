@@ -95,10 +95,46 @@ struct AppState {
     /// two RAG credentials: `search_rag` falls back to the embedded/JSON
     /// semantic search path rather than erroring.
     rag_db_pool: Option<sqlx::PgPool>,
+    /// Real relay configuration for `approve_issue_proposal` (#48 slice 6): when
+    /// every piece is configured, an approval shells out to a real
+    /// `github_issue_channel_client` subprocess -- which dials the separate,
+    /// isolated `github_issue_channel_handler` agent over a real CADS-Tunnel
+    /// Agent-Fabric channel -- instead of POSTing to GitHub directly with
+    /// `github_token`. The real GitHub credential then lives only on that
+    /// separate handler process, never inside devsystem-web at all. `None` when
+    /// any one piece is missing on this deployment: an ADDITIVE path, same
+    /// honest-degrade contract as `github_token` above -- a deployment that only
+    /// ever configured `DEVSYSTEM_GITHUB_TOKEN` keeps working exactly as before
+    /// this slice (see `approve_issue_proposal`'s own doc comment for the
+    /// priority between the two paths).
+    issue_channel: Option<IssueChannelConfig>,
+}
+
+/// See `AppState::issue_channel`'s doc comment. Every field here maps directly
+/// onto the exact env var `github_issue_channel_client` itself already reads
+/// (see that binary's own module doc) -- `client_bin`/`ct_agent_bin` are the
+/// two paths (to the client binary itself, and to the real `ct-agent` binary
+/// that client spawns as its own child), the rest are that binary's real
+/// channel-dialing parameters, this deployment's own private key among them.
+#[derive(Clone)]
+struct IssueChannelConfig {
+    client_bin: Arc<str>,
+    ct_agent_bin: Arc<str>,
+    addr: Arc<str>,
+    noise_key: Arc<str>,
+    peer_noise_key: Arc<str>,
+    peer_cert_file: Arc<str>,
 }
 
 fn unix_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock before 1970").as_secs()
+}
+
+/// `std::env::var` treated the same way every other optional credential/URL in
+/// this file already is: unset OR blank both mean "not configured", never an
+/// empty-string value silently accepted as real configuration.
+fn nonempty_env(name: &str) -> Option<Arc<str>> {
+    std::env::var(name).ok().filter(|s| !s.trim().is_empty()).map(Arc::from)
 }
 
 /// The real API router, no static-file fallback -- separated out so tests can
@@ -266,7 +302,28 @@ async fn main() {
     };
     let github_token: Option<Arc<str>> = std::env::var("DEVSYSTEM_GITHUB_TOKEN").ok().filter(|s| !s.trim().is_empty()).map(Arc::from);
     if github_token.is_none() {
-        println!("DEVSYSTEM_GITHUB_TOKEN not set -- approving an issue proposal will report itself unconfigured");
+        println!("DEVSYSTEM_GITHUB_TOKEN not set -- approving an issue proposal will fall back to the channel relay if that's configured, else report itself unconfigured");
+    }
+    // #48 slice 6: all six pieces are required together -- a partially set
+    // config (e.g. the client binary path but no channel address) is not a
+    // real, usable relay, so it's treated identically to "not configured at
+    // all" rather than failing confusingly on the first real approval.
+    let issue_channel: Option<IssueChannelConfig> = (|| {
+        Some(IssueChannelConfig {
+            client_bin: nonempty_env("ISSUE_CHANNEL_CLIENT_BIN")?,
+            ct_agent_bin: nonempty_env("CT_AGENT_BIN")?,
+            addr: nonempty_env("CT_CHANNEL_ADDR")?,
+            noise_key: nonempty_env("CT_CHANNEL_NOISE_KEY")?,
+            peer_noise_key: nonempty_env("CT_CHANNEL_PEER_NOISE_KEY")?,
+            peer_cert_file: nonempty_env("CT_CHANNEL_PEER_CERT_FILE")?,
+        })
+    })();
+    if issue_channel.is_some() {
+        println!("issue-proposal channel relay fully configured -- approving a proposal will dial github_issue_channel_handler over a real channel, not POST to GitHub directly");
+    } else {
+        println!(
+            "issue-proposal channel relay not fully configured (need ISSUE_CHANNEL_CLIENT_BIN, CT_AGENT_BIN, CT_CHANNEL_ADDR, CT_CHANNEL_NOISE_KEY, CT_CHANNEL_PEER_NOISE_KEY, CT_CHANNEL_PEER_CERT_FILE all set) -- approving a proposal will fall back to DEVSYSTEM_GITHUB_TOKEN if that's configured"
+        );
     }
     let state = AppState {
         runs_dir: Arc::new(runs_dir),
@@ -280,6 +337,7 @@ async fn main() {
         rag_unstructured_api_key,
         rag_unstructured_api_base,
         rag_db_pool,
+        issue_channel,
     };
 
     let static_dir = std::env::var("DEVSYSTEM_STATIC_DIR").unwrap_or_else(|_| "web/static".to_string());
@@ -2059,13 +2117,122 @@ struct CreatedGithubIssue {
     html_url: String,
 }
 
+/// What either real posting path (direct-POST or channel-relay) produces on
+/// success -- `number` is `None` for the channel path's "already filed"
+/// outcome (`github_issue_channel_handler`'s own real dedup memory reporting
+/// back a prior URL, not a freshly created issue with a real new number).
+struct PostedIssue {
+    number: Option<u64>,
+    html_url: String,
+    already_filed: bool,
+}
+
+fn issue_error(status: StatusCode, error: impl Into<String>) -> (StatusCode, Json<serde_json::Value>) {
+    (status, Json(serde_json::json!({ "error": error.into() })))
+}
+
+/// The original, still-supported path: this process's own `github_token`
+/// POSTs straight to the GitHub REST API. See `approve_issue_proposal`'s doc
+/// comment for when this is used instead of the channel relay.
+async fn post_issue_directly(client: &reqwest::Client, token: &str, repo: &str, title: &str, body: &str) -> Result<PostedIssue, (StatusCode, Json<serde_json::Value>)> {
+    let url = format!("https://api.github.com/repos/{repo}/issues");
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "devsystem-web-issue-proposal/1 (+https://github.com/scimbe/CADS-devsystem)")
+        .json(&serde_json::json!({"title": title, "body": body}))
+        .send()
+        .await;
+    match resp {
+        Ok(r) if r.status().is_success() => match r.json::<CreatedGithubIssue>().await {
+            Ok(created) => Ok(PostedIssue { number: Some(created.number), html_url: created.html_url, already_filed: false }),
+            Err(e) => Err(issue_error(StatusCode::BAD_GATEWAY, format!("GitHub returned a real issue but the response couldn't be parsed: {e}"))),
+        },
+        Ok(r) => {
+            let status = r.status();
+            let text = r.text().await.unwrap_or_default();
+            Err(issue_error(StatusCode::BAD_GATEWAY, format!("GitHub rejected the issue create: HTTP {status}: {text}")))
+        }
+        Err(e) => Err(issue_error(StatusCode::BAD_GATEWAY, format!("could not reach GitHub: {e}"))),
+    }
+}
+
+/// Parses `github_issue_channel_client`'s own real stdout contract (see that
+/// binary's `main()`): `"created: #<n> <url>"` or `"already filed: <url>"`,
+/// on whichever line actually matches -- deliberately not JSON, matching the
+/// exact plain-text shape that binary really prints, not a guessed one.
+fn parse_issue_channel_client_stdout(stdout: &str) -> Option<PostedIssue> {
+    stdout.lines().find_map(|line| {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("created: #") {
+            let (num_str, url) = rest.split_once(' ')?;
+            let number = num_str.trim().parse::<u64>().ok()?;
+            return Some(PostedIssue { number: Some(number), html_url: url.trim().to_string(), already_filed: false });
+        }
+        line.strip_prefix("already filed: ").map(|url| PostedIssue { number: None, html_url: url.trim().to_string(), already_filed: true })
+    })
+}
+
+/// The new #48 slice 6 path: shells out to a real `github_issue_channel_client`
+/// subprocess, which itself dials the real, isolated `github_issue_channel_handler`
+/// agent over a real CADS-Tunnel Agent-Fabric channel and holds the real GitHub
+/// token -- never this process. Every env var this subprocess needs is set
+/// explicitly here (not left to ambient inheritance) so the exact contract is
+/// visible in one place and independently testable, matching
+/// `github_issue_channel_client.rs`'s own tests' `fake_ct_agent` pattern (a
+/// fake binary standing in for the real one, here a fake client binary
+/// standing in for the real `github_issue_channel_client`).
+///
+/// Exit status IS meaningful for this specific subprocess (unlike the
+/// handler's own always-exit-0 contract, see that binary's module doc): a
+/// non-zero exit means the channel round trip itself failed, or the handler
+/// reported a real `IssueResponse::Error` (that binary prints it to stderr and
+/// exits non-zero) -- either way, a real failure, surfaced honestly via
+/// stderr, never treated as success.
+async fn post_issue_via_channel(cfg: &IssueChannelConfig, repo: &str, title: &str, body: &str) -> Result<PostedIssue, (StatusCode, Json<serde_json::Value>)> {
+    let output = tokio::process::Command::new(cfg.client_bin.as_ref())
+        .arg(repo)
+        .arg(title)
+        .arg(body)
+        .env("CT_AGENT_BIN", cfg.ct_agent_bin.as_ref())
+        .env("CT_CHANNEL_ADDR", cfg.addr.as_ref())
+        .env("CT_CHANNEL_NOISE_KEY", cfg.noise_key.as_ref())
+        .env("CT_CHANNEL_PEER_NOISE_KEY", cfg.peer_noise_key.as_ref())
+        .env("CT_CHANNEL_PEER_CERT_FILE", cfg.peer_cert_file.as_ref())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await;
+    match output {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            parse_issue_channel_client_stdout(&stdout)
+                .ok_or_else(|| issue_error(StatusCode::BAD_GATEWAY, format!("github_issue_channel_client exited 0 but printed no line this deployment recognizes: {stdout:?}")))
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            Err(issue_error(StatusCode::BAD_GATEWAY, format!("github_issue_channel_client exited with {}: {}", out.status, stderr.trim())))
+        }
+        Err(e) => Err(issue_error(StatusCode::BAD_GATEWAY, format!("could not run the issue-channel client ({}): {e}", cfg.client_bin))),
+    }
+}
+
 /// `POST /api/runs/{id}/issues/proposals/{proposal_id}/approve` -- the actual
-/// "eingebaut nach meiner Zustimmung" (built in after my approval) step: posts
-/// the real issue to GitHub via the REST API, using `DEVSYSTEM_GITHUB_TOKEN`.
-/// Honest `503` (never a silent no-op) when this deployment hasn't configured
-/// one -- the drafted title/body/repo are still in the response either way, so
-/// the operator can copy-paste and post it by hand as a fallback, same pattern
-/// as CADS-Tunnel's `ensure_user` relaying a temp password out of band when
+/// "eingebaut nach meiner Zustimmung" (built in after my approval) step: files
+/// the real issue. Two real posting paths, tried in this order:
+///
+/// 1. The channel relay (`issue_channel`, #48 slice 6), when fully configured --
+///    the GitHub credential lives only on the separate `github_issue_channel_handler`
+///    process this dials over a real channel, never in this process. This is the
+///    intended production path going forward.
+/// 2. `github_token`, POSTing straight to the GitHub REST API -- the original
+///    path, kept working unmodified for any deployment that only ever
+///    configured `DEVSYSTEM_GITHUB_TOKEN` and hasn't set up the channel relay.
+///
+/// Honest `503` (never a silent no-op) when NEITHER is configured -- the
+/// drafted title/body/repo are still in the response either way, so the
+/// operator can copy-paste and post it by hand as a fallback, same pattern as
+/// CADS-Tunnel's `ensure_user` relaying a temp password out of band when
 /// there's no real email mechanism.
 async fn approve_issue_proposal(
     State(state): State<AppState>,
@@ -2090,46 +2257,38 @@ async fn approve_issue_proposal(
     let Some(pos) = run_state.pending_issue_proposals.iter().position(|p| p.id == proposal_id) else {
         return (StatusCode::NOT_FOUND, format!("no pending proposal with id {proposal_id:?}")).into_response();
     };
-    let Some(token) = state.github_token.clone() else {
+
+    let issue_channel = state.issue_channel.clone();
+    let github_token = state.github_token.clone();
+    if issue_channel.is_none() && github_token.is_none() {
         let proposal = &run_state.pending_issue_proposals[pos];
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({
-                "error": "DEVSYSTEM_GITHUB_TOKEN is not configured on this deployment -- post it by hand instead",
+                "error": "neither the issue-proposal channel relay nor DEVSYSTEM_GITHUB_TOKEN is configured on this deployment -- post it by hand instead",
                 "repo": proposal.repo,
                 "title": proposal.title,
                 "body": proposal.body,
             })),
         )
             .into_response();
-    };
+    }
+
     let proposal = run_state.pending_issue_proposals[pos].clone();
-    let url = format!("https://api.github.com/repos/{}/issues", proposal.repo);
-    let resp = state
-        .http_client
-        .post(&url)
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "devsystem-web-issue-proposal/1 (+https://github.com/scimbe/CADS-devsystem)")
-        .json(&serde_json::json!({"title": proposal.title, "body": proposal.body}))
-        .send()
-        .await;
-    let created: CreatedGithubIssue = match resp {
-        Ok(r) if r.status().is_success() => match r.json().await {
-            Ok(v) => v,
-            Err(e) => return (StatusCode::BAD_GATEWAY, format!("GitHub returned a real issue but the response couldn't be parsed: {e}")).into_response(),
-        },
-        Ok(r) => {
-            let status = r.status();
-            let text = r.text().await.unwrap_or_default();
-            return (StatusCode::BAD_GATEWAY, format!("GitHub rejected the issue create: HTTP {status}: {text}")).into_response();
-        }
-        Err(e) => return (StatusCode::BAD_GATEWAY, format!("could not reach GitHub: {e}")).into_response(),
+    let posted = if let Some(cfg) = issue_channel {
+        post_issue_via_channel(&cfg, &proposal.repo, &proposal.title, &proposal.body).await
+    } else {
+        post_issue_directly(&state.http_client, github_token.as_deref().expect("checked above: one of the two is Some"), &proposal.repo, &proposal.title, &proposal.body).await
     };
+    let posted = match posted {
+        Ok(p) => p,
+        Err((status, body)) => return (status, body).into_response(),
+    };
+
     run_state.pending_issue_proposals.remove(pos);
     match persist_run(&dir, &spec, &run_state) {
-        Ok(()) => Json(serde_json::json!({"number": created.number, "html_url": created.html_url})).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("issue was posted to GitHub (#{}) but persisting the local state failed: {e}", created.number)).into_response(),
+        Ok(()) => Json(serde_json::json!({"number": posted.number, "html_url": posted.html_url, "already_filed": posted.already_filed})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("issue was posted ({}) but persisting the local state failed: {e}", posted.html_url)).into_response(),
     }
 }
 
@@ -2391,6 +2550,7 @@ mod tests {
             rag_unstructured_api_key: None,
             rag_unstructured_api_base: Arc::from("https://api.unstructured.io"),
             rag_db_pool: None,
+            issue_channel: None,
         };
         (state, dir)
     }
@@ -2406,6 +2566,39 @@ mod tests {
         let (mut state, dir) = test_state();
         state.rag_unstructured_api_key = Some(Arc::from(api_key));
         state.rag_unstructured_api_base = Arc::from(api_base);
+        (state, dir)
+    }
+
+    /// A fake `github_issue_channel_client` standing in for the real
+    /// subprocess -- same real reason `github_issue_channel_client.rs`'s own
+    /// tests fake `ct-agent` rather than the real binary: proves
+    /// `post_issue_via_channel`'s own env-passing/argv-passing/output-parsing
+    /// logic without a real channel or a real `ct-agent`. The actual real
+    /// channel round trip (this deployment's `github_issue_channel_client`
+    /// talking to the real, separately-hosted `github_issue_channel_handler`)
+    /// is live-verified by hand against the real deployment, same "hermetic
+    /// test the logic, live-verify the real transport by hand" precedent
+    /// `github_issue_channel_client.rs` itself already established.
+    fn fake_issue_channel_client(dir: &std::path::Path, script: &str) -> String {
+        let path = dir.join("fake-issue-channel-client.sh");
+        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+        path.to_string_lossy().to_string()
+    }
+
+    fn test_state_with_issue_channel(client_script: &str) -> (AppState, tempfile::TempDir) {
+        let (mut state, dir) = test_state();
+        let client_bin = fake_issue_channel_client(dir.path(), client_script);
+        state.issue_channel = Some(IssueChannelConfig {
+            client_bin: Arc::from(client_bin),
+            ct_agent_bin: Arc::from("fake-ct-agent"),
+            addr: Arc::from("127.0.0.1:1"),
+            noise_key: Arc::from("fake-noise-priv"),
+            peer_noise_key: Arc::from("fake-noise-peer-pub"),
+            peer_cert_file: Arc::from("/nonexistent/fake-cert-file"),
+        });
         (state, dir)
     }
 
@@ -3905,6 +4098,130 @@ mod tests {
         assert_eq!(body["title"], "Real gap");
     }
 
+    /// Sends one proposal into an existing (empty) run and returns its id --
+    /// the same setup every approve/reject test below needs, factored out so
+    /// the four new #48-slice-6 channel-relay tests aren't pure boilerplate
+    /// repeats of the pre-existing tests around them.
+    async fn create_run_and_propose_issue(app: Router, run_id: &str) -> String {
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": run_id}))).await.unwrap();
+        let response = app
+            .oneshot(json_request("POST", &format!("/api/runs/{run_id}/issues/propose"), serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": "Real gap", "body": "Real detail."})))
+            .await
+            .unwrap();
+        body_json(response).await["id"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn approving_an_issue_proposal_via_a_configured_channel_relay_posts_through_the_real_subprocess_and_reports_the_real_url() {
+        // Echoes back the real argv/env it actually received, so the
+        // assertions below prove the real values reached the subprocess, not
+        // just that the code compiles.
+        let (state, _dir) = test_state_with_issue_channel(
+            r#"echo "argv=$1|$2|$3 ctagent=$CT_AGENT_BIN addr=$CT_CHANNEL_ADDR noise=$CT_CHANNEL_NOISE_KEY peer=$CT_CHANNEL_PEER_NOISE_KEY certfile=$CT_CHANNEL_PEER_CERT_FILE" >&2
+echo "created: #9 https://github.com/scimbe/CADS-webconference-demo/issues/9""#,
+        );
+        let app = api_router(state);
+        let proposal_id = create_run_and_propose_issue(app.clone(), "issue-channel-created-run").await;
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/issue-channel-created-run/issues/proposals/{proposal_id}/approve")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["number"], 9);
+        assert_eq!(body["html_url"], "https://github.com/scimbe/CADS-webconference-demo/issues/9");
+        assert_eq!(body["already_filed"], false);
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/issue-channel-created-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["pending_issue_proposals"].as_array().unwrap().len(), 0, "an approved proposal must be removed from the pending list");
+    }
+
+    #[tokio::test]
+    async fn approving_an_issue_proposal_via_the_channel_relay_sets_every_real_env_var_the_client_needs() {
+        let (state, _dir) = test_state_with_issue_channel(
+            r#"echo "ctagent=$CT_AGENT_BIN addr=$CT_CHANNEL_ADDR noise=$CT_CHANNEL_NOISE_KEY peer=$CT_CHANNEL_PEER_NOISE_KEY certfile=$CT_CHANNEL_PEER_CERT_FILE" > "$0.envcheck"
+echo "created: #1 https://github.com/scimbe/CADS-webconference-demo/issues/1""#,
+        );
+        let dir = _dir.path().to_path_buf();
+        let app = api_router(state);
+        let proposal_id = create_run_and_propose_issue(app.clone(), "issue-channel-env-run").await;
+        app.oneshot(Request::builder().method("POST").uri(format!("/api/runs/issue-channel-env-run/issues/proposals/{proposal_id}/approve")).body(Body::empty()).unwrap()).await.unwrap();
+
+        let envcheck = std::fs::read_to_string(dir.join("fake-issue-channel-client.sh.envcheck")).expect("fake client must have recorded the real env it received");
+        assert!(envcheck.contains("ctagent=fake-ct-agent"), "real envcheck: {envcheck}");
+        assert!(envcheck.contains("addr=127.0.0.1:1"));
+        assert!(envcheck.contains("noise=fake-noise-priv"));
+        assert!(envcheck.contains("peer=fake-noise-peer-pub"));
+        assert!(envcheck.contains("certfile=/nonexistent/fake-cert-file"));
+    }
+
+    #[tokio::test]
+    async fn approving_an_issue_proposal_via_the_channel_relay_reports_an_already_filed_result_honestly_not_as_a_fresh_create() {
+        let (state, _dir) = test_state_with_issue_channel(r#"echo "already filed: https://github.com/scimbe/CADS-webconference-demo/issues/2""#);
+        let app = api_router(state);
+        let proposal_id = create_run_and_propose_issue(app.clone(), "issue-channel-already-filed-run").await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/runs/issue-channel-already-filed-run/issues/proposals/{proposal_id}/approve"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["already_filed"], true);
+        assert_eq!(body["number"], serde_json::Value::Null, "there is no real new issue number for an already-filed result -- must not be fabricated");
+        assert_eq!(body["html_url"], "https://github.com/scimbe/CADS-webconference-demo/issues/2");
+    }
+
+    #[tokio::test]
+    async fn approving_an_issue_proposal_surfaces_a_real_channel_client_failure_honestly_not_as_a_fabricated_success() {
+        let (state, _dir) = test_state_with_issue_channel(r#"echo "agent reported an error: repo not in allowlist" >&2
+exit 1"#);
+        let app = api_router(state);
+        let proposal_id = create_run_and_propose_issue(app.clone(), "issue-channel-failure-run").await;
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/issue-channel-failure-run/issues/proposals/{proposal_id}/approve")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_GATEWAY, "a real subprocess failure must be a real error, never a fabricated 200");
+        let body = body_json(response).await;
+        assert!(body["error"].as_str().unwrap().contains("repo not in allowlist"), "real error: {body}");
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/issue-channel-failure-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["pending_issue_proposals"].as_array().unwrap().len(), 1, "a failed post must not be removed from the pending list");
+    }
+
+    #[tokio::test]
+    async fn a_configured_channel_relay_is_preferred_over_a_configured_direct_github_token() {
+        let (mut state, _dir) = test_state_with_issue_channel(r#"echo "created: #5 https://github.com/scimbe/CADS-webconference-demo/issues/5""#);
+        // A real token is ALSO configured -- if the direct-POST path were used
+        // instead, this test would need real network access to api.github.com
+        // and could never pass hermetically. The channel relay winning proves
+        // the direct path was never attempted.
+        state.github_token = Some(Arc::from("also-configured-but-must-not-be-used"));
+        let app = api_router(state);
+        let proposal_id = create_run_and_propose_issue(app.clone(), "issue-channel-priority-run").await;
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/issue-channel-priority-run/issues/proposals/{proposal_id}/approve")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["html_url"], "https://github.com/scimbe/CADS-webconference-demo/issues/5", "the channel relay's own result must win, proving it -- not the direct-POST path -- handled this request");
+    }
+
     #[tokio::test]
     async fn rejecting_an_issue_proposal_discards_it_without_ever_touching_github() {
         let (state, _dir) = test_state();
@@ -4098,6 +4415,7 @@ mod tests {
             rag_unstructured_api_key: None,
             rag_unstructured_api_base: Arc::from("https://api.unstructured.io"),
             rag_db_pool: None,
+            issue_channel: None,
         };
         let app = api_router(state);
 
