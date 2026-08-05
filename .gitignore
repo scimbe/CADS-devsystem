@@ -4,3 +4,7 @@ target/
 # stale the moment the source changes. state.json/memory.jsonl (the actual
 # irreplaceable run history) stay committed; this doesn't.
 runs/*/rag_index.json
+# Real ed25519 private keys devsystem_offer/devsystem_assistant persist to
+# their default --key-file/DEVSYSTEM_ASSISTANT_KEY_FILE paths (CWD-relative)
+# -- an agent's real signing identity, never meant to be committed.
+*.key
