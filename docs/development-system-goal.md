@@ -289,6 +289,37 @@ A rebuild after touching one line of `web/src/main.rs` -- forcing Docker's own l
 invalidate, isolating what the BuildKit cache mount specifically contributes: **45s, roughly 9x
 faster than cold**, recompiling only what actually changed instead of the full dependency tree.
 
+**A real DAU-lens gap found while confirming `webconference-android`'s own M1 milestone, 2026-08-05**:
+toggling a milestone to `achieved` has always auto-paused the run (`RunState.paused`, real, tested
+code) -- but nothing on the docs site explained this anywhere. A DAU who hits it cold (submits
+work, watches the run silently stop proposing, sees a banner with no context) has no way to know
+this is expected, not broken. Fixed as a docs gap, not a code gap -- the behavior itself is correct
+and intentional (exactly the "periodic check-ins" design this section already calls for), it just
+had zero user-facing explanation. Closed:
+[CADS-devsystem-docs@9bfb1af](https://github.com/scimbe/CADS-devsystem-docs/commit/9bfb1af), with a
+real, live screenshot captured at the exact moment M1 was confirmed for real (see issue #13's
+resolution below), not staged after the fact.
+
+**Issue #13 (Android emulator walkthrough, labor-setup.com) genuinely closed, 2026-08-05**: reviewed
+their evidence for real, not a rubber stamp -- cross-checked both submitted screenshots against each
+other (device B's own identity exactly matches the peer field device A shows; the sent/received
+message text is identical on both ends; both show a real Noise_IK session established) before
+merging the evidence branch and toggling M1 achieved via the run's real API. This is the run's own
+declared success criterion for the stress-test/DAU-lens groundwork above, now actually met, not just
+asserted.
+
+**Issue #14 (document extraction, labor-setup.com) real first increment merged, 2026-08-05**: an
+earlier iteration of this same loop had mistakenly closed labor-setup.com's real PR #15, believing
+it was a second automated persona duplicating the standing "don't build a competing extraction
+agent" instruction -- it wasn't, it was their own real work under an explicit go-ahead already given
+on this issue. Corrected: reopened, independently re-verified (cherry-picked the one real content
+commit in isolation, 7/7 hermetic tests green, a genuine end-to-end run against a hand-built PDF via
+real `pdftotext` producing exact real extracted text, their embeddings/vector-storage correction
+checked directly against `vector_store.rs`/`rag.rs` and confirmed accurate), full CI green, then
+merged for real: `devsystem_document_extraction_handler` (PDF-only) is now in `main`
+([CADS-devsystem@0937992](https://github.com/scimbe/CADS-devsystem/commit/0937992)). DOCX/image/OCR
+remain open with them, per the standing hand-off.
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
