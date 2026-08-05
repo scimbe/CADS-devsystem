@@ -338,7 +338,10 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
         Action::AddRequirement { statement, acceptance_criteria } => (
             format!("add requirement \"{statement}\""),
             format!("{base}/api/runs/{run_id}/requirements"),
-            serde_json::json!({"statement": statement, "acceptance_criteria": acceptance_criteria}),
+            // proposed_by: real provenance (#382 goal doc, gap #1) -- this requirement
+            // came from the assistant's own chat-driven proposal, not a human typing
+            // directly into the Requirements panel, and the run should be able to tell.
+            serde_json::json!({"statement": statement, "acceptance_criteria": acceptance_criteria, "proposed_by": "devsystem.assistant"}),
             "done",
         ),
         Action::ToggleRequirement { index } => (
@@ -905,6 +908,10 @@ mod tests {
         assert_eq!(url, "/api/runs/my-run/requirements");
         let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
         assert_eq!(parsed["acceptance_criteria"][0], "message survives an app restart");
+        // Real provenance (#382 goal doc, gap #1): the assistant's own proposal must
+        // always self-identify as such, so a user can tell it apart from a requirement
+        // they typed directly into the GUI's Requirements panel.
+        assert_eq!(parsed["proposed_by"], "devsystem.assistant");
     }
 
     #[test]

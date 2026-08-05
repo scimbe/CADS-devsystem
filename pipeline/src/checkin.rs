@@ -230,6 +230,7 @@ mod tests {
             verified: false,
             verified_criteria: Vec::new(),
             auto_judge: false,
+            proposed_by: None,
         });
         state.history.push(IterationRecord {
             run_id: "run-req-checkin".into(),

@@ -133,6 +133,15 @@ pub struct Milestone {
 /// Setting this flag alone does not itself judge anything -- it only
 /// authorizes devsystem.assistant to do so; the actual judgment logic is a
 /// separate, later increment.
+/// `proposed_by` (#382 goal doc, real gap #1 -- provenance): `None` means a human wrote
+/// this requirement directly; `Some(stage_tag)` means an LLM role-filler proposed it
+/// (mirrors `StageProposal::proposed_by`'s existing convention of naming the stage, not
+/// a person). Without this, a user has no way to tell which requirements/acceptance
+/// criteria are already theirs vs. which are still an LLM's first draft waiting on
+/// review -- blocking the goal's own §3 ("the user must know which details the LLM set
+/// first") and §4.4 (knowing what's safe to leave alone vs. needs tightening).
+/// `#[serde(default)]` so every pre-existing requirement loads as `proposed_by: None`
+/// (human-authored, the safe default) with no migration step.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Requirement {
     pub statement: String,
@@ -142,6 +151,8 @@ pub struct Requirement {
     pub verified_criteria: Vec<bool>,
     #[serde(default)]
     pub auto_judge: bool,
+    #[serde(default)]
+    pub proposed_by: Option<String>,
 }
 
 /// Persisted state for one run -- serialized to `runs/<run_id>/state.json` in the
@@ -493,6 +504,7 @@ mod tests {
             verified: false,
             verified_criteria: Vec::new(),
             auto_judge: false,
+            proposed_by: None,
         });
         toggle_requirement(&mut state, 0).unwrap();
         assert!(state.requirements[0].verified);
@@ -517,6 +529,7 @@ mod tests {
             verified: false,
             verified_criteria: Vec::new(),
             auto_judge: false,
+            proposed_by: None,
         });
 
         // A pre-existing requirement (persisted before this field existed, or
@@ -545,6 +558,7 @@ mod tests {
             verified: false,
             verified_criteria: Vec::new(),
             auto_judge: false,
+            proposed_by: None,
         });
         assert!(toggle_acceptance_criterion(&mut state, 0, 1).is_err());
         assert!(toggle_acceptance_criterion(&mut state, 5, 0).is_err(), "an out-of-range requirement index must also fail loudly");

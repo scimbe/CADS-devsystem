@@ -973,6 +973,13 @@ struct AddRequirementRequest {
     statement: String,
     #[serde(default)]
     acceptance_criteria: Vec<String>,
+    /// Real provenance (#382 goal doc, gap #1): `None`/absent means a human is adding
+    /// this directly (the GUI's own Requirements panel never sends this field); a
+    /// non-empty value names the stage that proposed it (`devsystem_assistant` sends
+    /// `"devsystem.assistant"`). Trimmed and empty-string-normalized to `None` below,
+    /// same convention as every other string field on this request.
+    #[serde(default)]
+    proposed_by: Option<String>,
 }
 
 const MAX_REQUIREMENT_STATEMENT_LEN: usize = 2_000;
@@ -1028,7 +1035,15 @@ async fn add_requirement(
     if run_state.requirements.len() >= MAX_LIST_ITEMS {
         return (StatusCode::BAD_REQUEST, format!("requirements is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
     }
-    run_state.requirements.push(Requirement { statement, acceptance_criteria, verified: false, verified_criteria: Vec::new(), auto_judge: false });
+    let proposed_by = body.proposed_by.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    run_state.requirements.push(Requirement {
+        statement,
+        acceptance_criteria,
+        verified: false,
+        verified_criteria: Vec::new(),
+        auto_judge: false,
+        proposed_by,
+    });
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
@@ -3696,6 +3711,53 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST, "a requirement with no checkable acceptance criteria must be rejected");
+    }
+
+    #[tokio::test]
+    /// Real provenance (#382 goal doc, gap #1): a human adding a requirement directly
+    /// (no `proposed_by` in the request, matching the GUI's own Requirements panel)
+    /// must land as `proposed_by: null`; `devsystem_assistant`'s chat-driven proposal
+    /// (which now always sends `proposed_by: "devsystem.assistant"`) must land tagged
+    /// as such -- so a user can tell, per requirement, which are still an LLM's first
+    /// draft waiting on review vs. already their own.
+    async fn requirement_provenance_distinguishes_human_from_llm_proposed() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-provenance-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-provenance-run/requirements",
+                serde_json::json!({"statement": "a human-authored requirement", "acceptance_criteria": ["checkable"]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert!(body["requirements"][0]["proposed_by"].is_null(), "no proposed_by sent -> must default to human (null), not silently attributed");
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-provenance-run/requirements",
+                serde_json::json!({
+                    "statement": "an assistant-proposed requirement",
+                    "acceptance_criteria": ["checkable"],
+                    "proposed_by": "devsystem.assistant",
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["requirements"][1]["proposed_by"], "devsystem.assistant");
+        // The first, human-authored requirement must stay untouched by the second call.
+        assert!(body["requirements"][0]["proposed_by"].is_null());
     }
 
     #[tokio::test]
