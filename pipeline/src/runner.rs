@@ -484,6 +484,21 @@ fn distinct_word_count(text: &str) -> usize {
     words.len()
 }
 
+/// Real gap found live by the stress test, same day, right after the padded-
+/// review fix shipped: a review's real, substantive-looking feedback about ONE
+/// requirement can be copied verbatim and reused to "review" a completely
+/// unrelated requirement -- both the length and distinct-word bars pass
+/// trivially, since the text itself genuinely is long and varied, just not
+/// actually about the requirement it's being applied to. Live-verified before
+/// this fix: reused the real feedback from the device-rotation requirement's
+/// own review, named a completely unrelated network-retry requirement instead,
+/// got a real `200`.
+fn same_requirement_set(a: &[usize], b: &[usize]) -> bool {
+    let a: std::collections::HashSet<_> = a.iter().collect();
+    let b: std::collections::HashSet<_> = b.iter().collect();
+    a == b
+}
+
 pub fn toggle_requirement(spec: &PipelineSpec, state: &mut RunState, index: usize) -> Result<(), String> {
     let requirement = state.requirements.get(index).ok_or_else(|| format!("no requirement at index {index}"))?;
     if !requirement.verified && spec.roles.iter().any(|r| r.tag == "review") {
@@ -501,11 +516,29 @@ pub fn toggle_requirement(spec: &PipelineSpec, state: &mut RunState, index: usiz
                  requirement_indices) exists yet. Submit one first."
             ));
         }
-        let qualifies = |r: &&IterationRecord| {
+        let long_enough = |r: &&IterationRecord| {
             let trimmed = r.feedback.trim();
             trimmed.chars().count() >= MIN_REVIEW_FEEDBACK_LEN && distinct_word_count(trimmed) >= MIN_REVIEW_DISTINCT_WORDS
         };
+        let reused_verbatim_elsewhere = |r: &&IterationRecord| {
+            let trimmed = r.feedback.trim();
+            state.history.iter().any(|other| {
+                other.stage == "devsystem.review"
+                    && other.succeeded
+                    && other.feedback.trim() == trimmed
+                    && !same_requirement_set(&other.requirement_indices, &r.requirement_indices)
+            })
+        };
+        let qualifies = |r: &&IterationRecord| long_enough(r) && !reused_verbatim_elsewhere(r);
         if !reviews.iter().any(qualifies) {
+            if reviews.iter().any(|r| long_enough(r) && reused_verbatim_elsewhere(r)) {
+                return Err(format!(
+                    "requirement {index} cannot be marked verified yet -- the devsystem.review iteration \
+                     addressing it reuses feedback text verbatim from a review of a different, unrelated \
+                     requirement in this run's history. Real scrutiny of THIS requirement's specific \
+                     acceptance criteria is required, not a copy-pasted review meant for something else."
+                ));
+            }
             let best = reviews.iter().max_by_key(|r| (r.feedback.trim().chars().count(), distinct_word_count(r.feedback.trim()))).unwrap();
             return Err(format!(
                 "requirement {index} cannot be marked verified yet -- every devsystem.review iteration \
@@ -877,6 +910,79 @@ mod tests {
         // Un-verifying is always allowed unconditionally, gate or not.
         toggle_requirement(&spec, &mut state, 0).unwrap();
         assert!(!state.requirements[0].verified);
+    }
+
+    #[test]
+    /// Real gap found live by the stress test, right after the padded-review
+    /// fix shipped (2026-08-05): a review's real, substantive feedback about
+    /// ONE requirement got copy-pasted verbatim and reused to "review" a
+    /// completely unrelated requirement -- both the length and distinct-word
+    /// bars passed trivially since the text itself genuinely was long and
+    /// varied. Live-verified against the actual deployment before this fix:
+    /// a real 200.
+    fn a_review_reused_verbatim_for_an_unrelated_requirement_does_not_satisfy_the_gate() {
+        let spec = full_spec("run-req-reuse", None);
+        let mut state = RunState::new("run-req-reuse");
+        state.requirements.push(Requirement {
+            statement: "WHEN the user rotates the device, THE SYSTEM SHALL preserve the in-progress message draft".into(),
+            acceptance_criteria: vec!["draft text survives a real configuration change".into()],
+            verified: false,
+            verified_criteria: Vec::new(),
+            auto_judge: false,
+            proposed_by: None,
+        });
+        state.requirements.push(Requirement {
+            statement: "WHEN the app loses network connectivity mid-send, THE SYSTEM SHALL show a real retry option instead of silently failing".into(),
+            acceptance_criteria: vec!["a network failure surfaces a visible retry affordance".into()],
+            verified: false,
+            verified_criteria: Vec::new(),
+            auto_judge: false,
+            proposed_by: None,
+        });
+
+        let real_review_text = "Checked onConfigurationChanged handling directly: the draft EditText content is saved into the ViewModel before the activity recreates and restored after, verified no duplicate text appears on rotation.";
+
+        // A real, substantive review of requirement 0 -- satisfies the gate for 0.
+        state.history.push(IterationRecord {
+            run_id: "run-req-reuse".into(),
+            stage: "devsystem.review".into(),
+            iteration: 1,
+            feedback: real_review_text.into(),
+            succeeded: true,
+            proposals: vec![],
+            requirement_indices: vec![0],
+        });
+        toggle_requirement(&spec, &mut state, 0).unwrap();
+        assert!(state.requirements[0].verified);
+
+        // The EXACT same feedback text, copy-pasted, now claims to review
+        // requirement 1 -- a completely unrelated requirement. Must not
+        // satisfy the gate, even though the text itself is long and varied.
+        state.history.push(IterationRecord {
+            run_id: "run-req-reuse".into(),
+            stage: "devsystem.review".into(),
+            iteration: 2,
+            feedback: real_review_text.into(),
+            succeeded: true,
+            proposals: vec![],
+            requirement_indices: vec![1],
+        });
+        let err = toggle_requirement(&spec, &mut state, 1).expect_err("a review reused verbatim from an unrelated requirement must not satisfy the gate");
+        assert!(err.contains("reuses feedback text verbatim"), "the error must explain why: {err}");
+        assert!(!state.requirements[1].verified);
+
+        // A genuinely new, substantive review of requirement 1 satisfies it.
+        state.history.push(IterationRecord {
+            run_id: "run-req-reuse".into(),
+            stage: "devsystem.review".into(),
+            iteration: 3,
+            feedback: "Confirmed the retry button appears on a real SocketException during send, and tapping it resends the exact same TextMessage id rather than creating a duplicate.".into(),
+            succeeded: true,
+            proposals: vec![],
+            requirement_indices: vec![1],
+        });
+        toggle_requirement(&spec, &mut state, 1).unwrap();
+        assert!(state.requirements[1].verified);
     }
 
     #[test]
