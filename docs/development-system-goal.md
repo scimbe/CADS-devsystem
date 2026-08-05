@@ -222,6 +222,21 @@ exactly the class of failure §8's own governing principle is about (a silent pr
 competence failure of whichever loop triggered it) -- and so is trusting an unverified diagnostic
 tool as if it were real evidence. Both get fixed, not just the first one.
 
+**A second, related real bug found the same day, this time in actual application data, not just
+infrastructure**: `webconference-android`'s own real history ended up with two entries both stored
+as `"iteration": 8` (byte-identical stage/feedback/succeeded), and no `"iteration": 9"` at all --
+found while checking in on this run's real state, not assumed. `write_lock` already serializes
+concurrent `/iterate` requests *within* one `devsystem-web` process; it can't help against two
+separate process instances each running their own independent lock, which the same overlapping-
+deploy window made newly possible. Fixed at the data layer, not the infrastructure layer this time:
+`/iterate` now rejects a submission that's byte-identical to the run's own immediately-preceding
+entry with a real `409`, regardless of *why* a duplicate arrived (`CADS-devsystem@a12f135`). The
+duplicate `"iteration": 8` entry itself was left in the run's real history rather than surgically
+edited out -- it's an honest record of what actually happened, bug included; silently cleaning it up
+after the fact would be its own small dishonesty. This makes three real, same-day findings from the
+identical underlying cause (overlapping deploys): a stale binary, a false "confirmed" diagnostic
+claim, and now duplicated application data -- worth naming as a pattern, not three unrelated bugs.
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
