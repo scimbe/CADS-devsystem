@@ -75,6 +75,15 @@
       "proposals": [],
       "succeeded": true,
       "requirement_indices": []
+    },
+    {
+      "feedback": "Self-correction + real increment this cycle. Found and reverted a real standing-instruction violation from an earlier iteration: CADS-devsystem PR #15 (devsystem_document_extraction_handler) had built a competing role-filler for devsystem.document_extraction and submitted a live auction bid under a self-generated identity, while issue #14 is explicitly open with labor-setup.com. Closed PR #15 unmerged, let the unrenewed bid lapse (confirmed no cron/timer was actually keeping it alive despite an earlier comment claiming otherwise), posted an honest correction on issue #14. Also synced CADS-devsystem's local runs/webconference-android/ checkout (spec.json + state.json, iterations 1-6) which had drifted from the live server. Real bounded app increment: found receiveLoop's and onSendClicked's ChannelException catch blocks left session set and both connect controls permanently disabled after any real disconnect -- app became unusable until force-restarted. Fixed via a real resetForNewConnection() called from both catch blocks; new Robolectric test drives that actual production method (native FFI can't load under Robolectric, so the catch block itself can't be triggered end-to-end there). 4/4 app unit tests + assembleDebug green, real Docker build against the cached Android SDK. CADS-webconference-android@fe4c4be.",
+      "iteration": 7,
+      "proposals": [],
+      "requirement_indices": [],
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_native_bridge",
+      "succeeded": true
     }
   ],
   "added_stages": [
@@ -90,21 +99,21 @@
   "paused": false,
   "backlog": [
     {
-      "text": "Stage-Proposal devsystem.android_native_bridge (cf0593ebc3409cdb) prüfen und freigeben oder ablehnen - blockiert alle Android-Transportarbeit",
+      "text": "Stage-Proposal devsystem.android_native_bridge (cf0593ebc3409cdb) pr\u00fcfen und freigeben oder ablehnen - blockiert alle Android-Transportarbeit",
       "done": true
     },
     {
-      "text": "Channel-Wire-Format für Textnachrichten festlegen (msg_id, sender_pubkey, timestamp, body) und in der native-bridge UniFFI-API als send_text/recv_text exponieren",
+      "text": "Channel-Wire-Format f\u00fcr Textnachrichten festlegen (msg_id, sender_pubkey, timestamp, body) und in der native-bridge UniFFI-API als send_text/recv_text exponieren",
       "done": true
     },
     {
-      "text": "Lokale Nachrichten-Persistenz auf Android (Room) + minimale Chat-UI gegen die UniFFI-API, Ziel: zwei Geräte tauschen Text über einen Channel",
+      "text": "Lokale Nachrichten-Persistenz auf Android (Room) + minimale Chat-UI gegen die UniFFI-API, Ziel: zwei Ger\u00e4te tauschen Text \u00fcber einen Channel",
       "done": false
     }
   ],
   "milestones": [
     {
-      "description": "1:1 Text-Messaging end-to-end: Android-Client sendet und empfängt Textnachrichten über einen CADS-Tunnel Channel (Noise_IK), Verlauf lokal persistiert",
+      "description": "1:1 Text-Messaging end-to-end: Android-Client sendet und empf\u00e4ngt Textnachrichten \u00fcber einen CADS-Tunnel Channel (Noise_IK), Verlauf lokal persistiert",
       "achieved": false
     }
   ],
