@@ -1275,7 +1275,7 @@ async function renderRagPanel(id, data) {
         <div class="role-card" style="padding:.4rem .5rem">
           <div style="display:flex;justify-content:space-between;align-items:baseline;gap:.4rem">
             <span class="role-meta">${escapeHtml(d.path)}</span>
-            <button type="button" class="secondary rag-doc-remove-btn" data-id="${escapeHtml(d.id)}" style="font-size:.68rem;padding:.1rem .4rem">Remove</button>
+            <button type="button" class="secondary rag-doc-remove-btn" data-id="${escapeHtml(d.id)}" data-path="${escapeHtml(d.path)}" style="font-size:.68rem;padding:.1rem .4rem">Remove</button>
           </div>
         </div>`).join('')
     : `<span class="lede" style="font-size:.72rem">No uploaded documents yet.</span>`;
@@ -1379,6 +1379,14 @@ async function renderRagPanel(id, data) {
   });
   for (const btn of body.querySelectorAll('.rag-doc-remove-btn')) {
     btn.onclick = async () => {
+      // Real DAU-lens gap (#382 goal doc §7), same class as the custom-panel/
+      // proposal-reject confirmations: this permanently drops the document
+      // from the index (remove_rag_document's own doc comment -- a manually
+      // added document, not a repo-synced one that reappears on the next
+      // sync), and for an uploaded PDF/DOCX/image the original file bytes
+      // aren't kept anywhere here -- re-adding it means finding and
+      // re-uploading the original file again, not a quick undo.
+      if (!confirm(`Remove "${btn.dataset.path}" from this run's indexed documents? This is real -- there's no undo, and an uploaded file's original bytes aren't kept here.`)) return;
       try {
         await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/rag/documents/${encodeURIComponent(btn.dataset.id)}/remove`, { method: 'POST' });
         await renderRagPanel(id, data);
