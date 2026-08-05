@@ -1041,6 +1041,25 @@ async fn add_requirement(
     if statement.len() > MAX_REQUIREMENT_STATEMENT_LEN {
         return (StatusCode::BAD_REQUEST, format!("statement must be under {MAX_REQUIREMENT_STATEMENT_LEN} characters")).into_response();
     }
+    // Real gap found live by the incompetent-agent stress test (#382 goal doc
+    // §8, 2026-08-05, DAU lens): a completely non-EARS statement like "asdf"
+    // got a real 200 -- nothing checked that a "requirement" even attempted
+    // the format this whole feature is built around. "SHALL" is the one
+    // universal, defining keyword across every real EARS requirement type
+    // (WHEN/IF/WHILE-triggered or ubiquitous with no trigger clause at all --
+    // requiring "WHEN" specifically would wrongly reject legitimate EARS
+    // variants), so checking for it alone is a safe, low-false-positive proxy,
+    // same crude-but-honest mechanical convention as every other check in this
+    // codebase -- not real NLP, just "did you even attempt the format."
+    if !statement.to_lowercase().contains("shall") {
+        return (
+            StatusCode::BAD_REQUEST,
+            "statement doesn't look like a real EARS requirement -- expected something containing \
+             \"SHALL\" (e.g. \"WHEN <trigger>, THE SYSTEM SHALL <behavior>\"), not a free-form note."
+                .to_string(),
+        )
+            .into_response();
+    }
     let acceptance_criteria: Vec<String> = body.acceptance_criteria.iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect();
     if acceptance_criteria.is_empty() {
         return (StatusCode::BAD_REQUEST, "at least one non-empty acceptance criterion is required").into_response();
@@ -3856,11 +3875,49 @@ mod tests {
             .oneshot(json_request(
                 "POST",
                 "/api/runs/req-validate-run/requirements",
-                serde_json::json!({"statement": "a real statement", "acceptance_criteria": []}),
+                serde_json::json!({"statement": "WHEN a user does X, THE SYSTEM SHALL do Y (a real statement)", "acceptance_criteria": []}),
             ))
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST, "a requirement with no checkable acceptance criteria must be rejected");
+    }
+
+    #[tokio::test]
+    /// Real gap found and closed by the incompetent-agent stress test (#382
+    /// goal doc §8, 2026-08-05, DAU lens): a live round-trip proved
+    /// `{"statement":"asdf",...}` got a real 200 -- nothing checked that a
+    /// "requirement" even attempted EARS format.
+    async fn add_requirement_rejects_a_statement_that_does_not_look_like_ears() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-ears-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-ears-run/requirements",
+                serde_json::json!({"statement": "asdf", "acceptance_criteria": ["a real criterion"]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a statement with no \"SHALL\" isn't even attempting EARS format");
+
+        // Case-insensitive, and doesn't require the "WHEN" trigger clause --
+        // a real ubiquitous EARS requirement has none.
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-ears-run/requirements",
+                serde_json::json!({"statement": "THE SYSTEM shall always encrypt messages at rest", "acceptance_criteria": ["a real criterion"]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "a real ubiquitous EARS requirement (no WHEN clause) must still be accepted");
     }
 
     #[tokio::test]
@@ -3880,7 +3937,7 @@ mod tests {
                 .oneshot(json_request(
                     "POST",
                     "/api/runs/req-trivial-run/requirements",
-                    serde_json::json!({"statement": "a real statement", "acceptance_criteria": [trivial]}),
+                    serde_json::json!({"statement": "WHEN a user does X, THE SYSTEM SHALL do Y (a real statement)", "acceptance_criteria": [trivial]}),
                 ))
                 .await
                 .unwrap();
@@ -3893,7 +3950,7 @@ mod tests {
             .oneshot(json_request(
                 "POST",
                 "/api/runs/req-trivial-run/requirements",
-                serde_json::json!({"statement": "a real statement", "acceptance_criteria": ["no crash"]}),
+                serde_json::json!({"statement": "WHEN a user does X, THE SYSTEM SHALL do Y (a real statement)", "acceptance_criteria": ["no crash"]}),
             ))
             .await
             .unwrap();
@@ -3920,7 +3977,7 @@ mod tests {
             .oneshot(json_request(
                 "POST",
                 "/api/runs/req-provenance-run/requirements",
-                serde_json::json!({"statement": "a human-authored requirement", "acceptance_criteria": ["checkable"]}),
+                serde_json::json!({"statement": "WHEN a user does X, THE SYSTEM SHALL fulfill a human-authored requirement", "acceptance_criteria": ["checkable"]}),
             ))
             .await
             .unwrap();
@@ -3933,7 +3990,7 @@ mod tests {
                 "POST",
                 "/api/runs/req-provenance-run/requirements",
                 serde_json::json!({
-                    "statement": "an assistant-proposed requirement",
+                    "statement": "WHEN a user does X, THE SYSTEM SHALL fulfill an assistant-proposed requirement",
                     "acceptance_criteria": ["checkable"],
                     "proposed_by": "devsystem.assistant",
                 }),
@@ -3980,7 +4037,7 @@ mod tests {
             .oneshot(json_request(
                 "POST",
                 "/api/runs/req-gate-run/requirements",
-                serde_json::json!({"statement": "a real requirement", "acceptance_criteria": ["checkable"]}),
+                serde_json::json!({"statement": "WHEN a user does X, THE SYSTEM SHALL fulfill a real requirement", "acceptance_criteria": ["checkable"]}),
             ))
             .await
             .unwrap();
@@ -4041,7 +4098,7 @@ mod tests {
             .oneshot(json_request(
                 "POST",
                 "/api/runs/lazy-review-run/requirements",
-                serde_json::json!({"statement": "a real requirement", "acceptance_criteria": ["checkable"]}),
+                serde_json::json!({"statement": "WHEN a user does X, THE SYSTEM SHALL fulfill a real requirement", "acceptance_criteria": ["checkable"]}),
             ))
             .await
             .unwrap();
@@ -4090,7 +4147,7 @@ mod tests {
             .oneshot(json_request(
                 "POST",
                 "/api/runs/export-run/requirements",
-                serde_json::json!({"statement": "a real requirement", "acceptance_criteria": ["checkable"]}),
+                serde_json::json!({"statement": "WHEN a user does X, THE SYSTEM SHALL fulfill a real requirement", "acceptance_criteria": ["checkable"]}),
             ))
             .await
             .unwrap();
