@@ -2,7 +2,9 @@
   "run_id": "webconference-android",
   "consecutive_failures": 0,
   "history": [],
-  "added_stages": [],
+  "added_stages": [
+    "devsystem.android_native_bridge"
+  ],
   "criteria": {
     "max_iterations": 20,
     "max_consecutive_failures": 3,
@@ -12,11 +14,11 @@
   "backlog": [
     {
       "text": "Stage-Proposal devsystem.android_native_bridge (cf0593ebc3409cdb) prüfen und freigeben oder ablehnen - blockiert alle Android-Transportarbeit",
-      "done": false
+      "done": true
     },
     {
       "text": "Channel-Wire-Format für Textnachrichten festlegen (msg_id, sender_pubkey, timestamp, body) und in der native-bridge UniFFI-API als send_text/recv_text exponieren",
-      "done": false
+      "done": true
     },
     {
       "text": "Lokale Nachrichten-Persistenz auf Android (Room) + minimale Chat-UI gegen die UniFFI-API, Ziel: zwei Geräte tauschen Text über einen Channel",
@@ -34,20 +36,7 @@
   "role_fill_modes": {},
   "custom_panels": [],
   "pending_panel_proposals": [],
-  "pending_stage_proposals": [
-    {
-      "id": "cf0593ebc3409cdb",
-      "proposal": {
-        "proposed_by": "devsystem.assistant",
-        "stage_id": "devsystem.android_native_bridge",
-        "tag": "android_native_bridge",
-        "rationale": "Real, verified work already landed on this repo before the run's spec was reset: native-bridge/ (a real UniFFI + cargo-ndk Rust crate) exists with real Noise_IK public-key generation wired into MainActivity, 3 consecutive green Android CI runs (latest: commit 188bc8b, 2026-08-04). Re-adding this role lets the auction resume backing the work that is already real and ongoing, rather than starting from a bare plan-only spec. Queued as a proposal, not applied -- the operator wanted to redo this run's setup themselves; this is available to approve whenever they get to it.",
-        "use_existing_service": null,
-        "units": 1,
-        "price_ceiling": null
-      },
-      "proposed_at": 1785869269
-    }
-  ],
-  "pending_issue_proposals": []
+  "pending_stage_proposals": [],
+  "pending_issue_proposals": [],
+  "requirements": []
 }

@@ -8,6 +8,14 @@
       "units": 1,
       "tag": "plan",
       "selection_policy": null
+    },
+    {
+      "service": {
+        "Custom": "devsystem.android_native_bridge"
+      },
+      "units": 1,
+      "tag": "android_native_bridge",
+      "selection_policy": null
     }
   ],
   "operator_pubkey_hex": null,

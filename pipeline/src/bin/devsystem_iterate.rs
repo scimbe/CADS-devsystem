@@ -110,7 +110,19 @@ fn run_remote(api_base: &str, run_id: &str, record_path: &str) -> std::process::
     }
 
     let url = format!("{}/api/runs/{}/iterate", api_base.trim_end_matches('/'), run_id);
-    let resp = match reqwest::blocking::Client::new().post(&url).json(&remote_request_body(&record)).send() {
+    // Same false-positive class devsystem_offer's #388 fix already closed: reqwest's
+    // default redirect policy silently follows a still-gated endpoint's 302 to the
+    // gate's own login page (itself a real 200), so a naive status check here would
+    // either misreport a fabricated success or, at best, drown a real "you're not
+    // authenticated" in a wall of login-page HTML instead of saying so plainly.
+    // Found live against this deployment (2026-08-05): /api/runs/{id}/iterate
+    // currently *is* gated, unlike an earlier report that it wasn't -- this fix
+    // makes that fact loud and unambiguous instead of a confusing parse failure.
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap_or_else(|_| reqwest::blocking::Client::new());
+    let resp = match client.post(&url).json(&remote_request_body(&record)).send() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("could not reach {url}: {e}");
@@ -118,6 +130,11 @@ fn run_remote(api_base: &str, run_id: &str, record_path: &str) -> std::process::
         }
     };
     let status = resp.status();
+    if status.is_redirection() {
+        let location = resp.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or("(no Location header)").to_string();
+        eprintln!("remote iterate failed: HTTP {status} redirect to {location} -- this deployment currently requires gate login for this endpoint, no offer/iteration was submitted");
+        return std::process::ExitCode::FAILURE;
+    }
     let body = resp.text().unwrap_or_default();
     if !status.is_success() {
         eprintln!("remote iterate failed: HTTP {status}: {body}");
