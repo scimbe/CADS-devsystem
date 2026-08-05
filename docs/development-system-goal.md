@@ -245,8 +245,17 @@ tool as if it were real evidence. Both get fixed, not just the first one.
 6. **A unified decision-basis view** (§4.2) — requirements + constraints + the actual chat/docs
    that produced them, in one place.
 7. **A real requirements export** (§4.4) — a downloadable document, not just a JSON blob.
-8. **ECC skills catalog audit** (§2) — beyond `ecc-plan-canvas`, for spec-authoring and
-   step-decomposition.
+8. ~~**ECC skills catalog audit**~~ — **audited** (`docs/ecc-skills-audit.md`, 2026-08-05): real
+   fits found for `plan` (`architecture-decision-records`), `implement` (`android-clean-architecture`),
+   `test` (`rust-testing`/`kotlin-testing`), `review` (`security-review`), `improve`
+   (`agent-architecture-audit`); `remember` deliberately declined (the zylos envelope already solves
+   a different problem than ECC's generic cross-harness memory vault); `verify`'s candidate
+   (`verification-loop`) is JS-toolchain-specific and doesn't apply. Also found `loop-design-check`
+   — built specifically to review autonomous agent loops for exactly this project's own failure
+   class (a silent process gap producing a wrong result, no visible error — precisely what the
+   same-day deploy race was) — the single most relevant unadopted skill to "The Development System"
+   as a whole, not any one stage. Audit only; none of these are wired into the pipeline yet — real,
+   separate follow-up work, sized by the operator.
 9. **A `devsystem.process_improve` role** (§4.3) — self-optimizing the process itself, not just
    the stage list.
 
