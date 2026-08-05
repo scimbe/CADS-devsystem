@@ -133,6 +133,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/requirements/{index}/toggle", post(toggle_requirement_handler))
         .route("/api/runs/{id}/requirements/{index}/criteria/{criterion_index}/toggle", post(toggle_acceptance_criterion_handler))
         .route("/api/runs/{id}/repo", post(set_repo_url))
+        .route("/api/runs/{id}/operator-pubkey", post(set_operator_pubkey))
         .route("/api/runs/{id}/roles/{tag}/fill-mode", post(set_role_fill_mode))
         .route("/api/runs/{id}/rag/sync", post(sync_rag))
         .route("/api/runs/{id}/rag/search", get(search_rag))
@@ -1025,6 +1026,55 @@ async fn toggle_acceptance_criterion_handler(
 #[derive(Deserialize)]
 struct SetRepoUrlRequest {
     repo_url: String,
+}
+
+#[derive(Deserialize)]
+struct SetOperatorPubkeyRequest {
+    operator_pubkey_hex: String,
+}
+
+/// `POST /api/runs/{id}/operator-pubkey` -- a real gap found 2026-08-05: `PipelineSpec.operator_pubkey_hex`
+/// (the Agent-Fabric channel operator key gating every real `SignedChannelGrant` for this run's
+/// roles, see `pipeline/src/lib.rs`) was only ever settable via `full_spec`/`plan_only_spec` at
+/// run-creation time -- no way to set it on an existing run through the GUI/API at all, discovered
+/// while trying to unblock CADS-devsystem#7's real channel-discovery proposal. Mutates `spec`, not
+/// `run_state` (unlike `set_repo_url`) -- `operator_pubkey_hex` genuinely lives on the pipeline spec.
+/// Validates it's a real, well-formed ed25519 public key (64 lowercase hex chars = 32 bytes) rather
+/// than accepting an arbitrary string that would only fail much later at grant-verification time.
+async fn set_operator_pubkey(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<SetOperatorPubkeyRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let trimmed = body.operator_pubkey_hex.trim().to_lowercase();
+    if !trimmed.is_empty() && (trimmed.len() != 64 || !trimmed.chars().all(|c| c.is_ascii_hexdigit())) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "operator_pubkey_hex must be exactly 64 lowercase hex chars (a real 32-byte ed25519 public key), or empty to clear it",
+        )
+            .into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (mut spec, run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    spec.operator_pubkey_hex = if trimmed.is_empty() { None } else { Some(trimmed) };
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"operator_pubkey_hex": spec.operator_pubkey_hex})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
 }
 
 /// Operator feedback: "ich möchte Zugang zu aktuellem Code." This is the one
@@ -3034,6 +3084,75 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn set_operator_pubkey_accepts_a_real_valid_hex_key_and_persists_it() {
+        let (state, dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "op-key-run"})))
+            .await
+            .unwrap();
+
+        let key = "7e59d28d596978c27eb5faa4afa4759b7e9fc1948c7172d7ca66f6abc97d92cb";
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/op-key-run/operator-pubkey", serde_json::json!({"operator_pubkey_hex": key})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let spec_path = dir.path().join("op-key-run").join("spec.json");
+        let spec: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(spec_path).unwrap()).unwrap();
+        assert_eq!(spec["operator_pubkey_hex"], key);
+    }
+
+    #[tokio::test]
+    async fn set_operator_pubkey_rejects_malformed_hex() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "op-key-bad-run"})))
+            .await
+            .unwrap();
+
+        for bad in ["not-hex-at-all", "7e59d28d", "zzzz59d28d596978c27eb5faa4afa4759b7e9fc1948c7172d7ca66f6abc97d92c"] {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/runs/op-key-bad-run/operator-pubkey",
+                    serde_json::json!({"operator_pubkey_hex": bad}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::BAD_REQUEST, "expected {bad:?} to be rejected");
+        }
+    }
+
+    #[tokio::test]
+    async fn set_operator_pubkey_can_be_cleared_with_an_empty_string() {
+        let (state, dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "op-key-clear-run"})))
+            .await
+            .unwrap();
+        let key = "7e59d28d596978c27eb5faa4afa4759b7e9fc1948c7172d7ca66f6abc97d92cb";
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/op-key-clear-run/operator-pubkey", serde_json::json!({"operator_pubkey_hex": key})))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/op-key-clear-run/operator-pubkey", serde_json::json!({"operator_pubkey_hex": ""})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let spec_path = dir.path().join("op-key-clear-run").join("spec.json");
+        let spec: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(spec_path).unwrap()).unwrap();
+        assert_eq!(spec["operator_pubkey_hex"], serde_json::Value::Null);
     }
 
     #[tokio::test]
