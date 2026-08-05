@@ -189,6 +189,20 @@ directly that true unattended persistence past this session's lifetime needs a c
 just a session-only cron) — each firing lands one real, bounded, hermetically-tested increment
 toward the ranked gaps below, not a single unbounded attempt to reach the whole goal at once.
 
+**The stress test's first real run, 2026-08-05**: rather than only design the incompetent-agent
+persona on paper, actually played it against a live, dedicated test run
+(`stress-incompetent-agent`) -- added a real requirement, declared `review`, then submitted the
+laziest realistic "review" an incompetent (or simply lazy) agent would produce: `feedback: "looks
+fine to me"`, `succeeded: true`, correctly naming the requirement. **It worked** — the gate accepted
+it and the requirement was marked verified, exactly the failure mode this whole methodology exists
+to catch. Fixed for real: `toggle_requirement` now requires at least one qualifying review to clear
+a minimum feedback length before the gate is satisfied (`CADS-devsystem@7622c95`) — an honestly
+crude, mechanical proxy (filters trivially-empty rubber-stamps; does **not** verify real review
+quality — a longer-but-still-padded lazy review remains a real, known, undefended gap). Re-verified
+live against the actual deployment after shipping: a `"lgtm"` review is now a real `409`. This is the
+methodology proving itself on the very first real attempt — not a demonstration that was staged to
+succeed.
+
 **First real groundwork step, 2026-08-05 (iteration 8)**: the mandatory review gate (gap #2) only
 has teeth on a run that actually declares `devsystem.review` as a role — `webconference-android`
 itself never had. Added it for real via a `devsystem.improve` proposal, the same immediately-applied
