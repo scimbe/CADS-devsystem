@@ -102,7 +102,7 @@ mod tests {
     use crate::{IterationRecord, StageProposal, STAGE_REVIEW, STAGE_VERIFY};
 
     fn iteration(stage: &str, iteration: u32, feedback: &str, proposals: Vec<StageProposal>) -> IterationRecord {
-        IterationRecord { run_id: "run-preflight".into(), stage: stage.into(), iteration, feedback: feedback.into(), proposals, succeeded: true }
+        IterationRecord { run_id: "run-preflight".into(), stage: stage.into(), iteration, feedback: feedback.into(), proposals, succeeded: true, requirement_indices: Vec::new() }
     }
 
     #[test]

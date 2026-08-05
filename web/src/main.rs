@@ -19,8 +19,8 @@ use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::preflight_annotations;
 use devsystem_pipeline::runner::{
-    load_or_init_run, persist_run, run_iteration, toggle_milestone, BacklogItem, CustomPanel, Milestone, PendingPanelProposal, PendingStageProposal, RoleFillMode,
-    RunOutcome,
+    load_or_init_run, persist_run, run_iteration, toggle_acceptance_criterion, toggle_milestone, toggle_requirement, BacklogItem, CustomPanel,
+    Milestone, PendingIssueProposal, PendingPanelProposal, PendingStageProposal, Requirement, RoleFillMode, RunOutcome,
 };
 use devsystem_pipeline::{apply_proposal, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
@@ -63,6 +63,12 @@ struct AppState {
     /// assistant panel then reports a clear "not configured" error rather than
     /// silently doing nothing or fabricating a response.
     assistant_url: Option<Arc<str>>,
+    /// A GitHub token with `public_repo` (or `repo`) scope, so an approved issue
+    /// proposal can actually be posted (real self-healing, 2026-08-04) -- `None`
+    /// on a deployment that hasn't configured one: `approve_issue_proposal` then
+    /// reports a clear 503 rather than silently doing nothing or fabricating
+    /// success. Never logged, never returned in any response.
+    github_token: Option<Arc<str>>,
     http_client: reqwest::Client,
     /// Real embedding credential for RAG semantic search (`rag::embed_texts`),
     /// `RAG_EMBEDDING_API_KEY` at startup -- `None` when unconfigured, the same
@@ -123,6 +129,9 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/backlog/{index}/toggle", post(toggle_backlog_item))
         .route("/api/runs/{id}/milestones", post(add_milestone))
         .route("/api/runs/{id}/milestones/{index}/toggle", post(toggle_milestone_handler))
+        .route("/api/runs/{id}/requirements", post(add_requirement))
+        .route("/api/runs/{id}/requirements/{index}/toggle", post(toggle_requirement_handler))
+        .route("/api/runs/{id}/requirements/{index}/criteria/{criterion_index}/toggle", post(toggle_acceptance_criterion_handler))
         .route("/api/runs/{id}/repo", post(set_repo_url))
         .route("/api/runs/{id}/roles/{tag}/fill-mode", post(set_role_fill_mode))
         .route("/api/runs/{id}/rag/sync", post(sync_rag))
@@ -138,6 +147,9 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/stages/propose", post(propose_stage))
         .route("/api/runs/{id}/stages/proposals/{proposal_id}/approve", post(approve_stage_proposal))
         .route("/api/runs/{id}/stages/proposals/{proposal_id}/reject", post(reject_stage_proposal))
+        .route("/api/runs/{id}/issues/propose", post(propose_issue))
+        .route("/api/runs/{id}/issues/proposals/{proposal_id}/approve", post(approve_issue_proposal))
+        .route("/api/runs/{id}/issues/proposals/{proposal_id}/reject", post(reject_issue_proposal))
         .route("/api/runs/{id}/offers/submit", post(submit_offer))
         .route("/api/runs/{id}/offers/quick-submit", post(quick_submit_offer))
         .route("/api/runs/{id}/auction", get(view_auction))
@@ -251,11 +263,16 @@ async fn main() {
             None
         }
     };
+    let github_token: Option<Arc<str>> = std::env::var("DEVSYSTEM_GITHUB_TOKEN").ok().filter(|s| !s.trim().is_empty()).map(Arc::from);
+    if github_token.is_none() {
+        println!("DEVSYSTEM_GITHUB_TOKEN not set -- approving an issue proposal will report itself unconfigured");
+    }
     let state = AppState {
         runs_dir: Arc::new(runs_dir),
         write_lock: Arc::new(tokio::sync::Mutex::new(())),
         offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         assistant_url,
+        github_token,
         http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().expect("build http client"),
         rag_embedding_api_key,
         rag_embedding_api_base,
@@ -336,17 +353,27 @@ struct RunSummary {
     stalled_stages: Vec<String>,
     risk_count: usize,
     needs_attention: bool,
+    /// Real count of proposals (custom panel / pipeline stage / GitHub issue)
+    /// genuinely awaiting a human decision on this run -- gap found 2026-08-04:
+    /// a run could sit with e.g. a stage proposal unresolved for many loop
+    /// firings without ever surfacing in the Runs list, only visible after
+    /// opening that run's Pipeline panel specifically. Each of these already
+    /// has its own real "propose, human approves" gate (#38/#39/#45); this is
+    /// just making the fact that one is WAITING visible where a human
+    /// actually looks first, not a new decision mechanism.
+    pending_reviews: usize,
     paused: bool,
     owner_email: Option<String>,
 }
 
 /// True when a run is close enough to its own bound that a human should notice it
 /// before opening the run, not just after -- the same danger/warn thresholds the
-/// GUI's health panel already uses, just evaluated once here so the run list can
-/// surface it too (matches the stalled-stage badge precedent: proactive, not
+/// GUI's health panel already uses -- OR a real proposal is genuinely waiting on a
+/// human decision (`pending_reviews`), evaluated once here so the run list can
+/// surface either case (matches the stalled-stage badge precedent: proactive, not
 /// only-on-click).
-fn needs_attention(health: &RunHealth) -> bool {
-    health.consecutive_failures + 1 >= health.criteria.max_consecutive_failures || health.iterations_until_checkin <= 1
+fn needs_attention(health: &RunHealth, pending_reviews: usize) -> bool {
+    pending_reviews > 0 || health.consecutive_failures + 1 >= health.criteria.max_consecutive_failures || health.iterations_until_checkin <= 1
 }
 
 async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap) -> impl IntoResponse {
@@ -366,7 +393,8 @@ async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap
             let stalled = stalled_stages(&run_state);
             let risk_count = preflight_annotations(&run_state).len();
             let health = run_health(&run_state);
-            let alert = needs_attention(&health);
+            let pending_reviews = run_state.pending_panel_proposals.len() + run_state.pending_stage_proposals.len() + run_state.pending_issue_proposals.len();
+            let alert = needs_attention(&health, pending_reviews);
             let paused = run_state.paused;
             let owner_email = run_state.owner_email.clone();
             runs.push(RunSummary {
@@ -377,6 +405,7 @@ async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap
                 stalled_stages: stalled,
                 risk_count,
                 needs_attention: alert,
+                pending_reviews,
                 paused,
                 owner_email,
             });
@@ -488,6 +517,12 @@ struct IterateRequest {
     succeeded: bool,
     #[serde(default)]
     proposals: Vec<StageProposal>,
+    /// Real requirement traceability (#47 follow-up slice) -- which
+    /// `state.requirements` indices this iteration claims to address.
+    /// `#[serde(default)]` so every existing caller (nothing claimed any
+    /// requirement before this field existed) keeps working unchanged.
+    #[serde(default)]
+    requirement_indices: Vec<usize>,
 }
 
 fn default_true() -> bool {
@@ -515,6 +550,10 @@ async fn iterate_run(
     if run_state.paused {
         return (StatusCode::CONFLICT, "run is paused -- resume it first (POST /api/runs/{id}/resume)").into_response();
     }
+    if let Some(&bad) = body.requirement_indices.iter().find(|&&i| i >= run_state.requirements.len()) {
+        return (StatusCode::BAD_REQUEST, format!("requirement_indices references index {bad}, but state.requirements only has {} entries", run_state.requirements.len()))
+            .into_response();
+    }
 
     let iteration = run_state.history.len() as u32 + 1;
     let record = IterationRecord {
@@ -524,10 +563,11 @@ async fn iterate_run(
         feedback: body.feedback,
         succeeded: body.succeeded,
         proposals: body.proposals,
+        requirement_indices: body.requirement_indices,
     };
 
     let memory_path = dir.join("memory.jsonl");
-    let envelope = envelope_from_iteration(&record);
+    let envelope = envelope_from_iteration(&record, &run_state.requirements);
     if let Err(e) = append_to_memory_log(&memory_path, &envelope) {
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("memory log failed: {e}")).into_response();
     }
@@ -850,6 +890,134 @@ async fn toggle_milestone_handler(
     }
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"milestones": run_state.milestones, "paused": run_state.paused})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct AddRequirementRequest {
+    statement: String,
+    #[serde(default)]
+    acceptance_criteria: Vec<String>,
+}
+
+const MAX_REQUIREMENT_STATEMENT_LEN: usize = 2_000;
+const MAX_ACCEPTANCE_CRITERIA: usize = 20;
+const MAX_ACCEPTANCE_CRITERION_LEN: usize = 500;
+
+/// Real, structured requirement management (2026-08-04 operator ask, grounded
+/// in researched industry practice -- EARS notation, spec-driven-development's
+/// "the spec is the prompt", traceSDD/Spec Kit-style acceptance criteria) --
+/// see `Requirement`'s own doc comment for why this is a distinct kind of run
+/// state from milestones/backlog. A requirement with no acceptance criteria
+/// defeats its entire point (nothing to actually check), so unlike
+/// milestones/backlog this rejects an empty `acceptance_criteria` list, not
+/// just an empty statement.
+async fn add_requirement(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<AddRequirementRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let statement = body.statement.trim().to_string();
+    if statement.is_empty() {
+        return (StatusCode::BAD_REQUEST, "statement must not be empty").into_response();
+    }
+    if statement.len() > MAX_REQUIREMENT_STATEMENT_LEN {
+        return (StatusCode::BAD_REQUEST, format!("statement must be under {MAX_REQUIREMENT_STATEMENT_LEN} characters")).into_response();
+    }
+    let acceptance_criteria: Vec<String> = body.acceptance_criteria.iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect();
+    if acceptance_criteria.is_empty() {
+        return (StatusCode::BAD_REQUEST, "at least one non-empty acceptance criterion is required").into_response();
+    }
+    if acceptance_criteria.len() > MAX_ACCEPTANCE_CRITERIA {
+        return (StatusCode::BAD_REQUEST, format!("acceptance_criteria is at its defensive cap of {MAX_ACCEPTANCE_CRITERIA} items")).into_response();
+    }
+    if let Some(c) = acceptance_criteria.iter().find(|c| c.len() > MAX_ACCEPTANCE_CRITERION_LEN) {
+        return (StatusCode::BAD_REQUEST, format!("acceptance criterion \"{c}\" is over {MAX_ACCEPTANCE_CRITERION_LEN} characters")).into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    if run_state.requirements.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("requirements is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
+    }
+    run_state.requirements.push(Requirement { statement, acceptance_criteria, verified: false, verified_criteria: Vec::new() });
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+async fn toggle_requirement_handler(
+    State(state): State<AppState>,
+    AxPath((id, index)): AxPath<(String, usize)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    if let Err(e) = toggle_requirement(&mut run_state, index) {
+        return (StatusCode::NOT_FOUND, e).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// Real, purely additive follow-up (2026-08-05) to `toggle_requirement_handler`
+/// -- see `Requirement::verified_criteria`'s own doc comment for why this is a
+/// separate signal from the whole-requirement `verified` flag.
+async fn toggle_acceptance_criterion_handler(
+    State(state): State<AppState>,
+    AxPath((id, req_index, criterion_index)): AxPath<(String, usize, usize)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    if let Err(e) = toggle_acceptance_criterion(&mut run_state, req_index, criterion_index) {
+        return (StatusCode::NOT_FOUND, e).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
     }
 }
@@ -1767,6 +1935,185 @@ async fn reject_stage_proposal(
     }
 }
 
+const MAX_ISSUE_TITLE_LEN: usize = 300;
+const MAX_ISSUE_BODY_LEN: usize = 20_000;
+/// `owner/repo` this deployment will actually let a proposal target -- the
+/// operator's own explicit ask names CADS-webconference-demo; kept as a real
+/// allowlist rather than a free-form field so a proposal (assistant-authored
+/// text) can never point a real GitHub write at an arbitrary repo.
+const ISSUE_PROPOSAL_REPO_ALLOWLIST: &[&str] = &["scimbe/CADS-webconference-demo"];
+
+#[derive(Deserialize)]
+struct ProposeIssueRequest {
+    repo: String,
+    title: String,
+    body: String,
+}
+
+/// `POST /api/runs/{id}/issues/propose` -- real "self-healing" (operator ask,
+/// 2026-08-04): the assistant notices a genuine gap/error and drafts a real
+/// GitHub issue, but this alone never reaches GitHub -- see
+/// `RunState::pending_issue_proposals`'s doc comment for the trust-model
+/// reasoning (same gate as custom panels/stage proposals).
+async fn propose_issue(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ProposeIssueRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let repo = body.repo.trim().to_string();
+    let title = body.title.trim().to_string();
+    let issue_body = body.body.trim().to_string();
+    if !ISSUE_PROPOSAL_REPO_ALLOWLIST.contains(&repo.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("repo must be one of {ISSUE_PROPOSAL_REPO_ALLOWLIST:?} -- proposing against an arbitrary repo isn't allowed"),
+        )
+            .into_response();
+    }
+    if title.is_empty() || issue_body.is_empty() {
+        return (StatusCode::BAD_REQUEST, "title and body must not be empty").into_response();
+    }
+    if title.len() > MAX_ISSUE_TITLE_LEN {
+        return (StatusCode::BAD_REQUEST, format!("title must be under {MAX_ISSUE_TITLE_LEN} characters")).into_response();
+    }
+    if issue_body.len() > MAX_ISSUE_BODY_LEN {
+        return (StatusCode::BAD_REQUEST, format!("body must be under {MAX_ISSUE_BODY_LEN} characters")).into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let proposal = PendingIssueProposal { id: format!("{:016x}", rand::random::<u64>()), repo, title, body: issue_body, proposed_at: unix_now() };
+    run_state.pending_issue_proposals.push(proposal.clone());
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(proposal).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreatedGithubIssue {
+    number: u64,
+    html_url: String,
+}
+
+/// `POST /api/runs/{id}/issues/proposals/{proposal_id}/approve` -- the actual
+/// "eingebaut nach meiner Zustimmung" (built in after my approval) step: posts
+/// the real issue to GitHub via the REST API, using `DEVSYSTEM_GITHUB_TOKEN`.
+/// Honest `503` (never a silent no-op) when this deployment hasn't configured
+/// one -- the drafted title/body/repo are still in the response either way, so
+/// the operator can copy-paste and post it by hand as a fallback, same pattern
+/// as CADS-Tunnel's `ensure_user` relaying a temp password out of band when
+/// there's no real email mechanism.
+async fn approve_issue_proposal(
+    State(state): State<AppState>,
+    AxPath((id, proposal_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let Some(pos) = run_state.pending_issue_proposals.iter().position(|p| p.id == proposal_id) else {
+        return (StatusCode::NOT_FOUND, format!("no pending proposal with id {proposal_id:?}")).into_response();
+    };
+    let Some(token) = state.github_token.clone() else {
+        let proposal = &run_state.pending_issue_proposals[pos];
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "DEVSYSTEM_GITHUB_TOKEN is not configured on this deployment -- post it by hand instead",
+                "repo": proposal.repo,
+                "title": proposal.title,
+                "body": proposal.body,
+            })),
+        )
+            .into_response();
+    };
+    let proposal = run_state.pending_issue_proposals[pos].clone();
+    let url = format!("https://api.github.com/repos/{}/issues", proposal.repo);
+    let resp = state
+        .http_client
+        .post(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "devsystem-web-issue-proposal/1 (+https://github.com/scimbe/CADS-devsystem)")
+        .json(&serde_json::json!({"title": proposal.title, "body": proposal.body}))
+        .send()
+        .await;
+    let created: CreatedGithubIssue = match resp {
+        Ok(r) if r.status().is_success() => match r.json().await {
+            Ok(v) => v,
+            Err(e) => return (StatusCode::BAD_GATEWAY, format!("GitHub returned a real issue but the response couldn't be parsed: {e}")).into_response(),
+        },
+        Ok(r) => {
+            let status = r.status();
+            let text = r.text().await.unwrap_or_default();
+            return (StatusCode::BAD_GATEWAY, format!("GitHub rejected the issue create: HTTP {status}: {text}")).into_response();
+        }
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("could not reach GitHub: {e}")).into_response(),
+    };
+    run_state.pending_issue_proposals.remove(pos);
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"number": created.number, "html_url": created.html_url})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("issue was posted to GitHub (#{}) but persisting the local state failed: {e}", created.number)).into_response(),
+    }
+}
+
+async fn reject_issue_proposal(
+    State(state): State<AppState>,
+    AxPath((id, proposal_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let before = run_state.pending_issue_proposals.len();
+    run_state.pending_issue_proposals.retain(|p| p.id != proposal_id);
+    if run_state.pending_issue_proposals.len() == before {
+        return (StatusCode::NOT_FOUND, format!("no pending proposal with id {proposal_id:?}")).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"rejected": proposal_id})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
 /// Real offer intake -- the counterpart to CADS-Tunnel core deliberately having no
 /// live bid-collection endpoint (verified directly against the checkout, not
 /// assumed). Any process, on any host, that holds a real ed25519 key can sign a
@@ -1987,6 +2334,7 @@ mod tests {
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
             offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             assistant_url: assistant_url.map(Arc::from),
+            github_token: None,
             http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().expect("build http client"),
             rag_embedding_api_key: None,
             rag_embedding_api_base: Arc::from("https://api.openai.com/v1"),
@@ -2118,6 +2466,7 @@ mod tests {
         let body = body_json(response).await;
         assert_eq!(body[0]["risk_count"], 0);
         assert_eq!(body[0]["needs_attention"], false);
+        assert_eq!(body[0]["pending_reviews"], 0);
 
         // Push it to 2 consecutive failures against the default max of 3 --
         // one away from the abort bound, so the list should flag it now.
@@ -2140,6 +2489,36 @@ mod tests {
         let body = body_json(response).await;
         assert!(body[0]["risk_count"].as_u64().unwrap() > 0, "the security-keyword feedback should register as a real risk");
         assert_eq!(body[0]["needs_attention"], true, "2/3 consecutive failures should already flag needs_attention");
+    }
+
+    #[tokio::test]
+    async fn list_runs_flags_needs_attention_for_a_real_pending_proposal_even_when_health_is_fine() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "list-pending-run"}))).await.unwrap();
+
+        // A fresh, healthy run -- must NOT flag attention on health grounds.
+        let response = app.clone().oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body[0]["needs_attention"], false);
+        assert_eq!(body[0]["pending_reviews"], 0);
+
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/list-pending-run/stages/propose",
+                serde_json::json!({"stage_id": "devsystem.android_emulator_test", "tag": "android_emulator_test", "rationale": "need real emulator coverage"}),
+            ))
+            .await
+            .unwrap();
+
+        // Same fresh, healthy run, but now with one real pending proposal --
+        // must surface in the run LIST, not just be discoverable after
+        // opening that run's own Pipeline panel.
+        let response = app.oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body[0]["pending_reviews"], 1);
+        assert_eq!(body[0]["needs_attention"], true, "a real pending proposal must flag needs_attention on its own, independent of health thresholds");
     }
 
     #[tokio::test]
@@ -2812,6 +3191,161 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn requirements_can_be_added_and_toggled_and_never_auto_pause() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-run/requirements",
+                serde_json::json!({
+                    "statement": "WHEN a user sends a text message over an established channel, THE SYSTEM SHALL persist it locally before confirming delivery to the UI",
+                    "acceptance_criteria": ["message survives an app restart", "UI shows \"sent\" only after local persistence succeeds"],
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["requirements"][0]["verified"], false);
+        assert_eq!(body["requirements"][0]["acceptance_criteria"].as_array().unwrap().len(), 2);
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/req-run/requirements/0/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["requirements"][0]["verified"], true);
+        assert!(body.get("paused").is_none(), "unlike a milestone, a requirement toggle response has no paused field to fake-imply auto-pause");
+
+        // Independently confirms it did NOT auto-pause the run (a real behavioral
+        // check, not just absence of a field in the toggle response).
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-run/iterate",
+                serde_json::json!({"stage": "devsystem.plan", "feedback": "should still be allowed", "succeeded": true}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "verifying a requirement must never block the next iteration");
+    }
+
+    #[tokio::test]
+    async fn acceptance_criteria_can_be_toggled_independently_of_the_whole_requirement() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "criteria-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/criteria-run/requirements",
+                serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["criterion A", "criterion B"]}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/criteria-run/requirements/0/criteria/1/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["requirements"][0]["verified_criteria"], serde_json::json!([false, true]), "must grow with real false padding, not just record index 1 alone");
+        assert_eq!(body["requirements"][0]["verified"], false, "toggling one criterion must never silently flip the independent whole-requirement flag");
+
+        // Independently confirms it actually persisted, not just the response.
+        let response = app.oneshot(Request::builder().uri("/api/runs/criteria-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["state"]["requirements"][0]["verified_criteria"], serde_json::json!([false, true]));
+    }
+
+    #[tokio::test]
+    async fn toggling_an_out_of_range_acceptance_criterion_404s() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "criteria-oob-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/criteria-oob-run/requirements",
+                serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["only one criterion"]}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/criteria-oob-run/requirements/0/criteria/5/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/criteria-oob-run/requirements/9/criteria/0/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND, "an out-of-range requirement index must also 404, not panic");
+    }
+
+    #[tokio::test]
+    async fn add_requirement_rejects_an_empty_statement_or_no_acceptance_criteria() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-validate-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-validate-run/requirements",
+                serde_json::json!({"statement": "  ", "acceptance_criteria": ["something"]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-validate-run/requirements",
+                serde_json::json!({"statement": "a real statement", "acceptance_criteria": []}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a requirement with no checkable acceptance criteria must be rejected");
+    }
+
+    #[tokio::test]
+    async fn toggling_an_out_of_range_requirement_404s() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-oob-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/req-oob-run/requirements/9/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
     async fn backlog_items_can_be_added_and_toggled_and_persist() {
         let (state, _dir) = test_state();
         let app = api_router(state);
@@ -3150,6 +3684,143 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn proposed_issue_never_reaches_github_until_a_human_approves_it() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "propose-issue-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/propose-issue-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": "Real gap found", "body": "Detailed real description."}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let proposed = body_json(response).await;
+        assert_eq!(proposed["repo"], "scimbe/CADS-webconference-demo");
+        let proposal_id = proposed["id"].as_str().unwrap().to_string();
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/propose-issue-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["pending_issue_proposals"].as_array().unwrap().len(), 1, "nothing must be posted anywhere -- it only sits pending");
+        assert_eq!(run["state"]["pending_issue_proposals"][0]["id"], proposal_id);
+    }
+
+    #[tokio::test]
+    async fn propose_issue_rejects_a_repo_outside_the_allowlist() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "issue-allowlist-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/issue-allowlist-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/some-other-repo", "title": "x", "body": "y"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "an assistant-authored proposal must never be able to target an arbitrary repo");
+    }
+
+    #[tokio::test]
+    async fn propose_issue_rejects_empty_title_or_body_and_oversized_ones() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "issue-edge-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/issue-edge-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": "  ", "body": "y"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/issue-edge-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": "x".repeat(MAX_ISSUE_TITLE_LEN + 1), "body": "y"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn approving_an_issue_proposal_reports_503_honestly_when_no_github_token_is_configured() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "issue-503-run"}))).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/issue-503-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": "Real gap", "body": "Real detail."}),
+            ))
+            .await
+            .unwrap();
+        let proposal_id = body_json(response).await["id"].as_str().unwrap().to_string();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/runs/issue-503-run/issues/proposals/{proposal_id}/approve"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::SERVICE_UNAVAILABLE, "must say plainly this deployment has no GitHub token, never silently no-op");
+        let body = body_json(response).await;
+        assert_eq!(body["repo"], "scimbe/CADS-webconference-demo", "the drafted content must still be returned so the operator can post it by hand");
+        assert_eq!(body["title"], "Real gap");
+    }
+
+    #[tokio::test]
+    async fn rejecting_an_issue_proposal_discards_it_without_ever_touching_github() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "reject-issue-run"}))).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/reject-issue-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": "Nope", "body": "not needed"}),
+            ))
+            .await
+            .unwrap();
+        let proposal_id = body_json(response).await["id"].as_str().unwrap().to_string();
+
+        let reject = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/runs/reject-issue-run/issues/proposals/{proposal_id}/reject"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reject.status(), SC::OK);
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/reject-issue-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["pending_issue_proposals"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
     async fn pausing_a_run_blocks_new_iterations_until_resumed() {
         let (state, _dir) = test_state();
         let app = api_router(state);
@@ -3301,6 +3972,7 @@ mod tests {
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
             offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             assistant_url: None,
+            github_token: None,
             http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().expect("build http client"),
             rag_embedding_api_key: None,
             rag_embedding_api_base: Arc::from("https://api.openai.com/v1"),
@@ -3351,6 +4023,54 @@ mod tests {
         let after = fs::read_to_string(&state_path).expect("state.json still exists");
         assert!(after.contains("\"real progress\""), "iteration feedback should be persisted to disk");
         assert!(!after.contains("\"history\": []"), "history should no longer be empty on disk");
+    }
+
+    #[tokio::test]
+    async fn iterate_run_persists_real_requirement_traceability() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "trace-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/trace-run/requirements",
+                serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["a real check"]}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/trace-run/iterate",
+                serde_json::json!({"stage": "implement", "feedback": "addressed the requirement", "succeeded": true, "requirement_indices": [0]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/trace-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["state"]["history"][0]["requirement_indices"][0], 0);
+    }
+
+    #[tokio::test]
+    async fn iterate_run_rejects_an_out_of_range_requirement_index() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "trace-oob-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/trace-oob-run/iterate",
+                serde_json::json!({"stage": "implement", "feedback": "x", "succeeded": true, "requirement_indices": [0]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "no requirements exist yet, so index 0 must be rejected, not silently accepted");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]

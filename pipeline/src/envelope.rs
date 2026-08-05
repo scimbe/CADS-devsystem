@@ -4,6 +4,7 @@
 //! `devsystem.remember` stage's first real piece: turning a run's iterations into a
 //! durable, structured log instead of only living in `state.json`'s free-text fields.
 
+use crate::runner::Requirement;
 use crate::IterationRecord;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
@@ -43,11 +44,27 @@ pub struct EnvelopeRecord {
 
 /// Derive an [`EnvelopeRecord`] from a real [`IterationRecord`] -- no invented content:
 /// `key_findings` wraps the iteration's actual feedback text as-is (not split into
-/// synthesized bullet points, which would risk misrepresenting what the stage said);
-/// `constraints` are the real proposals' rationale (a proposal genuinely is something
-/// the next stage must know about and account for).
-pub fn envelope_from_iteration(record: &IterationRecord) -> EnvelopeRecord {
+/// synthesized bullet points, which would risk misrepresenting what the stage said),
+/// plus one real line per requirement this iteration actually claims to address
+/// (`requirements` resolves `record.requirement_indices` to their real statement text
+/// at the time this envelope is written -- a durable log entry should capture what the
+/// statement actually said then, not a mutable reference that could drift or vanish
+/// later; gap found+fixed 2026-08-05, same traceability data the check-in markdown and
+/// GUI panels already surface, previously missing from the one other real human-viewed
+/// surface -- the Memory Log panel's `key_findings` rendering); `constraints` are the
+/// real proposals' rationale (a proposal genuinely is something the next stage must
+/// know about and account for). `ZylosEnvelope`'s shape itself (`docs/role-contracts.md`
+/// schema v1) is a fixed external contract -- deliberately not adding a new field to it,
+/// folding this into `key_findings` instead since it genuinely is one.
+pub fn envelope_from_iteration(record: &IterationRecord, requirements: &[Requirement]) -> EnvelopeRecord {
     let constraints = record.proposals.iter().map(|p| format!("{}: {}", p.stage_id, p.rationale)).collect();
+    let mut key_findings = vec![record.feedback.clone()];
+    for &i in &record.requirement_indices {
+        match requirements.get(i) {
+            Some(r) => key_findings.push(format!("Addressed requirement: {}", r.statement)),
+            None => key_findings.push(format!("Addressed requirement #{i} (no longer exists)")),
+        }
+    }
     EnvelopeRecord {
         run_id: record.run_id.clone(),
         stage: record.stage.clone(),
@@ -55,7 +72,7 @@ pub fn envelope_from_iteration(record: &IterationRecord) -> EnvelopeRecord {
         trust: Trust::Unreviewed,
         envelope: ZylosEnvelope {
             task: record.stage.clone(),
-            key_findings: vec![record.feedback.clone()],
+            key_findings,
             constraints,
             output_format: "markdown".to_string(),
         },
@@ -127,12 +144,13 @@ mod tests {
             feedback: "found and fixed allowBackup=true and raw-pixel padding".into(),
             proposals,
             succeeded: true,
+            requirement_indices: Vec::new(),
         }
     }
 
     #[test]
     fn derives_task_role_and_key_findings_from_the_real_feedback_text() {
-        let env = envelope_from_iteration(&record(vec![]));
+        let env = envelope_from_iteration(&record(vec![]), &[]);
         assert_eq!(env.run_id, "run-envelope");
         assert_eq!(env.stage, "devsystem.review");
         assert_eq!(env.role, "review", "role strips the devsystem. prefix per the tag convention");
@@ -153,8 +171,37 @@ mod tests {
             units: 1,
             price_ceiling: None,
         };
-        let env = envelope_from_iteration(&record(vec![proposal]));
+        let env = envelope_from_iteration(&record(vec![proposal]), &[]);
         assert_eq!(env.envelope.constraints, vec!["devsystem.android_native_bridge: reuse the audited Rust Noise_IK code".to_string()]);
+    }
+
+    #[test]
+    fn a_real_addressed_requirement_becomes_a_key_finding_with_its_actual_statement_text() {
+        let requirements = vec![Requirement {
+            statement: "WHEN a user sends a text message over an established channel, THE SYSTEM SHALL persist it locally before confirming delivery to the UI".into(),
+            acceptance_criteria: vec!["message survives an app restart".into()],
+            verified: false,
+            verified_criteria: Vec::new(),
+        }];
+        let mut rec = record(vec![]);
+        rec.requirement_indices = vec![0];
+        let env = envelope_from_iteration(&rec, &requirements);
+        assert_eq!(
+            env.envelope.key_findings,
+            vec![
+                "found and fixed allowBackup=true and raw-pixel padding".to_string(),
+                "Addressed requirement: WHEN a user sends a text message over an established channel, THE SYSTEM SHALL persist it locally before confirming delivery to the UI".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_addressed_requirement_index_that_no_longer_exists_is_reported_honestly_not_silently_dropped() {
+        let mut rec = record(vec![]);
+        rec.requirement_indices = vec![7];
+        let env = envelope_from_iteration(&rec, &[]);
+        assert!(env.envelope.key_findings[1].contains("#7"));
+        assert!(env.envelope.key_findings[1].contains("no longer exists"));
     }
 
     #[test]
@@ -170,11 +217,11 @@ mod tests {
         let path = dir.join("memory.jsonl");
         let _ = std::fs::remove_file(&path);
 
-        let env1 = envelope_from_iteration(&record(vec![]));
+        let env1 = envelope_from_iteration(&record(vec![]), &[]);
         let mut rec2 = record(vec![]);
         rec2.iteration = 5;
         rec2.feedback = "second iteration's real feedback".into();
-        let env2 = envelope_from_iteration(&rec2);
+        let env2 = envelope_from_iteration(&rec2, &[]);
 
         append_to_memory_log(&path, &env1).unwrap();
         append_to_memory_log(&path, &env2).unwrap();
@@ -198,11 +245,11 @@ mod tests {
         let path = dir.join("memory.jsonl");
         let _ = std::fs::remove_file(&path);
 
-        let env1 = envelope_from_iteration(&record(vec![]));
+        let env1 = envelope_from_iteration(&record(vec![]), &[]);
         let mut rec2 = record(vec![]);
         rec2.iteration = 5;
         rec2.feedback = "second iteration's real feedback".into();
-        let env2 = envelope_from_iteration(&rec2);
+        let env2 = envelope_from_iteration(&rec2, &[]);
         append_to_memory_log(&path, &env1).unwrap();
         append_to_memory_log(&path, &env2).unwrap();
 
@@ -223,7 +270,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("memory.jsonl");
         let _ = std::fs::remove_file(&path);
-        append_to_memory_log(&path, &envelope_from_iteration(&record(vec![]))).unwrap();
+        append_to_memory_log(&path, &envelope_from_iteration(&record(vec![]), &[])).unwrap();
 
         let err = govern_memory_entry(&path, 5).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
@@ -246,11 +293,11 @@ mod tests {
         let path = dir.join("memory.jsonl");
         let _ = std::fs::remove_file(&path);
 
-        let env1 = envelope_from_iteration(&record(vec![]));
+        let env1 = envelope_from_iteration(&record(vec![]), &[]);
         let mut rec2 = record(vec![]);
         rec2.iteration = 5;
         rec2.feedback = "second iteration's real feedback".into();
-        let env2 = envelope_from_iteration(&rec2);
+        let env2 = envelope_from_iteration(&rec2, &[]);
 
         append_to_memory_log(&path, &env1).unwrap();
         append_to_memory_log(&path, &env2).unwrap();

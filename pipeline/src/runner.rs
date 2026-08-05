@@ -96,6 +96,42 @@ pub struct Milestone {
     pub achieved: bool,
 }
 
+/// A real, structured requirement -- the concrete first slice of "requirement
+/// management" the operator asked to research (2026-08-04). Modeled on the
+/// EARS notation (Easy Approach to Requirements Syntax -- the industry-standard
+/// way to keep a requirement unambiguous and testable for an LLM coding agent,
+/// e.g. "WHEN a user sends a text message over an established channel, THE
+/// SYSTEM SHALL persist it locally before confirming delivery to the UI"),
+/// distinct from a [`Milestone`] (a checkpoint) or a [`BacklogItem`] (a task):
+/// a requirement states an intended system behavior with concrete,
+/// checkable `acceptance_criteria`, giving devsystem.assistant and any stage
+/// something real to verify against instead of a vague wish.
+///
+/// `verified_criteria` (2026-08-05 follow-up) tracks per-criterion progress --
+/// deliberately a SEPARATE, purely additive field rather than changing
+/// `acceptance_criteria`'s own type (which would break every already-persisted
+/// `state.json` that has it as a plain `Vec<String>`): `#[serde(default)]` so
+/// every pre-existing file still loads (as if nothing were checked yet), and
+/// `toggle_acceptance_criterion` grows it with real `false` padding on demand
+/// rather than requiring it to already be the same length as
+/// `acceptance_criteria`. Deliberately NOT auto-derived from/into `verified`
+/// (the whole-requirement flag) in this slice -- a human confirming "yes,
+/// this whole requirement is done" and a human ticking off individual
+/// criteria are kept as two independent, explicit signals rather than
+/// silently coupled, since coupling them is a real design choice a human
+/// should make, not one to guess at here. This is deliberately still 100%
+/// human-driven (no LLM judgment of whether a criterion is actually met) --
+/// automatic acceptance-criteria checking by a verify stage remains a real,
+/// separate, still-open question.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Requirement {
+    pub statement: String,
+    pub acceptance_criteria: Vec<String>,
+    pub verified: bool,
+    #[serde(default)]
+    pub verified_criteria: Vec<bool>,
+}
+
 /// Persisted state for one run -- serialized to `runs/<run_id>/state.json` in the
 /// coordination repo so a run survives across separate loop firings (each firing is a
 /// fresh process; nothing here is in-memory-only).
@@ -183,6 +219,21 @@ pub struct RunState {
     /// still load.
     #[serde(default)]
     pub pending_stage_proposals: Vec<PendingStageProposal>,
+    /// A real GitHub issue draft the assistant proposed after noticing a gap or
+    /// error -- "self-healing" (operator ask, 2026-08-04): the assistant
+    /// recognizes something's missing/broken and drafts a real issue for a
+    /// target repo (e.g. CADS-webconference-demo), but NEVER posts it itself.
+    /// Same trust-model pattern as `pending_panel_proposals`/
+    /// `pending_stage_proposals` -- a human reviews and explicitly approves
+    /// before anything reaches GitHub. `#[serde(default)]` so pre-existing
+    /// `state.json` files (none proposed yet) still load.
+    #[serde(default)]
+    pub pending_issue_proposals: Vec<PendingIssueProposal>,
+    /// This run's real, structured requirements -- see [`Requirement`].
+    /// `#[serde(default)]` so pre-existing `state.json` files (none defined
+    /// yet) still load.
+    #[serde(default)]
+    pub requirements: Vec<Requirement>,
 }
 
 /// See [`RunState::pending_stage_proposals`]'s doc comment for why this wraps
@@ -192,6 +243,19 @@ pub struct RunState {
 pub struct PendingStageProposal {
     pub id: String,
     pub proposal: crate::StageProposal,
+    pub proposed_at: u64,
+}
+
+/// See [`RunState::pending_issue_proposals`]'s doc comment. `repo` is
+/// `owner/name` (e.g. `"scimbe/CADS-webconference-demo"`), not a full URL --
+/// kept minimal, no free-form target the assistant could otherwise be tricked
+/// or drift into pointing at an unrelated repo.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingIssueProposal {
+    pub id: String,
+    pub repo: String,
+    pub title: String,
+    pub body: String,
     pub proposed_at: u64,
 }
 
@@ -225,6 +289,8 @@ impl RunState {
             custom_panels: Vec::new(),
             pending_panel_proposals: Vec::new(),
             pending_stage_proposals: Vec::new(),
+            pending_issue_proposals: Vec::new(),
+            requirements: Vec::new(),
         }
     }
 }
@@ -241,6 +307,37 @@ pub fn toggle_milestone(state: &mut RunState, index: usize) -> Result<(), String
     if !was_achieved && milestone.achieved {
         state.paused = true;
     }
+    Ok(())
+}
+
+/// Unlike [`toggle_milestone`], toggling a requirement's `verified` flag never
+/// auto-pauses the run -- a requirement is a standing behavioral contract, not
+/// a one-time checkpoint; marking it verified (or un-verifying it after a
+/// regression) is routine bookkeeping, not an event that should interrupt the
+/// loop.
+pub fn toggle_requirement(state: &mut RunState, index: usize) -> Result<(), String> {
+    let requirement = state.requirements.get_mut(index).ok_or_else(|| format!("no requirement at index {index}"))?;
+    requirement.verified = !requirement.verified;
+    Ok(())
+}
+
+/// Toggles a single acceptance criterion's real, human-set verified state --
+/// see [`Requirement::verified_criteria`]'s own doc comment for why this is a
+/// separate signal from `verified` itself. Grows `verified_criteria` with
+/// real `false` entries up to `criterion_index` on demand rather than
+/// requiring it to already be the same length as `acceptance_criteria` --
+/// every pre-existing requirement (persisted before this field existed, or
+/// simply never touched yet) starts effectively "nothing checked" without
+/// needing a migration step.
+pub fn toggle_acceptance_criterion(state: &mut RunState, req_index: usize, criterion_index: usize) -> Result<(), String> {
+    let requirement = state.requirements.get_mut(req_index).ok_or_else(|| format!("no requirement at index {req_index}"))?;
+    if criterion_index >= requirement.acceptance_criteria.len() {
+        return Err(format!("requirement {req_index} has no acceptance criterion at index {criterion_index}"));
+    }
+    if requirement.verified_criteria.len() <= criterion_index {
+        requirement.verified_criteria.resize(criterion_index + 1, false);
+    }
+    requirement.verified_criteria[criterion_index] = !requirement.verified_criteria[criterion_index];
     Ok(())
 }
 
@@ -333,6 +430,7 @@ mod tests {
             feedback: "test feedback".into(),
             proposals,
             succeeded,
+            requirement_indices: Vec::new(),
         }
     }
 
@@ -362,6 +460,69 @@ mod tests {
     fn toggling_an_out_of_range_milestone_index_fails_loudly() {
         let mut state = RunState::new("run-milestone-oob");
         assert!(toggle_milestone(&mut state, 0).is_err());
+    }
+
+    #[test]
+    fn toggling_a_requirement_flips_verified_and_never_auto_pauses() {
+        let mut state = RunState::new("run-req");
+        state.requirements.push(Requirement {
+            statement: "WHEN a user sends a text message over an established channel, THE SYSTEM SHALL persist it locally before confirming delivery to the UI".into(),
+            acceptance_criteria: vec!["message survives an app restart".into(), "UI shows \"sent\" only after local persistence succeeds".into()],
+            verified: false,
+            verified_criteria: Vec::new(),
+        });
+        toggle_requirement(&mut state, 0).unwrap();
+        assert!(state.requirements[0].verified);
+        assert!(!state.paused, "unlike a milestone, verifying a requirement must not auto-pause the run");
+
+        toggle_requirement(&mut state, 0).unwrap();
+        assert!(!state.requirements[0].verified);
+    }
+
+    #[test]
+    fn toggling_an_out_of_range_requirement_index_fails_loudly() {
+        let mut state = RunState::new("run-req-oob");
+        assert!(toggle_requirement(&mut state, 0).is_err());
+    }
+
+    #[test]
+    fn toggling_an_acceptance_criterion_grows_verified_criteria_on_demand() {
+        let mut state = RunState::new("run-criteria");
+        state.requirements.push(Requirement {
+            statement: "WHEN ..., THE SYSTEM SHALL ...".into(),
+            acceptance_criteria: vec!["criterion A".into(), "criterion B".into(), "criterion C".into()],
+            verified: false,
+            verified_criteria: Vec::new(),
+        });
+
+        // A pre-existing requirement (persisted before this field existed, or
+        // simply never touched) starts with an empty verified_criteria --
+        // toggling criterion 2 must grow it with real false padding for 0/1,
+        // not panic or silently no-op.
+        toggle_acceptance_criterion(&mut state, 0, 2).unwrap();
+        assert_eq!(state.requirements[0].verified_criteria, vec![false, false, true]);
+
+        toggle_acceptance_criterion(&mut state, 0, 0).unwrap();
+        assert_eq!(state.requirements[0].verified_criteria, vec![true, false, true]);
+
+        // Un-toggling flips it back, doesn't just grow forever.
+        toggle_acceptance_criterion(&mut state, 0, 2).unwrap();
+        assert_eq!(state.requirements[0].verified_criteria, vec![true, false, false]);
+
+        assert!(!state.requirements[0].verified, "toggling individual criteria must never silently flip the independent whole-requirement verified flag");
+    }
+
+    #[test]
+    fn toggling_an_out_of_range_criterion_index_fails_loudly() {
+        let mut state = RunState::new("run-criteria-oob");
+        state.requirements.push(Requirement {
+            statement: "WHEN ..., THE SYSTEM SHALL ...".into(),
+            acceptance_criteria: vec!["only one criterion".into()],
+            verified: false,
+            verified_criteria: Vec::new(),
+        });
+        assert!(toggle_acceptance_criterion(&mut state, 0, 1).is_err());
+        assert!(toggle_acceptance_criterion(&mut state, 5, 0).is_err(), "an out-of-range requirement index must also fail loudly");
     }
 
     #[test]

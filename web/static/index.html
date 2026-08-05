@@ -392,6 +392,7 @@ const PANEL_DEFAULTS = {
   history:    { title: 'History',            x: 728,  y: 332, w: 320, h: 480 },
   backlog:    { title: 'Backlog',            x: 1420, y: 16,  w: 340, h: 300 },
   milestones: { title: 'Milestones',         x: 1420, y: 332, w: 340, h: 240 },
+  requirements: { title: 'Requirements',     x: 1780, y: 1108, w: 380, h: 340 },
   checkin:    { title: 'Check-in',           x: 16,   y: 452, w: 280, h: 300 },
   memory:     { title: 'Memory Log',         x: 1780, y: 16,  w: 360, h: 300 },
   code:       { title: 'Code',               x: 1420, y: 592, w: 340, h: 300 },
@@ -709,6 +710,7 @@ function renderCustomPanelsManager(id, data) {
         if (id === currentRun) currentRunData = fresh;
         renderCustomPanelsManager(id, fresh);
         renderCustomPanels(id, fresh);
+        await refreshRunsList();
       } catch (err) {
         alert(`Could not approve proposal: ${err.message}`);
       }
@@ -721,6 +723,7 @@ function renderCustomPanelsManager(id, data) {
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
         if (id === currentRun) currentRunData = fresh;
         renderCustomPanelsManager(id, fresh);
+        await refreshRunsList();
       } catch (err) {
         alert(`Could not reject proposal: ${err.message}`);
       }
@@ -1001,8 +1004,23 @@ function initPanels() {
 
 async function fetchJSON(url, opts) {
   const res = await fetch(url, opts);
-  const body = await res.json().catch(() => null);
-  if (!res.ok) throw new Error((body && (body.error || JSON.stringify(body))) || res.statusText);
+  const raw = await res.text();
+  // Real gap found+fixed 2026-08-05: the overwhelming majority of this
+  // backend's real error responses are plain text (`(StatusCode::X, "a real
+  // message")` -- axum's default IntoResponse for &str/String), not JSON.
+  // The old `res.json().catch(() => null)` silently swallowed every one of
+  // them and fell back to `res.statusText` (a generic "Bad Request"/"Not
+  // Found"/"Conflict"), meaning basically every specific, carefully-worded
+  // validation error this codebase has ever written was invisible in the
+  // GUI -- only ever seen by reading the raw HTTP body directly (e.g. via
+  // curl), never in an actual "status-line err" message a real operator
+  // would see. Try JSON first (still the common shape for successful
+  // responses and a few real JSON error bodies), fall back to the raw text
+  // itself, and only fall back to the generic HTTP status text if the body
+  // is genuinely empty.
+  let body = null;
+  try { body = JSON.parse(raw); } catch (e) { /* not JSON -- raw text is the real message below */ }
+  if (!res.ok) throw new Error((body && (body.error || JSON.stringify(body))) || raw.trim() || res.statusText);
   return body;
 }
 
@@ -1098,10 +1116,14 @@ async function refreshRunsList() {
       const btn = document.createElement('button');
       btn.className = 'run-item' + (r.run_id === currentRun ? ' active' : '');
       // Most urgent signal wins, one badge at a glance rather than a pile-up:
-      // needs_attention (close to abort/overdue check-in) outranks a stalled
-      // stage, which outranks a mechanical preflight risk finding.
+      // a real pending proposal (a human decision genuinely waiting -- gap
+      // found 2026-08-04: this used to be invisible outside that run's own
+      // Pipeline panel) outranks a health-threshold needs_attention, which
+      // outranks a stalled stage, which outranks a mechanical preflight risk
+      // finding.
       let badge = '';
-      if (r.needs_attention) badge = `<span class="attention-badge">⚠ needs attention</span>`;
+      if (r.pending_reviews) badge = `<span class="attention-badge">⚠ ${r.pending_reviews} pending review${r.pending_reviews === 1 ? '' : 's'}</span>`;
+      else if (r.needs_attention) badge = `<span class="attention-badge">⚠ needs attention</span>`;
       else if (r.stalled_stages && r.stalled_stages.length) badge = `<span class="stalled-badge">${r.stalled_stages.length} stalled</span>`;
       else if (r.risk_count) badge = `<span class="risk-badge">${r.risk_count} risk(s)</span>`;
       const ownerLine = r.owner_email ? ` · created by ${escapeHtml(r.owner_email)}` : ' · no recorded owner';
@@ -1127,7 +1149,7 @@ async function selectRun(id) {
     for (const pid of Object.keys(REFRESHABLE_PANELS)) lastRefreshedAt[pid] = Date.now();
   }
   await refreshRunsList();
-  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture', 'rag', 'panels', 'flow']) {
+  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow']) {
     document.getElementById(`body-${panelId}`).innerHTML = '<span class="lede">Loading…</span>';
   }
   try {
@@ -1141,6 +1163,7 @@ async function selectRun(id) {
     renderHistoryPanel(data);
     renderBacklogPanel(id, data);
     renderMilestonesPanel(id, data);
+    renderRequirementsPanel(id, data);
     document.getElementById('body-checkin').innerHTML = `<button class="secondary" id="view-checkin">View check-in</button><div id="checkin-view"></div>`;
     document.getElementById('view-checkin').onclick = () => viewCheckin(id);
     document.getElementById('body-memory').innerHTML = `<button class="secondary" id="view-memory">View memory log</button><div id="memory-view"></div>`;
@@ -1152,7 +1175,7 @@ async function selectRun(id) {
     renderCustomPanels(id, data);
     renderFlowPanel(id, data);
   } catch (e) {
-    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'architecture', 'rag', 'panels', 'flow']) {
+    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow']) {
       document.getElementById(`body-${panelId}`).innerHTML = `<span class="status-line err">${e.message}</span>`;
     }
   }
@@ -1667,7 +1690,25 @@ async function renderArchitecturePanel(id, data) {
         </div>`).join('')
     : '';
 
-  body.innerHTML = viewerHtml + specHtml + roleRows + stageProposalsHtml
+  // Self-healing (#45, operator ask): devsystem.assistant notices something
+  // genuinely missing/broken and drafts a real GitHub issue on
+  // CADS-webconference-demo -- never posted until a human approves it here.
+  const issueProposals = data.state.pending_issue_proposals || [];
+  const issueProposalsHtml = issueProposals.length
+    ? `<div class="arch-note" style="margin:.6rem 0 .4rem">Self-healing: devsystem.assistant drafted a GitHub issue -- review before it's actually posted:</div>`
+      + issueProposals.map(p => `
+        <div class="role-card">
+          <div class="role-card-head"><span class="role">${escapeHtml(p.title)}</span></div>
+          <div class="role-meta">${escapeHtml(p.repo)}</div>
+          <div class="lede" style="font-size:.75rem;margin-top:.3rem;white-space:pre-wrap">${escapeHtml(p.body)}</div>
+          <div style="margin-top:.4rem;display:flex;gap:.4rem">
+            <button type="button" class="issue-proposal-approve-btn" data-id="${p.id}">Approve &amp; post to GitHub</button>
+            <button type="button" class="secondary issue-proposal-reject-btn" data-id="${p.id}">Reject</button>
+          </div>
+        </div>`).join('')
+    : '';
+
+  body.innerHTML = viewerHtml + specHtml + roleRows + stageProposalsHtml + issueProposalsHtml
     + `<div class="lede" style="font-size:.72rem;margin-top:.4rem">Live backing status and bidding are on the Roles panel.</div>`;
 
   for (const btn of body.querySelectorAll('.panel-proposal-approve-btn')) {
@@ -1678,6 +1719,7 @@ async function renderArchitecturePanel(id, data) {
         if (id === currentRun) currentRunData = fresh;
         renderArchitecturePanel(id, fresh);
         renderRolesPanel(id, fresh);
+        await refreshRunsList();
       } catch (err) {
         alert(`Could not approve stage proposal: ${err.message}`);
       }
@@ -1690,8 +1732,38 @@ async function renderArchitecturePanel(id, data) {
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
         if (id === currentRun) currentRunData = fresh;
         renderArchitecturePanel(id, fresh);
+        await refreshRunsList();
       } catch (err) {
         alert(`Could not reject stage proposal: ${err.message}`);
+      }
+    };
+  }
+  for (const btn of body.querySelectorAll('.issue-proposal-approve-btn')) {
+    btn.onclick = async () => {
+      try {
+        const result = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/issues/proposals/${encodeURIComponent(btn.dataset.id)}/approve`, { method: 'POST' });
+        if (result && result.html_url) {
+          alert(`Posted: ${result.html_url}`);
+        }
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        renderArchitecturePanel(id, fresh);
+        await refreshRunsList();
+      } catch (err) {
+        alert(`Could not post issue to GitHub: ${err.message}`);
+      }
+    };
+  }
+  for (const btn of body.querySelectorAll('.issue-proposal-reject-btn')) {
+    btn.onclick = async () => {
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/issues/proposals/${encodeURIComponent(btn.dataset.id)}/reject`, { method: 'POST' });
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        renderArchitecturePanel(id, fresh);
+        await refreshRunsList();
+      } catch (err) {
+        alert(`Could not reject issue proposal: ${err.message}`);
       }
     };
   }
@@ -1906,6 +1978,105 @@ async function toggleMilestone(id, index) {
   }
 }
 
+// Real, structured requirement management (2026-08-04 operator ask, researched
+// against industry spec-driven-development practice -- EARS notation,
+// traceSDD/Spec Kit-style acceptance criteria): distinct from Milestones (a
+// checkpoint) -- a Requirement states an intended behavior plus concrete,
+// checkable acceptance criteria devsystem.assistant and a human can both
+// verify against. See `Requirement` in pipeline/src/runner.rs.
+function renderRequirementsPanel(id, data) {
+  const body = document.getElementById('body-requirements');
+  const requirements = data.state.requirements || [];
+  // Real traceability, reverse direction from the History panel: which real
+  // iterations (if any) actually claimed to address each requirement.
+  const addressedBy = requirements.map(() => []);
+  for (const h of (data.state.history || [])) {
+    for (const i of (h.requirement_indices || [])) {
+      if (addressedBy[i]) addressedBy[i].push(h.iteration);
+    }
+  }
+  // Real, purely additive per-criterion tracking (2026-08-05 follow-up):
+  // verified_criteria may be shorter than acceptance_criteria (or entirely
+  // absent) for any requirement that predates this field or simply hasn't
+  // had a criterion checked yet -- render every position as unchecked by
+  // default rather than assuming the arrays are the same length.
+  const items = requirements.length
+    ? requirements.map((r, i) => {
+        const verifiedCriteria = r.verified_criteria || [];
+        const checkedCount = r.acceptance_criteria.filter((_, ci) => verifiedCriteria[ci]).length;
+        return `
+        <div class="role-card">
+          <label class="backlog-item${r.verified ? ' done' : ''}" style="align-items:flex-start">
+            <input type="checkbox" class="requirement-toggle" data-index="${i}" ${r.verified ? 'checked' : ''}>
+            <span>${escapeHtml(r.statement)}</span>
+          </label>
+          <div style="margin:.3rem 0 0 1.6rem;font-size:.7rem" class="lede">acceptance criteria (${checkedCount}/${r.acceptance_criteria.length} confirmed):</div>
+          <div style="margin:.2rem 0 0 1.6rem;display:flex;flex-direction:column;gap:.15rem">
+            ${r.acceptance_criteria.map((c, ci) => `
+              <label class="backlog-item${verifiedCriteria[ci] ? ' done' : ''}" style="font-size:.75rem">
+                <input type="checkbox" class="criterion-toggle" data-req-index="${i}" data-criterion-index="${ci}" ${verifiedCriteria[ci] ? 'checked' : ''}>
+                <span>${escapeHtml(c)}</span>
+              </label>`).join('')}
+          </div>
+          <div class="lede" style="font-size:.7rem;margin-top:.3rem">${addressedBy[i].length ? `addressed by iteration(s) ${addressedBy[i].join(', ')}` : 'not yet addressed by any iteration'}</div>
+        </div>`;
+      }).join('')
+    : '<span class="lede">No requirements yet.</span>';
+  body.innerHTML = `
+    <div class="backlog-list">${items}</div>
+    <div class="lede" style="font-size:.72rem;margin-top:.4rem">EARS-style: "WHEN &lt;trigger&gt;, THE SYSTEM SHALL &lt;behavior&gt;". One acceptance criterion per line, at least one required.</div>
+    <form class="inline" id="requirement-form" style="margin-top:.6rem;flex-direction:column;align-items:stretch;gap:.3rem">
+      <input id="requirement-statement" placeholder="WHEN ..., THE SYSTEM SHALL ...">
+      <textarea id="requirement-criteria" rows="2" placeholder="acceptance criterion (one per line)" style="font-family:var(--mono);font-size:.8rem"></textarea>
+      <button type="submit">Add requirement</button>
+    </form>
+    <div id="requirement-status" class="status-line"></div>
+  `;
+  for (const cb of body.querySelectorAll('.requirement-toggle')) {
+    cb.onchange = () => toggleRequirement(id, parseInt(cb.dataset.index, 10));
+  }
+  for (const cb of body.querySelectorAll('.criterion-toggle')) {
+    cb.onchange = () => toggleAcceptanceCriterion(id, parseInt(cb.dataset.reqIndex, 10), parseInt(cb.dataset.criterionIndex, 10));
+  }
+  document.getElementById('requirement-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const status = document.getElementById('requirement-status');
+    const statement = document.getElementById('requirement-statement').value.trim();
+    const acceptance_criteria = document.getElementById('requirement-criteria').value.split('\n').map(s => s.trim()).filter(Boolean);
+    if (!statement) { status.textContent = 'Statement is required.'; status.className = 'status-line err'; return; }
+    if (!acceptance_criteria.length) { status.textContent = 'At least one acceptance criterion is required.'; status.className = 'status-line err'; return; }
+    try {
+      await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ statement, acceptance_criteria })
+      });
+      await selectRun(id);
+    } catch (err) {
+      status.textContent = err.message; status.className = 'status-line err';
+    }
+  });
+}
+
+async function toggleRequirement(id, index) {
+  try {
+    await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements/${index}/toggle`, { method: 'POST' });
+    await selectRun(id);
+  } catch (e) {
+    const status = document.getElementById('requirement-status');
+    if (status) { status.textContent = e.message; status.className = 'status-line err'; }
+  }
+}
+
+async function toggleAcceptanceCriterion(id, reqIndex, criterionIndex) {
+  try {
+    await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements/${reqIndex}/criteria/${criterionIndex}/toggle`, { method: 'POST' });
+    await selectRun(id);
+  } catch (e) {
+    const status = document.getElementById('requirement-status');
+    if (status) { status.textContent = e.message; status.className = 'status-line err'; }
+  }
+}
+
 // Real code access -- operator feedback: "ich möchte Zugang zu aktuellem Code,
 // und falls möglich Zugang zu einem Preview (der letzten abgeschlossenen
 // Iteration)." devsystem-web itself never infers a repo (project-agnostic, #382)
@@ -2058,6 +2229,16 @@ function renderNewIterationPanel(id, data) {
     <textarea id="it-feedback" placeholder="Real, honest account of what happened this iteration…"></textarea>
     <label><input type="checkbox" id="it-succeeded" checked style="width:auto"> succeeded</label>
 
+    ${(data.state.requirements || []).length ? `
+    <label style="margin-top:1rem">Addresses (real traceability -- #47 follow-up slice; leave all unchecked if this iteration doesn't speak to a specific requirement)</label>
+    <div id="it-requirements" style="display:flex;flex-direction:column;gap:.3rem;margin-top:.2rem">
+      ${data.state.requirements.map((r, i) => `
+        <label class="backlog-item" style="font-size:.8rem">
+          <input type="checkbox" class="it-requirement-cb" value="${i}" style="width:auto">
+          <span>${escapeHtml(truncate(r.statement, 90))}</span>
+        </label>`).join('')}
+    </div>` : ''}
+
     <label style="margin-top:1rem"><input type="checkbox" id="it-has-proposal" style="width:auto">
       Propose a new stage (the pipeline's self-optimization mechanic -- this actually grows the
       live spec, the same way a role-filler's own proposal would)</label>
@@ -2118,12 +2299,21 @@ function setSelectedStage(stageId) {
 
 function renderHistoryPanel(data) {
   const body = document.getElementById('body-history');
+  const requirements = data.state.requirements || [];
+  // Real traceability (#47 follow-up slice): which requirement(s) this
+  // iteration itself claimed to address -- the role-filler's own real
+  // assertion (requirement_indices on the persisted IterationRecord), not
+  // automatically re-verified here; just honestly surfaced.
+  const requirementRefsHtml = (indices) => (indices || []).length
+    ? `<div class="lede" style="font-size:.72rem;margin-top:.2rem">addresses: ${indices.map(i => escapeHtml(requirements[i] ? truncate(requirements[i].statement, 60) : `requirement #${i} (removed)`)).join('; ')}</div>`
+    : '';
   const history = [...data.state.history].reverse().map(h => `
     <div class="iter">
       <div class="head"><span>iteration ${h.iteration} · ${h.stage}</span>
         <span class="${h.succeeded ? 'ok' : 'fail'}">${h.succeeded ? 'ok' : 'FAILED'}</span></div>
       <div>${escapeHtml(h.feedback)}</div>
       ${renderProposals(h.proposals)}
+      ${requirementRefsHtml(h.requirement_indices)}
     </div>`).join('') || '<span class="lede">No iterations yet.</span>';
   body.innerHTML = `<div class="history">${history}</div>`;
 }
@@ -2222,12 +2412,14 @@ async function submitIteration(id) {
     });
   }
 
+  const requirement_indices = Array.from(document.querySelectorAll('.it-requirement-cb:checked')).map(cb => parseInt(cb.value, 10));
+
   status.textContent = 'Submitting…'; status.className = 'status-line';
   try {
     const result = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/iterate`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ stage, feedback, succeeded, proposals })
+      body: JSON.stringify({ stage, feedback, succeeded, proposals, requirement_indices })
     });
     let text, cls, showCheckin = false;
     if (result.outcome === 'CheckinDue') {
@@ -2289,7 +2481,15 @@ async function viewCheckin(id) {
     const data = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/checkin`);
     view.innerHTML = `<pre class="checkin">${escapeHtml(data.markdown)}</pre>`;
   } catch (e) {
-    view.innerHTML = `<span class="status-line err">${e.message}</span>`;
+    // "no iteration history yet" is an honest, expected 404 for a fresh run
+    // (see checkin_run's own doc comment) -- not a real failure, so it
+    // shouldn't read as one. Any other message (network failure, a real
+    // server error) still shows as a genuine error, unchanged.
+    if (e.message === 'no iteration history yet') {
+      view.innerHTML = '<span class="lede">No check-in yet -- this run hasn\'t completed an iteration.</span>';
+    } else {
+      view.innerHTML = `<span class="status-line err">${e.message}</span>`;
+    }
   }
 }
 
@@ -2691,6 +2891,18 @@ async function askAssistant(instruction) {
     if (pending) pending.remove();
     appendAssistantEntry('assistant', data.response || '(empty response)', data.usage);
     showPromptStatus({ ok: true, message: 'devsystem.assistant replied' });
+    // Real gap found+fixed 2026-08-05: the assistant can take real, direct
+    // action (add_milestone, toggle_requirement, propose_stage, set_repo_url,
+    // create_run, ...) but this handler only ever appended its confirmation
+    // TEXT to the chat -- the actual panels (and the Runs list, for
+    // create_run) stayed stale until something else happened to trigger a
+    // refresh. Directly undercuts the operator's own instruction: "Mehr tun,
+    // weniger reden... den Benutzer dadurch führen" -- the panels are
+    // supposed to BE the explanation, which only works if they're current.
+    // Same run id (not a real navigation), so this doesn't reset the
+    // transcript or lose scroll position -- selectRun() only does that when
+    // currentRun actually changes.
+    await selectRun(currentRun);
   } catch (e) {
     if (pending) pending.remove();
     appendAssistantEntry('error', e.message);

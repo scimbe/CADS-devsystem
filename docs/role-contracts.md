@@ -63,12 +63,17 @@ agent's context, no literature list leaking into the coding agent's.
 | remember | `devsystem.remember` | `remember` |
 | improve | `devsystem.improve` | `improve` |
 
-As of the `webconference-android` run (see `runs/webconference-android/` and
-the README's status section), `implement`/`test`/`verify`/`review`/`improve`
-have all had a real iteration recorded; `plan`'s gate (`ecc-plan-canvas`) is
-verified and reused for that same run's check-ins. `remember` has its
-envelope-writing mechanism live (every iteration appends to `memory.jsonl`)
-but has not yet run as its *own* stage the way the others have.
-`android_native_bridge` (a stage this run itself proposed, not one of the
-original seven) is live in the spec but stalled pending a human decision —
-see `pipeline/src/improve.rs`'s `stalled_stages()`.
+`plan`'s gate (`ecc-plan-canvas`) is verified and real, reused across every
+run's check-ins. `remember` has its envelope-writing mechanism live (every
+iteration appends to `memory.jsonl`, including real per-iteration
+requirement-traceability lines when an iteration claims to address one —
+see `pipeline/src/envelope.rs`) but has not yet run as its *own* stage the
+way the others have. Which of `implement`/`test`/`verify`/`review`/`improve`
+have real recorded iterations is genuinely per-run, not fixed — see a
+given run's own state via the GUI or `GET /api/runs/{id}` rather than
+assuming from this doc (`runs/webconference-android/`, this project's own
+flagship run, was reset by the operator on 2026-08-04 for a fresh
+setup-flow re-test; `android_native_bridge` is currently a real, queued
+stage *proposal* there, not live in the spec — see the README's Status
+section for its current, real state, not this doc, which would otherwise
+drift stale exactly like this paragraph itself just did).

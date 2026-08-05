@@ -184,6 +184,15 @@ pub struct IterationRecord {
     pub feedback: String,
     pub proposals: Vec<StageProposal>,
     pub succeeded: bool,
+    /// Real requirement traceability (2026-08-04 operator ask, first slice shipped
+    /// as `runner::Requirement` -- this is the deferred follow-up): indices into
+    /// `RunState::requirements` this iteration claims to actually address. A
+    /// role-filler's own self-reported assertion, not automatically verified --
+    /// same honesty model as `feedback` itself. `#[serde(default)]` so every
+    /// pre-existing `IterationRecord`/`state.json` history entry (none claimed
+    /// any yet) still deserializes.
+    #[serde(default)]
+    pub requirement_indices: Vec<usize>,
 }
 
 /// True when this iteration must pause for a human check-in before continuing --
@@ -334,6 +343,7 @@ mod tests {
             feedback: "ok".into(),
             proposals: vec![],
             succeeded: true,
+            requirement_indices: Vec::new(),
         };
         assert!(!should_checkin(&rec(1), &criteria));
         assert!(!should_checkin(&rec(4), &criteria));
