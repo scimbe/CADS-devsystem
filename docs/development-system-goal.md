@@ -377,6 +377,14 @@ what's being discarded (`CADS-devsystem@645a88d`). Verified live via a real Play
 just curl: the real dialog names the exact stage, cancelling genuinely preserves the proposal,
 accepting genuinely discards it.
 
+**A second real DAU-lens finding, same day, same sweep**: removing an indexed RAG document had the
+identical unconfirmed-permanent-delete shape -- arguably worse, since an uploaded PDF/DOCX/image's
+original bytes aren't kept anywhere in this index at all, so re-adding it after an accidental click
+means finding and re-uploading the real file again, not a quick undo. Fixed the same way (real
+`confirm()` naming the exact document path) (`CADS-devsystem@8dc5f49`). Verified live via a real
+Playwright browser: added a real manual document, the dialog names the exact file, cancel preserves
+it, accept removes it.
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
