@@ -85,11 +85,15 @@ design. Landed so far:
   APK, a real UniFFI + `cargo-ndk` native bridge with real Noise_IK
   public-key generation wired into `MainActivity`, and a real GitHub Actions
   CI workflow with several consecutive green runs.
-- 🔓 **Real external capacity, not just a demo**: [CADS-Tunnel#382](https://github.com/scimbe/CADS-Tunnel/issues/382)'s
+- 🔓 **The auction mechanism genuinely works end to end, self-tested**: [CADS-Tunnel#382](https://github.com/scimbe/CADS-Tunnel/issues/382)'s
   onboarding thread ([CADS-Tunnel#388](https://github.com/scimbe/CADS-Tunnel/issues/388))
-  has real external parties registered and bidding on this run's roles with
-  real signed offers — the auction mechanism is genuinely live, not just
-  internally exercised.
+  has real Keycloak accounts, real ed25519-signed `CapacityOffer`s, and real
+  HTTP calls against the live deployment bidding on this run's roles —
+  correction, 2026-08-05: those identities (`labor-setup.com`, `bob-1`, and
+  8 others) are operator-created test personas exercising the mechanism, not
+  independent third parties. Earlier wording here overstated this as
+  external market validation; it's real end-to-end verification of the
+  auction primitives, not real outside demand.
 - ⏸ **`runs/webconference-android/`'s spec is currently plan-only on
   purpose**: reset by the operator for a fresh re-test of the whole setup
   flow. A real, already-verified stage proposal to re-add
