@@ -438,9 +438,27 @@ genuinely flips it to "governed".
    process (not just the unit suite): a real `/ask` call asking to toggle one specific criterion
    made the LLM correctly choose the new `toggle_acceptance_criterion` action, which dispatched to
    the real endpoint and actually flipped `verified_criteria[0]` from `true` to `false` on a live
-   run. Still open: this closes one specific action, not the general gap -- most panel values (the
-   Backlog panel's items, `RunState.repo_url` beyond the one existing `set_repo_url`, custom-panel
-   contents) still have no assistant-editable path at all.
+   run. **Self-correction, 2026-08-05**: this entry previously claimed "the Backlog panel's items
+   ... still have no assistant-editable path at all" -- checked directly against the actual `Action`
+   enum before writing that, it was wrong. `AddBacklogItem`/`ToggleBacklogItem` already existed
+   (`CADS-devsystem@920f66e` and earlier) and work end to end -- re-verified live just now via a
+   real `/ask` call ("Add a real backlog item...") that dispatched correctly and actually appended
+   to `state.backlog`. Corrected here rather than left stale. `RunState.repo_url` is also already
+   fully covered by `set_repo_url` -- not a real gap either, just imprecise phrasing.
+
+   The one genuinely still-open piece: **custom-panel removal/editing**. Checked directly: the
+   assistant can `propose_custom_panel` (a new one, gated behind human approval) but has no action
+   at all for removing or editing an EXISTING one, even though a human can
+   (`POST /api/runs/{id}/panels/{panel_id}/remove`, now with its own real confirmation dialog,
+   `CADS-devsystem@645a88d`'s sibling fix). Deliberately not built this cycle: unlike
+   `ToggleAcceptanceCriterion` (safe, reversible, additive-in-effect), removing a panel is
+   destructive and irreversible the same way a human's own confirm dialog exists to guard against
+   -- giving the assistant that power as a *direct*, immediately-applied action (this enum's
+   established pattern for safe/reversible actions) would be the wrong trust model, matching the
+   same reasoning `ProposeCustomPanel`'s own doc comment already gives for why ADDING one is gated
+   behind approval, not immediate. The honest next slice isn't "add a `RemoveCustomPanel` action" --
+   it's designing a real pending-removal-proposal mechanism first, sized as its own increment, not
+   assumed away.
 5. ~~**An agents/tokens/costs overview**~~ — **done** (`CADS-devsystem@19c03ef` backend,
    `705b30e` GUI): `RunState.assistant_usage` persists real running totals (call count,
    input/output/cache tokens, `total_cost_usd`) on every real `/ask` call, and a real Assistant
