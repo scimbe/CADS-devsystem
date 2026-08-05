@@ -703,7 +703,7 @@ function renderCustomPanelsManager(id, data) {
           <pre class="panel-proposal-html">${escapeHtml(truncate(p.html, 300))}</pre>
           <div style="margin-top:.4rem;display:flex;gap:.4rem">
             <button type="button" class="panel-proposal-approve-btn" data-id="${p.id}">Approve &amp; install</button>
-            <button type="button" class="secondary panel-proposal-reject-btn" data-id="${p.id}">Reject</button>
+            <button type="button" class="secondary panel-proposal-reject-btn" data-id="${p.id}" data-title="${escapeHtml(p.title)}">Reject</button>
           </div>
         </div>`).join('')
     : '';
@@ -746,6 +746,13 @@ function renderCustomPanelsManager(id, data) {
   }
   for (const btn of body.querySelectorAll('.panel-proposal-reject-btn')) {
     btn.onclick = async () => {
+      // Real DAU-lens gap (#382 goal doc §7): rejecting a proposal is exactly
+      // as permanent as removing a custom panel (the backend's own doc
+      // comment on reject_panel_proposal: "there's nothing to undo beyond
+      // removing it from the pending list") -- but only panel removal asked
+      // for confirmation. A careless click here silently discards real,
+      // possibly valuable assistant work with zero warning.
+      if (!confirm(`Reject the proposed panel "${btn.dataset.title}"? This discards it for real -- there's no undo.`)) return;
       try {
         await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/panels/proposals/${encodeURIComponent(btn.dataset.id)}/reject`, { method: 'POST' });
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
@@ -1735,7 +1742,7 @@ async function renderArchitecturePanel(id, data) {
           <div class="lede" style="font-size:.75rem;margin-top:.3rem">${escapeHtml(p.proposal.rationale)}</div>
           <div style="margin-top:.4rem;display:flex;gap:.4rem">
             <button type="button" class="panel-proposal-approve-btn" data-id="${p.id}">Approve &amp; add role</button>
-            <button type="button" class="secondary stage-proposal-reject-btn" data-id="${p.id}">Reject</button>
+            <button type="button" class="secondary stage-proposal-reject-btn" data-id="${p.id}" data-title="${escapeHtml(p.proposal.stage_id)}">Reject</button>
           </div>
         </div>`).join('')
     : '';
@@ -1753,7 +1760,7 @@ async function renderArchitecturePanel(id, data) {
           <div class="lede" style="font-size:.75rem;margin-top:.3rem;white-space:pre-wrap">${escapeHtml(p.body)}</div>
           <div style="margin-top:.4rem;display:flex;gap:.4rem">
             <button type="button" class="issue-proposal-approve-btn" data-id="${p.id}">Approve &amp; post to GitHub</button>
-            <button type="button" class="secondary issue-proposal-reject-btn" data-id="${p.id}">Reject</button>
+            <button type="button" class="secondary issue-proposal-reject-btn" data-id="${p.id}" data-title="${escapeHtml(p.title)}">Reject</button>
           </div>
         </div>`).join('')
     : '';
@@ -1778,6 +1785,12 @@ async function renderArchitecturePanel(id, data) {
   }
   for (const btn of body.querySelectorAll('.stage-proposal-reject-btn')) {
     btn.onclick = async () => {
+      // Real DAU-lens gap (#382 goal doc §7), same class as the custom-panel
+      // and un-verify confirmations: rejecting a stage proposal permanently
+      // discards it (the live spec was never touched, so there's nothing to
+      // undo beyond the pending entry itself) -- a real, valuable auction-
+      // able role the assistant found could be lost to one careless click.
+      if (!confirm(`Reject the proposed stage "${btn.dataset.title}"? This discards it for real -- there's no undo.`)) return;
       try {
         await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/stages/proposals/${encodeURIComponent(btn.dataset.id)}/reject`, { method: 'POST' });
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
@@ -1809,6 +1822,10 @@ async function renderArchitecturePanel(id, data) {
   }
   for (const btn of body.querySelectorAll('.issue-proposal-reject-btn')) {
     btn.onclick = async () => {
+      // Real DAU-lens gap (#382 goal doc §7), same class as the other two
+      // reject confirmations: this discards a real, drafted GitHub issue
+      // (the assistant's own self-healing find) permanently, with no undo.
+      if (!confirm(`Reject the drafted issue "${btn.dataset.title}"? This discards it for real -- there's no undo.`)) return;
       try {
         await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/issues/proposals/${encodeURIComponent(btn.dataset.id)}/reject`, { method: 'POST' });
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
