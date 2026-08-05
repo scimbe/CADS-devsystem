@@ -361,9 +361,16 @@ named here rather than papered over.
    or any of the six proposal approve/reject handlers updated the run's data, so the badge would
    either never show on first opening a run or go stale after approving. Verified live both
    directions (badge appears on a real pending proposal, disappears on a real approve) via
-   screenshots against a scratch run. Still open: this is one signal (pending approvals) on one
-   panel (Pipeline) -- the rest of §7.1's ask (foreground "add your first requirement" on an empty
-   run, hide panels genuinely irrelevant to the current stage) remains unaddressed.
+   screenshots against a scratch run.
+   **Second slice done** (`CADS-devsystem@29f3ad4`): a genuinely empty run's Requirements panel now
+   shows an explicit first-action callout ("👋 Start here...") instead of a plain, easy-to-skim-past
+   "No requirements yet." line, and auto-focuses the statement field -- exactly the concrete example
+   §7.1 itself names. Guarded against the real regression this kind of fix invites: only steals focus
+   when the panel is actually visible, and `requirements` isn't in `REFRESHABLE_PANELS`, so a
+   periodic auto-refresh can never re-steal focus from wherever the user is actually working.
+   Verified live both ways: a fresh run's statement input is genuinely focused (confirmed via
+   `document.activeElement`), an existing run with requirements shows no banner. Still open: hiding
+   panels genuinely irrelevant to the current stage (the rest of §7.1's ask) remains unaddressed.
 4. **Assistant-editable panel values generally** (§7.2) — beyond the current fixed `Action` enum.
    **First slice done** (`CADS-devsystem@920f66e`): a human could already toggle one acceptance
    criterion independently of the whole requirement (`toggle_acceptance_criterion_handler`, the
