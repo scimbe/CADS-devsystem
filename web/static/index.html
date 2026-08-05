@@ -29,6 +29,8 @@
  .panel-chip{font-family:var(--mono);font-size:.7rem;background:transparent;border:1px solid var(--border);
              color:var(--muted);border-radius:5px;padding:.2rem .55rem;cursor:pointer;font-weight:400}
  .panel-chip.active{border-color:var(--accent2);color:var(--accent2)}
+ .panel-chip-badge{display:inline-block;margin-left:.35rem;background:var(--danger);color:#fff;
+             border-radius:8px;padding:0 .4rem;font-size:.62rem;font-weight:600;line-height:1.3}
  .topbar-links{font-size:.72rem;color:var(--muted);white-space:nowrap}
  .topbar-links a{color:var(--accent2)}
  .whoami{font-family:var(--mono);font-size:.72rem;color:var(--muted);white-space:nowrap;
@@ -730,6 +732,7 @@ function renderCustomPanelsManager(id, data) {
         await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/panels/proposals/${encodeURIComponent(btn.dataset.id)}/approve`, { method: 'POST' });
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
         if (id === currentRun) currentRunData = fresh;
+        if (id === currentRun) renderPanelToggleBar();
         renderCustomPanelsManager(id, fresh);
         renderCustomPanels(id, fresh);
         await refreshRunsList();
@@ -744,6 +747,7 @@ function renderCustomPanelsManager(id, data) {
         await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/panels/proposals/${encodeURIComponent(btn.dataset.id)}/reject`, { method: 'POST' });
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
         if (id === currentRun) currentRunData = fresh;
+        if (id === currentRun) renderPanelToggleBar();
         renderCustomPanelsManager(id, fresh);
         await refreshRunsList();
       } catch (err) {
@@ -958,11 +962,30 @@ function wireResize(win, id) {
   });
 }
 
+// Real gap (#382 goal doc §7.1, "context-relevant panels"): the toggle bar
+// gave zero hint about WHICH hidden panel actually needs a look right now --
+// a run with a pending stage/panel/issue proposal sitting unapproved looked
+// identical to one with nothing outstanding, unless you'd already guessed to
+// open Pipeline. First real slice: badge the Pipeline chip with a real
+// pending-approval count, the same three real queues that panel itself
+// already renders (state.pending_stage_proposals/pending_panel_proposals/
+// pending_issue_proposals) -- not a new signal, just surfaced where a user
+// browsing the toggle bar can actually see it.
+function pendingApprovalCountFor(id) {
+  if (id !== 'architecture' || !currentRunData || !currentRunData.state) return 0;
+  const s = currentRunData.state;
+  return (s.pending_stage_proposals || []).length
+    + (s.pending_panel_proposals || []).length
+    + (s.pending_issue_proposals || []).length;
+}
+
 function renderPanelToggleBar() {
   const bar = document.getElementById('panel-toggles');
   bar.innerHTML = Object.keys(PANEL_DEFAULTS).map(id => {
     const visible = panelRect(id).visible;
-    return `<button type="button" class="panel-chip${visible ? ' active' : ''}" data-panel="${id}">${PANEL_DEFAULTS[id].title}</button>`;
+    const pending = pendingApprovalCountFor(id);
+    const badge = pending ? `<span class="panel-chip-badge">${pending}</span>` : '';
+    return `<button type="button" class="panel-chip${visible ? ' active' : ''}" data-panel="${id}">${PANEL_DEFAULTS[id].title}${badge}</button>`;
   }).join('');
   for (const btn of bar.querySelectorAll('.panel-chip')) {
     btn.onclick = () => {
@@ -1197,6 +1220,7 @@ async function selectRun(id) {
     renderCustomPanels(id, data);
     renderFlowPanel(id, data);
     renderUsagePanel(data);
+    renderPanelToggleBar();
   } catch (e) {
     for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow', 'usage']) {
       document.getElementById(`body-${panelId}`).innerHTML = `<span class="status-line err">${e.message}</span>`;
@@ -1740,6 +1764,7 @@ async function renderArchitecturePanel(id, data) {
         await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/stages/proposals/${encodeURIComponent(btn.dataset.id)}/approve`, { method: 'POST' });
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
         if (id === currentRun) currentRunData = fresh;
+        if (id === currentRun) renderPanelToggleBar();
         renderArchitecturePanel(id, fresh);
         renderRolesPanel(id, fresh);
         await refreshRunsList();
@@ -1754,6 +1779,7 @@ async function renderArchitecturePanel(id, data) {
         await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/stages/proposals/${encodeURIComponent(btn.dataset.id)}/reject`, { method: 'POST' });
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
         if (id === currentRun) currentRunData = fresh;
+        if (id === currentRun) renderPanelToggleBar();
         renderArchitecturePanel(id, fresh);
         await refreshRunsList();
       } catch (err) {
@@ -1770,6 +1796,7 @@ async function renderArchitecturePanel(id, data) {
         }
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
         if (id === currentRun) currentRunData = fresh;
+        if (id === currentRun) renderPanelToggleBar();
         renderArchitecturePanel(id, fresh);
         await refreshRunsList();
       } catch (err) {
@@ -1783,6 +1810,7 @@ async function renderArchitecturePanel(id, data) {
         await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/issues/proposals/${encodeURIComponent(btn.dataset.id)}/reject`, { method: 'POST' });
         const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
         if (id === currentRun) currentRunData = fresh;
+        if (id === currentRun) renderPanelToggleBar();
         renderArchitecturePanel(id, fresh);
         await refreshRunsList();
       } catch (err) {
