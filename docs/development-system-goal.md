@@ -237,6 +237,26 @@ after the fact would be its own small dishonesty. This makes three real, same-da
 identical underlying cause (overlapping deploys): a stale binary, a false "confirmed" diagnostic
 claim, and now duplicated application data -- worth naming as a pattern, not three unrelated bugs.
 
+**The actual root cause of that whole pattern, found and fixed the same day**: `web/Dockerfile`'s
+BuildKit cache mount targets `/work/target`, but neither of its two `cargo build --manifest-path`
+invocations (`web/Cargo.toml`, `pipeline/Cargo.toml`) writes there by default -- each defaults to
+`<manifest-dir>/target` (`/work/web/target`, `/work/pipeline/target`), confirmed directly against
+the `cp` commands that have always read from exactly those paths, never `/work/target`. The mount
+was caching an empty, unused directory -- **every single deploy this whole session recompiled the
+full dependency tree from scratch**, regardless of how small the source change, which is the real
+reason builds kept taking 5-15+ minutes and why the overlapping-deploy race window above was wide
+enough to matter at all. Fixed with `ENV CARGO_TARGET_DIR=/work/target`, redirecting both cargo
+invocations' real output to the directory the mount actually is (`CADS-devsystem@afaf021`). This is
+the highest-leverage infrastructure fix of the whole day's incident cluster: every other fix (the
+`flock`, the idempotency guard) treats a symptom of slow, overlap-prone deploys; this one shrinks
+the window itself.
+
+**Measured, not assumed**: a genuinely cold build (the cache mount empty for the first time since
+this fix) took 7m1s. An immediate rebuild with zero source changes: 0.9s (Docker's own layer cache).
+A rebuild after touching one line of `web/src/main.rs` -- forcing Docker's own layer cache to
+invalidate, isolating what the BuildKit cache mount specifically contributes: **45s, roughly 9x
+faster than cold**, recompiling only what actually changed instead of the full dependency tree.
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
