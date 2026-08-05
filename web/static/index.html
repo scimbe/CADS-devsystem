@@ -2695,14 +2695,21 @@ async function viewMemory(id) {
     }
     view.innerHTML = `<div class="memory-list">${entries.map(renderMemoryEntry).join('')}</div>`;
     for (const btn of view.querySelectorAll('.govern-entry')) {
-      btn.onclick = () => governMemoryEntry(id, parseInt(btn.dataset.index, 10));
+      btn.onclick = () => governMemoryEntry(id, parseInt(btn.dataset.index, 10), btn.dataset.stage, btn.dataset.role);
     }
   } catch (e) {
     view.innerHTML = `<span class="status-line err">${e.message}</span>`;
   }
 }
 
-async function governMemoryEntry(id, index) {
+async function governMemoryEntry(id, index, stage, role) {
+  // Real DAU-lens gap (#382 goal doc §7), same class as reject/RAG-remove:
+  // govern_memory_entry's own doc comment confirms this is one-directional --
+  // Trust::Governed is a real, permanent "a human reviewed this" attestation
+  // with no un-govern path anywhere in the codebase. Different in kind from
+  // the other fixes (no data is lost, only the trust flag flips), but the
+  // same permanence-with-no-undo shape still deserves the same honesty.
+  if (!confirm(`Mark this ${stage || 'memory'} entry (role ${role || '?'}) as human-reviewed? This is a real, permanent attestation -- there's no way to un-mark it.`)) return;
   try {
     await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/memory/${index}/govern`, { method: 'POST' });
     await viewMemory(id);
@@ -2718,7 +2725,7 @@ function renderMemoryEntry(e, index) {
     ? `<div style="margin-top:.3rem;color:var(--muted)">constraints: <ul>${e.envelope.constraints.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul></div>`
     : '';
   const governBtn = e.trust === 'unreviewed'
-    ? `<button type="button" class="secondary govern-entry" data-index="${index}" style="padding:.1rem .5rem;font-size:.68rem">mark reviewed</button>`
+    ? `<button type="button" class="secondary govern-entry" data-index="${index}" data-stage="${escapeHtml(e.stage)}" data-role="${escapeHtml(e.role)}" style="padding:.1rem .5rem;font-size:.68rem">mark reviewed</button>`
     : '';
   return `<div class="mem-entry">
     <div class="head">
