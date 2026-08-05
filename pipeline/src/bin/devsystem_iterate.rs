@@ -12,11 +12,20 @@
 //! submit real work back -- `devsystem_offer` already lets an external agent bid
 //! remotely, but the only way to submit an actual iteration result was always this
 //! binary's local mode, which requires filesystem access to `runs/<run_id>/` on
-//! *this* host. `POST /api/runs/{id}/iterate` (devsystem-web) already exists, already
-//! runs the exact same `run_iteration` core logic, and already accepts headless
-//! callers with no gate auth (verified directly against the live deployment before
-//! writing this, not assumed) -- what was actually missing was just this CLI
-//! companion, not a new server endpoint.
+//! *this* host. `POST /api/runs/{id}/iterate` (devsystem-web) already exists and
+//! already runs the exact same `run_iteration` core logic -- what was actually
+//! missing was just this CLI companion, not a new server endpoint.
+//!
+//! **Gate auth (issue #7 / CADS-Tunnel#382-follow):** a public deployment fronted by
+//! CADS-Tunnel's login gate (`require_login` on) 302s every `/api/*` call, including
+//! this one -- a browser-oriented Keycloak SSO redirect a headless caller can never
+//! complete. CADS-Tunnel's gate now also accepts a real Keycloak `client_credentials`
+//! bearer token (task #42's M2M service accounts) as an alternative to the cookie
+//! session, checked against the same tunnel-owner-controlled allow-list. Set
+//! `DEVSYSTEM_OIDC_TOKEN_URL` + `DEVSYSTEM_OIDC_CLIENT_ID` + `DEVSYSTEM_OIDC_CLIENT_SECRET`
+//! to have `--remote` fetch a fresh token and send it as `Authorization: Bearer`; all
+//! three unset means "no auth header," matching this CLI's original behavior against
+//! an ungated deployment.
 
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration};
 use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, RunOutcome};
@@ -98,7 +107,61 @@ fn parse_remote_response(run_id: &str, body: &str) -> Result<RemoteOutcome, Stri
     })
 }
 
-fn run_remote(api_base: &str, run_id: &str, record_path: &str) -> std::process::ExitCode {
+/// Real `client_credentials` token fetch against a Keycloak (or any OIDC-compliant)
+/// token endpoint -- the same grant type task #42's M2M service accounts issue.
+/// Returns the raw `access_token`; the caller decides what to do with it, so this
+/// stays testable against a plain HTTP mock, not a real Keycloak.
+fn fetch_client_credentials_token(token_url: &str, client_id: &str, client_secret: &str) -> Result<String, String> {
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .post(token_url)
+        .form(&[("grant_type", "client_credentials"), ("client_id", client_id), ("client_secret", client_secret)])
+        .send()
+        .map_err(|e| format!("could not reach token endpoint {token_url}: {e}"))?;
+    let status = resp.status();
+    let body = resp.text().unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("token endpoint {token_url} returned HTTP {status}: {body}"));
+    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("token endpoint response wasn't valid JSON: {e} (raw: {body})"))?;
+    parsed
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| format!("token endpoint response has no string \"access_token\" field (raw: {body})"))
+}
+
+/// The three env vars that, together, opt `--remote` into sending a real M2M bearer
+/// token (issue #7 / CADS-Tunnel#382-follow). All three unset -> `None`, meaning "no
+/// auth header" -- this CLI's original behavior against an ungated deployment. Any
+/// subset set but not all three is a real misconfiguration, not silently ignored.
+/// Pulled apart from env-reading so the tri-state logic is testable without mutating
+/// process-global env vars (which would race across parallel `cargo test` threads).
+fn bearer_token_from_parts(
+    token_url: Option<String>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+) -> Result<Option<String>, String> {
+    match (token_url, client_id, client_secret) {
+        (None, None, None) => Ok(None),
+        (Some(url), Some(id), Some(secret)) => fetch_client_credentials_token(&url, &id, &secret).map(Some),
+        _ => Err(
+            "DEVSYSTEM_OIDC_TOKEN_URL/DEVSYSTEM_OIDC_CLIENT_ID/DEVSYSTEM_OIDC_CLIENT_SECRET must be set together or not at all"
+                .to_string(),
+        ),
+    }
+}
+
+fn bearer_token_from_env() -> Result<Option<String>, String> {
+    bearer_token_from_parts(
+        std::env::var("DEVSYSTEM_OIDC_TOKEN_URL").ok(),
+        std::env::var("DEVSYSTEM_OIDC_CLIENT_ID").ok(),
+        std::env::var("DEVSYSTEM_OIDC_CLIENT_SECRET").ok(),
+    )
+}
+
+fn run_remote(api_base: &str, run_id: &str, record_path: &str, bearer: Option<String>) -> std::process::ExitCode {
     let record: IterationRecord =
         serde_json::from_str(&fs::read_to_string(record_path).expect("read record.json")).expect("valid record.json");
     if record.run_id != run_id {
@@ -122,7 +185,11 @@ fn run_remote(api_base: &str, run_id: &str, record_path: &str) -> std::process::
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap_or_else(|_| reqwest::blocking::Client::new());
-    let resp = match client.post(&url).json(&remote_request_body(&record)).send() {
+    let mut req = client.post(&url).json(&remote_request_body(&record));
+    if let Some(token) = &bearer {
+        req = req.bearer_auth(token);
+    }
+    let resp = match req.send() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("could not reach {url}: {e}");
@@ -132,7 +199,12 @@ fn run_remote(api_base: &str, run_id: &str, record_path: &str) -> std::process::
     let status = resp.status();
     if status.is_redirection() {
         let location = resp.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or("(no Location header)").to_string();
-        eprintln!("remote iterate failed: HTTP {status} redirect to {location} -- this deployment currently requires gate login for this endpoint, no offer/iteration was submitted");
+        let hint = if bearer.is_some() {
+            "an M2M bearer token was sent but the gate still redirected -- check the token's subject is on this hostname's login-allowlist"
+        } else {
+            "this deployment currently requires gate login for this endpoint -- set DEVSYSTEM_OIDC_TOKEN_URL/CLIENT_ID/CLIENT_SECRET for M2M bearer auth"
+        };
+        eprintln!("remote iterate failed: HTTP {status} redirect to {location} -- {hint}, no offer/iteration was submitted");
         return std::process::ExitCode::FAILURE;
     }
     let body = resp.text().unwrap_or_default();
@@ -170,7 +242,14 @@ fn main() -> std::process::ExitCode {
         let api_base = args.next().expect("usage: devsystem_iterate --remote <api-base-url> <run_id> <record.json>");
         let run_id = args.next().expect("usage: devsystem_iterate --remote <api-base-url> <run_id> <record.json>");
         let record_path = args.next().expect("usage: devsystem_iterate --remote <api-base-url> <run_id> <record.json>");
-        return run_remote(&api_base, &run_id, &record_path);
+        let bearer = match bearer_token_from_env() {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("could not obtain M2M bearer token: {e}");
+                return std::process::ExitCode::FAILURE;
+            }
+        };
+        return run_remote(&api_base, &run_id, &record_path, bearer);
     }
 
     let run_id = first;
@@ -259,10 +338,12 @@ mod tests {
     }
 
     /// A tiny real HTTP server standing in for devsystem-web -- proves the exact
-    /// method/path/body devsystem_iterate --remote actually sends, not just that
-    /// remote_request_body compiles. Same pattern as devsystem_assistant's own
-    /// apply_action tests.
-    fn spawn_capturing_server(response_body: &'static str) -> (String, std::sync::mpsc::Receiver<(String, String, String)>) {
+    /// method/path/body/Authorization-header devsystem_iterate --remote actually
+    /// sends, not just that remote_request_body compiles. Same pattern as
+    /// devsystem_assistant's own apply_action tests.
+    fn spawn_capturing_server(
+        response_body: &'static str,
+    ) -> (String, std::sync::mpsc::Receiver<(String, String, String, Option<String>)>) {
         let server = tiny_http::Server::http("127.0.0.1:0").expect("bind ephemeral port");
         let addr = format!("http://{}", server.server_addr());
         let (tx, rx) = std::sync::mpsc::channel();
@@ -270,9 +351,14 @@ mod tests {
             if let Ok(mut req) = server.recv() {
                 let method = req.method().to_string();
                 let url = req.url().to_string();
+                let auth = req
+                    .headers()
+                    .iter()
+                    .find(|h| h.field.as_str().as_str().eq_ignore_ascii_case("authorization"))
+                    .map(|h| h.value.as_str().to_string());
                 let mut body = String::new();
                 let _ = std::io::Read::read_to_string(req.as_reader(), &mut body);
-                let _ = tx.send((method, url, body));
+                let _ = tx.send((method, url, body, auth));
                 let _ = req.respond(tiny_http::Response::from_string(response_body).with_status_code(200));
             }
         });
@@ -287,15 +373,16 @@ mod tests {
         let record_path = dir.join("record.json");
         std::fs::write(&record_path, serde_json::to_string(&record("remote-run", "devsystem.plan", true)).unwrap()).unwrap();
 
-        let code = run_remote(&addr, "remote-run", record_path.to_str().unwrap());
+        let code = run_remote(&addr, "remote-run", record_path.to_str().unwrap(), None);
         assert_eq!(code, std::process::ExitCode::SUCCESS);
 
-        let (method, url, body) = rx.recv_timeout(std::time::Duration::from_secs(2)).expect("server must have received a request");
+        let (method, url, body, auth) = rx.recv_timeout(std::time::Duration::from_secs(2)).expect("server must have received a request");
         assert_eq!(method, "POST");
         assert_eq!(url, "/api/runs/remote-run/iterate");
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["stage"], "devsystem.plan");
         assert!(parsed.get("run_id").is_none());
+        assert!(auth.is_none(), "no bearer was passed -- no Authorization header should be sent");
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -308,9 +395,69 @@ mod tests {
         std::fs::write(&record_path, serde_json::to_string(&record("remote-run", "devsystem.plan", true)).unwrap()).unwrap();
 
         // Nothing listening on this port -- a real, reproducible connection failure.
-        let code = run_remote("http://127.0.0.1:1", "remote-run", record_path.to_str().unwrap());
+        let code = run_remote("http://127.0.0.1:1", "remote-run", record_path.to_str().unwrap(), None);
         assert_eq!(code, std::process::ExitCode::FAILURE);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// #7/#382-follow: when a bearer token IS supplied, it must actually reach the
+    /// server as a real `Authorization: Bearer <token>` header -- not just be
+    /// accepted as a parameter and silently dropped.
+    #[test]
+    fn run_remote_sends_a_supplied_bearer_token_as_a_real_authorization_header() {
+        let (addr, rx) = spawn_capturing_server(r#"{"outcome":"Continue","iteration":1,"roles_now":1,"added_stages":[]}"#);
+        let dir = std::env::temp_dir().join(format!("devsystem-iterate-remote-bearer-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let record_path = dir.join("record.json");
+        std::fs::write(&record_path, serde_json::to_string(&record("remote-run", "devsystem.plan", true)).unwrap()).unwrap();
+
+        let code = run_remote(&addr, "remote-run", record_path.to_str().unwrap(), Some("real-m2m-token".to_string()));
+        assert_eq!(code, std::process::ExitCode::SUCCESS);
+
+        let (_, _, _, auth) = rx.recv_timeout(std::time::Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(auth.as_deref(), Some("Bearer real-m2m-token"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn bearer_token_from_parts_with_nothing_set_means_no_auth_header() {
+        assert_eq!(bearer_token_from_parts(None, None, None), Ok(None));
+    }
+
+    #[test]
+    fn bearer_token_from_parts_with_a_partial_set_is_a_real_misconfiguration_error() {
+        let err = bearer_token_from_parts(Some("https://kc/token".to_string()), None, None).unwrap_err();
+        assert!(err.contains("must be set together"));
+        let err = bearer_token_from_parts(None, Some("client-id".to_string()), Some("secret".to_string())).unwrap_err();
+        assert!(err.contains("must be set together"));
+    }
+
+    /// A tiny real HTTP server standing in for Keycloak's token endpoint -- proves
+    /// the real `grant_type=client_credentials` form POST and that the returned
+    /// `access_token` is what gets surfaced, not a fabricated value.
+    fn spawn_token_server(access_token: &'static str) -> String {
+        let server = tiny_http::Server::http("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = format!("http://{}", server.server_addr());
+        std::thread::spawn(move || {
+            if let Ok(mut req) = server.recv() {
+                let mut body = String::new();
+                let _ = std::io::Read::read_to_string(req.as_reader(), &mut body);
+                assert!(body.contains("grant_type=client_credentials"), "must send the real client_credentials grant: {body}");
+                let resp = format!(r#"{{"access_token":"{access_token}","expires_in":300}}"#);
+                let _ = req.respond(tiny_http::Response::from_string(resp).with_status_code(200));
+            }
+        });
+        addr
+    }
+
+    #[test]
+    fn bearer_token_from_parts_with_all_three_fetches_a_real_token_from_the_endpoint() {
+        let addr = spawn_token_server("a-real-fetched-token");
+        let token = bearer_token_from_parts(Some(addr), Some("client-id".to_string()), Some("client-secret".to_string()))
+            .expect("token fetch must succeed")
+            .expect("all three set -> Some(token)");
+        assert_eq!(token, "a-real-fetched-token");
     }
 }
