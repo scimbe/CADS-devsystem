@@ -119,10 +119,20 @@ pub struct Milestone {
 /// this whole requirement is done" and a human ticking off individual
 /// criteria are kept as two independent, explicit signals rather than
 /// silently coupled, since coupling them is a real design choice a human
-/// should make, not one to guess at here. This is deliberately still 100%
-/// human-driven (no LLM judgment of whether a criterion is actually met) --
-/// automatic acceptance-criteria checking by a verify stage remains a real,
-/// separate, still-open question.
+/// should make, not one to guess at here.
+///
+/// `auto_judge` (2026-08-05, operator decision on the open question above):
+/// still human-driven by default -- a requirement starts and stays 100%
+/// human-toggled unless its owner explicitly opts it into LLM judgment via
+/// this flag. Deliberately per-requirement, not a global run/account
+/// setting: the operator's own framing ("should be human, but he can ask for
+/// automode") means opting in is a real, considered choice on a specific
+/// requirement, not a blanket default anyone could silently inherit.
+/// `#[serde(default)]` so every pre-existing requirement loads as
+/// `auto_judge: false` (still fully human-driven) with no migration step.
+/// Setting this flag alone does not itself judge anything -- it only
+/// authorizes devsystem.assistant to do so; the actual judgment logic is a
+/// separate, later increment.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Requirement {
     pub statement: String,
@@ -130,6 +140,8 @@ pub struct Requirement {
     pub verified: bool,
     #[serde(default)]
     pub verified_criteria: Vec<bool>,
+    #[serde(default)]
+    pub auto_judge: bool,
 }
 
 /// Persisted state for one run -- serialized to `runs/<run_id>/state.json` in the
@@ -321,6 +333,16 @@ pub fn toggle_requirement(state: &mut RunState, index: usize) -> Result<(), Stri
     Ok(())
 }
 
+/// Toggles a requirement's `auto_judge` opt-in -- see [`Requirement::auto_judge`]'s
+/// own doc comment. Purely a permission flag; flipping it never itself changes
+/// `verified`/`verified_criteria` -- an owner opting in doesn't retroactively
+/// claim anything is now judged, just that judgment is now allowed to happen.
+pub fn toggle_requirement_auto_judge(state: &mut RunState, index: usize) -> Result<(), String> {
+    let requirement = state.requirements.get_mut(index).ok_or_else(|| format!("no requirement at index {index}"))?;
+    requirement.auto_judge = !requirement.auto_judge;
+    Ok(())
+}
+
 /// Toggles a single acceptance criterion's real, human-set verified state --
 /// see [`Requirement::verified_criteria`]'s own doc comment for why this is a
 /// separate signal from `verified` itself. Grows `verified_criteria` with
@@ -470,6 +492,7 @@ mod tests {
             acceptance_criteria: vec!["message survives an app restart".into(), "UI shows \"sent\" only after local persistence succeeds".into()],
             verified: false,
             verified_criteria: Vec::new(),
+            auto_judge: false,
         });
         toggle_requirement(&mut state, 0).unwrap();
         assert!(state.requirements[0].verified);
@@ -493,6 +516,7 @@ mod tests {
             acceptance_criteria: vec!["criterion A".into(), "criterion B".into(), "criterion C".into()],
             verified: false,
             verified_criteria: Vec::new(),
+            auto_judge: false,
         });
 
         // A pre-existing requirement (persisted before this field existed, or
@@ -520,6 +544,7 @@ mod tests {
             acceptance_criteria: vec!["only one criterion".into()],
             verified: false,
             verified_criteria: Vec::new(),
+            auto_judge: false,
         });
         assert!(toggle_acceptance_criterion(&mut state, 0, 1).is_err());
         assert!(toggle_acceptance_criterion(&mut state, 5, 0).is_err(), "an out-of-range requirement index must also fail loudly");

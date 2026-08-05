@@ -229,6 +229,7 @@ mod tests {
             acceptance_criteria: vec!["message survives an app restart".into()],
             verified: false,
             verified_criteria: Vec::new(),
+            auto_judge: false,
         });
         state.history.push(IterationRecord {
             run_id: "run-req-checkin".into(),

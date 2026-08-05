@@ -2019,6 +2019,10 @@ function renderRequirementsPanel(id, data) {
               </label>`).join('')}
           </div>
           <div class="lede" style="font-size:.7rem;margin-top:.3rem">${addressedBy[i].length ? `addressed by iteration(s) ${addressedBy[i].join(', ')}` : 'not yet addressed by any iteration'}</div>
+          <label class="backlog-item" style="margin-top:.3rem;font-size:.72rem" title="Human by default. Opt in to let devsystem.assistant judge this requirement's acceptance criteria itself.">
+            <input type="checkbox" class="requirement-auto-judge-toggle" data-index="${i}" ${r.auto_judge ? 'checked' : ''}>
+            <span>automode (let the assistant judge this one)</span>
+          </label>
         </div>`;
       }).join('')
     : '<span class="lede">No requirements yet.</span>';
@@ -2038,6 +2042,9 @@ function renderRequirementsPanel(id, data) {
   for (const cb of body.querySelectorAll('.criterion-toggle')) {
     cb.onchange = () => toggleAcceptanceCriterion(id, parseInt(cb.dataset.reqIndex, 10), parseInt(cb.dataset.criterionIndex, 10));
   }
+  for (const cb of body.querySelectorAll('.requirement-auto-judge-toggle')) {
+    cb.onchange = () => toggleRequirementAutoJudge(id, parseInt(cb.dataset.index, 10));
+  }
   document.getElementById('requirement-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const status = document.getElementById('requirement-status');
@@ -2055,6 +2062,16 @@ function renderRequirementsPanel(id, data) {
       status.textContent = err.message; status.className = 'status-line err';
     }
   });
+}
+
+async function toggleRequirementAutoJudge(id, index) {
+  try {
+    await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements/${index}/auto-judge/toggle`, { method: 'POST' });
+    await selectRun(id);
+  } catch (e) {
+    const status = document.getElementById('requirement-status');
+    if (status) { status.textContent = e.message; status.className = 'status-line err'; }
+  }
 }
 
 async function toggleRequirement(id, index) {

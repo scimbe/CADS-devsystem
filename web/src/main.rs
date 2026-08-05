@@ -19,7 +19,8 @@ use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::preflight_annotations;
 use devsystem_pipeline::runner::{
-    load_or_init_run, persist_run, run_iteration, toggle_acceptance_criterion, toggle_milestone, toggle_requirement, BacklogItem, CustomPanel,
+    load_or_init_run, persist_run, run_iteration, toggle_acceptance_criterion, toggle_milestone, toggle_requirement, toggle_requirement_auto_judge,
+    BacklogItem, CustomPanel,
     Milestone, PendingIssueProposal, PendingPanelProposal, PendingStageProposal, Requirement, RoleFillMode, RunOutcome,
 };
 use devsystem_pipeline::{apply_proposal, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal};
@@ -167,6 +168,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/milestones/{index}/toggle", post(toggle_milestone_handler))
         .route("/api/runs/{id}/requirements", post(add_requirement))
         .route("/api/runs/{id}/requirements/{index}/toggle", post(toggle_requirement_handler))
+        .route("/api/runs/{id}/requirements/{index}/auto-judge/toggle", post(toggle_requirement_auto_judge_handler))
         .route("/api/runs/{id}/requirements/{index}/criteria/{criterion_index}/toggle", post(toggle_acceptance_criterion_handler))
         .route("/api/runs/{id}/repo", post(set_repo_url))
         .route("/api/runs/{id}/operator-pubkey", post(set_operator_pubkey))
@@ -1013,7 +1015,7 @@ async fn add_requirement(
     if run_state.requirements.len() >= MAX_LIST_ITEMS {
         return (StatusCode::BAD_REQUEST, format!("requirements is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
     }
-    run_state.requirements.push(Requirement { statement, acceptance_criteria, verified: false, verified_criteria: Vec::new() });
+    run_state.requirements.push(Requirement { statement, acceptance_criteria, verified: false, verified_criteria: Vec::new(), auto_judge: false });
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
@@ -1041,6 +1043,40 @@ async fn toggle_requirement_handler(
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
     }
     if let Err(e) = toggle_requirement(&mut run_state, index) {
+        return (StatusCode::NOT_FOUND, e).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/requirements/{index}/auto-judge/toggle` -- lets a requirement's
+/// owner opt it into (or back out of) LLM judgment, per `Requirement::auto_judge`'s own
+/// doc comment (operator decision 2026-08-05: human by default, explicit opt-in for
+/// "automode"). Toggling this alone never changes `verified`/`verified_criteria` --
+/// it only authorizes future judgment, doesn't perform any itself.
+async fn toggle_requirement_auto_judge_handler(
+    State(state): State<AppState>,
+    AxPath((id, index)): AxPath<(String, usize)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    if let Err(e) = toggle_requirement_auto_judge(&mut run_state, index) {
         return (StatusCode::NOT_FOUND, e).into_response();
     }
     match persist_run(&dir, &spec, &run_state) {
@@ -3652,6 +3688,60 @@ mod tests {
 
         let response = app
             .oneshot(Request::builder().method("POST").uri("/api/runs/req-oob-run/requirements/9/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn requirement_auto_judge_defaults_off_and_can_be_toggled_without_touching_verified() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "auto-judge-run"})))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/auto-judge-run/requirements",
+                serde_json::json!({
+                    "statement": "WHEN ..., THE SYSTEM SHALL ...",
+                    "acceptance_criteria": ["criterion A"],
+                }),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/auto-judge-run/requirements/0/auto-judge/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body["requirements"][0]["auto_judge"], true);
+        assert_eq!(body["requirements"][0]["verified"], false, "toggling auto_judge must never itself flip verified");
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/auto-judge-run/requirements/0/auto-judge/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body["requirements"][0]["auto_judge"], false, "toggling twice must flip back off");
+    }
+
+    #[tokio::test]
+    async fn toggling_auto_judge_on_an_out_of_range_requirement_404s() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "auto-judge-oob-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/auto-judge-oob-run/requirements/9/auto-judge/toggle").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), SC::NOT_FOUND);
