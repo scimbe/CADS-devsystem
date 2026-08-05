@@ -38,7 +38,26 @@
 # real key material straight from its known on-disk location by default (the
 # env vars still override, for a host where the keys live elsewhere), and
 # check it exists *before* touching the running container at all.
+#
+# Real incident, 2026-08-05 (later the same day): with three separate
+# autonomous loops now capable of firing this script around the same time,
+# two concurrent `docker build`s raced on web/Dockerfile's own BuildKit cache
+# mount (`--mount=type=cache,target=/work/target`, cargo's incremental build
+# cache). Both builds exited 0 -- but the cache mount, shared and mutated by
+# both concurrent cargo invocations, left the resulting binary genuinely
+# stale (missing real, already-committed source changes) with no error at
+# all. Confirmed directly: `docker exec devsystem-web strings ... | grep` for
+# a distinctive string from the latest commit came back empty. A `flock` on
+# this script's own path serializes real invocations -- a second concurrent
+# run waits for the first to finish rather than racing its cache mount.
 set -euo pipefail
+
+LOCK_FILE="/tmp/deploy-devsystem-web.lock"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  echo "Another deploy-devsystem-web.sh is already running -- waiting for it to finish ..."
+  flock 9
+fi
 
 IMAGE_TAG="${1:-devsystem-web:latest}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
