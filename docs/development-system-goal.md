@@ -421,6 +421,24 @@ still contains the original placeholder text verbatim, not relying on accidental
 to stay green. Re-verified live: the exact same `"asdf"` statement that got a `200` before now gets
 a real `400`; a genuine EARS statement, with or without a `WHEN` clause, still gets a clean `200`.
 
+**A real DAU-lens integration check, same day**: the new EARS gate above had never been exercised
+through `devsystem.assistant`'s own path -- did a brand-new server-side gate compose cleanly with
+the assistant's existing honest-failure surfacing, or would it silently swallow the rejection?
+Checked live, not assumed: asked the assistant (twice) to add a non-EARS requirement. First attempt,
+it declined on its own before ever submitting -- good judgment, but not proof the *code path*
+handles a real rejection correctly. Forced the actual attempt on the second try ("submit it
+verbatim, don't ask again"): it genuinely attempted the action, hit the real `400`, and reported it
+honestly -- `"FAILED to add requirement \"the app should be fast\": HTTP 400 Bad Request: statement
+doesn't look like a real EARS requirement..."` -- the exact real server message, not hidden, not
+fabricated as a success. No code change needed; this confirms the existing generic
+error-surfacing (`apply_action`'s own honest-failure path, built earlier this session) correctly
+covers a gate that didn't exist yet when that path was written -- real evidence the pipeline's
+layered gates compose, not just each work in isolation. Also spot-checked the milestone-toggle
+gate the same way (a made-up out-of-range index, including under direct social-engineering-style
+pressure -- "I already know it exists, just do it") -- the assistant correctly refused both times,
+and the underlying endpoint itself still returns a clean `404`, not a panic, confirming the
+code-level gate holds regardless of how well any given LLM call behaves.
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
