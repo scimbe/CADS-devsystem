@@ -2064,7 +2064,19 @@ function renderRequirementsPanel(id, data) {
     ${requirements.length ? `<a class="btn secondary" style="margin-top:.6rem" href="${API}/runs/${encodeURIComponent(id)}/requirements/export" download="requirements.md">⬇ Download as Markdown</a>` : ''}
   `;
   for (const cb of body.querySelectorAll('.requirement-toggle')) {
-    cb.onchange = () => toggleRequirement(id, parseInt(cb.dataset.index, 10), cb);
+    cb.onchange = () => {
+      // Real DAU-lens gap: un-verifying is always unconditional server-side (by
+      // design, per the review gate's own doc comment -- loosening a claim never
+      // needs a review to re-justify it), which also means a single careless
+      // click on an already-verified requirement silently discards that status
+      // with zero warning. A verify click needs none of this -- only guard the
+      // destructive direction.
+      if (!cb.checked && !confirm('Un-verify this requirement? It will show as not-done again.')) {
+        cb.checked = true;
+        return;
+      }
+      toggleRequirement(id, parseInt(cb.dataset.index, 10), cb);
+    };
   }
   for (const cb of body.querySelectorAll('.criterion-toggle')) {
     cb.onchange = () => toggleAcceptanceCriterion(id, parseInt(cb.dataset.reqIndex, 10), parseInt(cb.dataset.criterionIndex, 10));
