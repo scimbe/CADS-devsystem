@@ -23,7 +23,7 @@
       "text": "Channel-Wire-Format f\u00fcr Textnachrichten festlegen (msg_id, sender_pubkey, timestamp, body) und in der native-bridge UniFFI-API als send_text/recv_text exponieren"
     },
     {
-      "done": false,
+      "done": true,
       "text": "Lokale Nachrichten-Persistenz auf Android (Room) + minimale Chat-UI gegen die UniFFI-API, Ziel: zwei Ger\u00e4te tauschen Text \u00fcber einen Channel"
     }
   ],
