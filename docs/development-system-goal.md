@@ -213,6 +213,14 @@ not just non-empty content (`CADS-devsystem@425597c`) — one mechanical rule ca
 trivial-word case and the invisible-character case, since the latter has zero alphanumeric
 characters under this count. Re-verified live: `"ok"` is now a real `400`.
 
+**A real DAU-lens finding on the human side, same day** (`CADS-devsystem@d40cbe5`): un-verifying a
+requirement is always unconditional server-side, by design — loosening a claim never needs a review
+to re-justify it. That also meant a single careless click on an already-verified requirement's
+checkbox silently discarded that status with zero warning. The GUI now confirms before the
+destructive direction only (un-checking); verifying stays a single click, and individual acceptance
+criteria — routine, frequent bookkeeping, unlike the whole-requirement flag the review gate and the
+Markdown export both treat as the headline status — are deliberately left alone.
+
 **First real groundwork step, 2026-08-05 (iteration 8)**: the mandatory review gate (gap #2) only
 has teeth on a run that actually declares `devsystem.review` as a role — `webconference-android`
 itself never had. Added it for real via a `devsystem.improve` proposal, the same immediately-applied
