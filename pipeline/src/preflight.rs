@@ -30,6 +30,21 @@ pub struct RiskAnnotation {
 const SECURITY_KEYWORDS: [&str; 8] =
     ["auth", "security", "crypto", "key material", "credential", "password", "handshake", "session"];
 
+/// Real gap named directly in the goal doc's own §5 quality-bar table
+/// ("Vertragsgemäße / Sachmangelfreie Leistung ... nothing blocks marking work
+/// 'done' with open, known defects"), live-verified before this check existed:
+/// `{"stage":"devsystem.implement","feedback":"Shipped the feature. Known
+/// issue: crashes on a null id, not fixed yet, workaround needed.",
+/// "succeeded":true}` produced zero risk findings -- nothing caught an
+/// iteration contradicting its own `succeeded:true` in its own feedback text.
+/// Multi-word phrases specifically, not single common words like "broken"
+/// alone (which would false-positive on "fixes the previously broken X") --
+/// same crude-but-explainable proxy discipline as `SECURITY_KEYWORDS`, still
+/// beatable by phrasing a real defect without these exact words (an honest,
+/// named limitation, not claimed comprehensive).
+const DEFECT_ADMISSION_PHRASES: [&str; 6] =
+    ["known issue", "known bug", "not fixed", "not implemented", "workaround needed", "still broken"];
+
 /// Run every known check against `state` and return whatever real findings result.
 pub fn preflight_annotations(state: &RunState) -> Vec<RiskAnnotation> {
     let mut findings = Vec::new();
@@ -40,6 +55,9 @@ pub fn preflight_annotations(state: &RunState) -> Vec<RiskAnnotation> {
         findings.push(a);
     }
     if let Some(a) = no_price_ceiling(state) {
+        findings.push(a);
+    }
+    if let Some(a) = succeeded_iteration_admits_a_defect(state) {
         findings.push(a);
     }
     findings
@@ -66,6 +84,28 @@ fn security_keyword_hit(state: &RunState) -> Option<RiskAnnotation> {
         }
     }
     None
+}
+
+/// "succeeded iteration admits a known defect" -- the latest iteration is
+/// marked `succeeded: true` but its own feedback contains a real defect-
+/// admission phrase. See [`DEFECT_ADMISSION_PHRASES`]'s own doc comment for
+/// the live-verified gap this closes and its honest limitation.
+fn succeeded_iteration_admits_a_defect(state: &RunState) -> Option<RiskAnnotation> {
+    let latest = state.history.last()?;
+    if !latest.succeeded {
+        return None;
+    }
+    let feedback_lower = latest.feedback.to_lowercase();
+    let phrase = DEFECT_ADMISSION_PHRASES.iter().find(|p| feedback_lower.contains(**p))?;
+    Some(RiskAnnotation {
+        label: "succeeded iteration admits a known defect".into(),
+        evidence: format!(
+            "iteration {}'s own feedback contains \"{phrase}\" while marked succeeded:true -- goal \
+             doc §5's Vertragsgemäße/Sachmangelfreie row names this exact gap: nothing else blocks \
+             marking work \"done\" with open, known defects",
+            latest.iteration
+        ),
+    })
 }
 
 /// "no test stage before implement" (proposal §5's own example): a real
@@ -224,6 +264,47 @@ mod tests {
         state.history.push(iteration(STAGE_TEST, 1, "added a real unit test covering the empty-input edge case and confirmed it fails without the fix", vec![]));
         state.history.push(iteration(STAGE_IMPLEMENT, 2, "wrote a helper function", vec![]));
         assert!(preflight_annotations(&state).is_empty());
+    }
+
+    #[test]
+    /// Real gap named directly in the goal doc's own §5 quality-bar table,
+    /// live-verified against the actual deployment before this check
+    /// existed: this exact feedback produced zero risk findings.
+    fn flags_a_succeeded_iteration_that_admits_a_known_defect() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(
+            STAGE_IMPLEMENT,
+            1,
+            "Shipped the retry-on-failure feature. Known issue: it crashes on a null message id, not fixed yet, workaround needed before real use.",
+            vec![],
+        ));
+        let findings = preflight_annotations(&state);
+        assert!(findings.iter().any(|f| f.label == "succeeded iteration admits a known defect"), "got: {findings:?}");
+    }
+
+    #[test]
+    fn does_not_flag_a_failed_iteration_that_mentions_a_known_defect() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(IterationRecord {
+            run_id: "run-preflight".into(),
+            stage: STAGE_IMPLEMENT.into(),
+            iteration: 1,
+            feedback: "Known issue: it crashes on a null message id, not fixed yet.".into(),
+            succeeded: false,
+            proposals: vec![],
+            requirement_indices: vec![],
+        });
+        // A FAILED iteration honestly saying it's broken is exactly the honest
+        // behavior this check wants to encourage -- only succeeded:true
+        // paired with a defect admission is the real contradiction.
+        assert!(!preflight_annotations(&state).iter().any(|f| f.label == "succeeded iteration admits a known defect"));
+    }
+
+    #[test]
+    fn no_defect_admission_finding_for_a_genuinely_clean_success() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_IMPLEMENT, 1, "shipped the retry-on-failure feature, all real acceptance criteria verified", vec![]));
+        assert!(!preflight_annotations(&state).iter().any(|f| f.label == "succeeded iteration admits a known defect"));
     }
 
     #[test]
