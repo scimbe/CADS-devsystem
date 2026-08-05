@@ -410,6 +410,21 @@ const PANEL_DEFAULTS = {
   flow:       { title: 'Flow',               x: 16,   y: 1108, w: 620, h: 400 },
 };
 
+// Real gap found 2026-08-05, simulating a genuinely fresh first-time user via
+// Playwright: every panel defaulted to visible when no saved layout exists
+// (the common case for anyone's first session), so a freshly created run threw
+// all 18 windows at the user simultaneously. At a real, unremarkable viewport
+// width (1600px -- not even narrow), ensurePanelVisible's 12-step diagonal
+// cascade genuinely ran out of room: Custom Panels' own textarea ended up
+// sitting on top of the Requirements panel's "Add requirement" button,
+// making it truly unclickable, not just visually crowded. A first-time user
+// hits this on literally their first real action after creating a project.
+// Fix: a sensible starter set stays open by default (orientation + the one
+// real first action -- see a run, see where the pipeline stands, see the
+// roles/auction, start writing requirements); everything else is one chip
+// click away exactly as before, nothing is removed, just not force-opened.
+const DEFAULT_VISIBLE_PANELS = new Set(['runs', 'process', 'architecture', 'requirements']);
+
 const LAYOUT_KEY = 'devsystem-panel-layout-v1';
 let layout = {};
 try { layout = JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}'); } catch (e) { layout = {}; }
@@ -439,7 +454,7 @@ function panelRect(id) {
   const saved = layout[id] || {};
   return {
     x: saved.x ?? d.x, y: saved.y ?? d.y, w: saved.w ?? d.w, h: saved.h ?? d.h,
-    visible: saved.visible ?? true, z: saved.z ?? (zTop++),
+    visible: saved.visible ?? DEFAULT_VISIBLE_PANELS.has(id), z: saved.z ?? (zTop++),
     minimized: saved.minimized ?? false, maximized: saved.maximized ?? false, preMax: saved.preMax ?? null,
     refreshInterval: saved.refreshInterval ?? 0,
   };
