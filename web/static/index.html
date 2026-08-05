@@ -2061,6 +2061,7 @@ function renderRequirementsPanel(id, data) {
       <button type="submit">Add requirement</button>
     </form>
     <div id="requirement-status" class="status-line"></div>
+    ${requirements.length ? `<a class="btn secondary" style="margin-top:.6rem" href="${API}/runs/${encodeURIComponent(id)}/requirements/export" download="requirements.md">⬇ Download as Markdown</a>` : ''}
   `;
   for (const cb of body.querySelectorAll('.requirement-toggle')) {
     cb.onchange = () => toggleRequirement(id, parseInt(cb.dataset.index, 10), cb);

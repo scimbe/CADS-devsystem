@@ -155,6 +155,39 @@ pub struct Requirement {
     pub proposed_by: Option<String>,
 }
 
+/// Real requirements export (#382 goal doc §4.4, gap #7): until now `GET
+/// /api/runs/{id}` was the only way to see a run's requirements at all -- a raw
+/// JSON blob, not something a non-technical stakeholder would download and read.
+/// Renders every requirement as real Markdown: statement, verified/unverified
+/// (with a per-criterion checklist), and provenance (`proposed_by`, per §3 --
+/// whether this was a human's own requirement or still an LLM's first draft).
+/// Pure and hermetically testable on purpose (no timestamp, no I/O) -- the web
+/// layer decides what, if anything, to wrap around this.
+pub fn render_requirements_markdown(run_id: &str, requirements: &[Requirement]) -> String {
+    let mut md = format!("# Requirements: `{run_id}`\n\n");
+    if requirements.is_empty() {
+        md.push_str("No requirements defined yet.\n");
+        return md;
+    }
+    let verified_count = requirements.iter().filter(|r| r.verified).count();
+    md.push_str(&format!("{verified_count}/{} verified.\n\n", requirements.len()));
+    for (i, r) in requirements.iter().enumerate() {
+        md.push_str(&format!("## {}. {}\n\n", i + 1, if r.verified { "✅" } else { "◻" }));
+        md.push_str(&format!("{}\n\n", r.statement));
+        match &r.proposed_by {
+            Some(stage) => md.push_str(&format!("*Proposed by `{stage}` -- not yet a human's own requirement unless separately confirmed.*\n\n")),
+            None => md.push_str("*Human-authored.*\n\n"),
+        }
+        md.push_str("Acceptance criteria:\n\n");
+        for (ci, c) in r.acceptance_criteria.iter().enumerate() {
+            let checked = r.verified_criteria.get(ci).copied().unwrap_or(false);
+            md.push_str(&format!("- [{}] {c}\n", if checked { "x" } else { " " }));
+        }
+        md.push('\n');
+    }
+    md
+}
+
 /// Persisted state for one run -- serialized to `runs/<run_id>/state.json` in the
 /// coordination repo so a run survives across separate loop firings (each firing is a
 /// fresh process; nothing here is in-memory-only).
@@ -651,6 +684,39 @@ mod tests {
         let spec = plan_only_spec("run-req-oob", None);
         let mut state = RunState::new("run-req-oob");
         assert!(toggle_requirement(&spec, &mut state, 0).is_err());
+    }
+
+    #[test]
+    fn render_requirements_markdown_shows_verification_provenance_and_criteria() {
+        let empty = render_requirements_markdown("empty-run", &[]);
+        assert!(empty.contains("No requirements defined yet"));
+
+        let requirements = vec![
+            Requirement {
+                statement: "WHEN a user sends a text message, THE SYSTEM SHALL persist it locally".into(),
+                acceptance_criteria: vec!["survives an app restart".into(), "no crash on empty input".into()],
+                verified: true,
+                verified_criteria: vec![true, false],
+                auto_judge: false,
+                proposed_by: None,
+            },
+            Requirement {
+                statement: "an LLM-proposed requirement, still someone's first draft".into(),
+                acceptance_criteria: vec!["checkable".into()],
+                verified: false,
+                verified_criteria: Vec::new(),
+                auto_judge: false,
+                proposed_by: Some("devsystem.assistant".into()),
+            },
+        ];
+        let md = render_requirements_markdown("real-run", &requirements);
+        assert!(md.contains("# Requirements: `real-run`"));
+        assert!(md.contains("1/2 verified"));
+        assert!(md.contains("Human-authored"), "the first requirement has no proposed_by -- must render as human-authored: {md}");
+        assert!(md.contains("Proposed by `devsystem.assistant`"), "the second requirement's real provenance must render: {md}");
+        assert!(md.contains("- [x] survives an app restart"), "a verified criterion must render checked: {md}");
+        assert!(md.contains("- [ ] no crash on empty input"), "an unverified criterion must render unchecked: {md}");
+        assert!(md.contains("- [ ] checkable"), "a requirement with no verified_criteria at all must render every criterion unchecked, not panic: {md}");
     }
 
     #[test]

@@ -19,8 +19,8 @@ use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::preflight_annotations;
 use devsystem_pipeline::runner::{
-    load_or_init_run, persist_run, run_iteration, toggle_acceptance_criterion, toggle_milestone, toggle_requirement, toggle_requirement_auto_judge,
-    BacklogItem, CustomPanel,
+    load_or_init_run, persist_run, render_requirements_markdown, run_iteration, toggle_acceptance_criterion, toggle_milestone, toggle_requirement,
+    toggle_requirement_auto_judge, BacklogItem, CustomPanel,
     Milestone, PendingIssueProposal, PendingPanelProposal, PendingStageProposal, Requirement, RoleFillMode, RunOutcome,
 };
 use devsystem_pipeline::{apply_proposal, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal};
@@ -182,6 +182,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/requirements/{index}/toggle", post(toggle_requirement_handler))
         .route("/api/runs/{id}/requirements/{index}/auto-judge/toggle", post(toggle_requirement_auto_judge_handler))
         .route("/api/runs/{id}/requirements/{index}/criteria/{criterion_index}/toggle", post(toggle_acceptance_criterion_handler))
+        .route("/api/runs/{id}/requirements/export", get(export_requirements))
         .route("/api/runs/{id}/repo", post(set_repo_url))
         .route("/api/runs/{id}/operator-pubkey", post(set_operator_pubkey))
         .route("/api/runs/{id}/roles/{tag}/fill-mode", post(set_role_fill_mode))
@@ -1102,6 +1103,38 @@ async fn toggle_requirement_handler(
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `GET /api/runs/{id}/requirements/export` -- real requirements export (#382 goal
+/// doc §4.4, gap #7): a real Markdown document, not just the raw JSON `GET
+/// /api/runs/{id}` already exposes. `owner_authorized` gates this the same as every
+/// other run-scoped read that isn't the top-level listing (matching
+/// `toggle_requirement_handler`'s own gating), since a run's requirements can be a
+/// real, sensitive spec.
+async fn export_requirements(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, run_state)) => {
+            if !owner_authorized(&headers, &run_state) {
+                return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+            }
+            let md = render_requirements_markdown(&id, &run_state.requirements);
+            (
+                [
+                    (axum::http::header::CONTENT_TYPE, "text/markdown; charset=utf-8"),
+                    (axum::http::header::CONTENT_DISPOSITION, "attachment; filename=\"requirements.md\""),
+                ],
+                md,
+            )
+                .into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
     }
 }
 
@@ -3948,6 +3981,33 @@ mod tests {
         assert_eq!(response.status(), SC::CONFLICT, "a rubber-stamp review must not satisfy the gate, even though it succeeded and named the right requirement");
         let body = String::from_utf8(axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
         assert!(body.contains("too short"), "the error must explain why: {body}");
+    }
+
+    #[tokio::test]
+    /// Real requirements export over HTTP (#382 goal doc §4.4, gap #7): a real
+    /// Markdown document, with real Content-Disposition so a browser actually
+    /// downloads it, not just another JSON endpoint.
+    async fn requirements_export_renders_real_markdown_with_a_download_header() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "export-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/export-run/requirements",
+                serde_json::json!({"statement": "a real requirement", "acceptance_criteria": ["checkable"]}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/export-run/requirements/export").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        assert_eq!(response.headers().get(axum::http::header::CONTENT_TYPE).unwrap(), "text/markdown; charset=utf-8");
+        assert!(response.headers().get(axum::http::header::CONTENT_DISPOSITION).unwrap().to_str().unwrap().contains("attachment"));
+        let body = String::from_utf8(axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+        assert!(body.contains("# Requirements: `export-run`"));
+        assert!(body.contains("a real requirement"));
+        assert!(body.contains("- [ ] checkable"));
     }
 
     #[tokio::test]
