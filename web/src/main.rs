@@ -57,6 +57,18 @@ struct AppState {
     /// control plane has no live bid-collection endpoint to call instead
     /// (verified directly against the current checkout, not assumed).
     offers: Arc<tokio::sync::Mutex<HashMap<String, Vec<CapacityOffer>>>>,
+    /// Real cross-request `SelectionState` per run (run_id -> the `RoundRobin`
+    /// cursor / `LeastCalls` served-counts `PipelineSpec::auction_view` threads
+    /// through). Real gap found and fixed 2026-08-05: `view_auction` used to
+    /// construct a fresh `SelectionState::default()` on every single call, so
+    /// the two stateful policies could never actually behave as designed --
+    /// `RoundRobin` never advanced past whichever provider sorts first, and
+    /// `LeastCalls` saw every candidate tied at zero served jobs, forever. Only
+    /// `LowestFloor` (stateless by design, `SelectionState`'s own doc comment)
+    /// was ever unaffected. In-memory only, matching `offers` above -- this is
+    /// live scheduling state with the same lifetime as the offers it's
+    /// selecting among, not run history worth persisting to `state.json`.
+    selection_state: Arc<tokio::sync::Mutex<HashMap<String, SelectionState>>>,
     /// Base URL of a running `devsystem_assistant --serve` bridge (e.g.
     /// `http://host.docker.internal:8791` when the assistant runs as a host
     /// process alongside this container's Docker host -- the real LLM CLI lives
@@ -331,6 +343,7 @@ async fn main() {
         runs_dir: Arc::new(runs_dir),
         write_lock: Arc::new(tokio::sync::Mutex::new(())),
         offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        selection_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         assistant_url,
         github_token,
         http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().expect("build http client"),
@@ -2464,7 +2477,14 @@ async fn view_auction(State(state): State<AppState>, AxPath(id): AxPath<String>)
     };
     let offers = state.offers.lock().await;
     let run_offers = offers.get(&id).cloned().unwrap_or_default();
-    let mut selection_state = SelectionState::default();
+    // Real, persisted per-run SelectionState (2026-08-05 fix) -- a fresh
+    // SelectionState::default() every call meant RoundRobin/LeastCalls could
+    // never actually accumulate cross-request state; holding the lock for the
+    // mutable borrow below means auction_view's real mutation (the round-robin
+    // cursor advancing, a served count incrementing) lands directly in the map,
+    // not a value that's discarded the moment this handler returns.
+    let mut selection_state_guard = state.selection_state.lock().await;
+    let selection_state = selection_state_guard.entry(id.clone()).or_default();
     // No real identity-resolution registry is wired up yet (a real, honest gap,
     // not fabricated) -- label by a short hex prefix of the holder pubkey so bids
     // from different holders are at least distinguishable.
@@ -2477,7 +2497,7 @@ async fn view_auction(State(state): State<AppState>, AxPath(id): AxPath<String>)
     // non-responsive bidder), not itself an enforcement decision.
     let freshness_by_label: std::collections::HashMap<String, (u64, u64)> =
         run_offers.iter().map(|o| (label(&o.holder_pubkey), (o.issued_at, o.expires_at))).collect();
-    match spec.auction_view(&run_offers, unix_now(), spec.selection_policy, &mut selection_state, label) {
+    match spec.auction_view(&run_offers, unix_now(), spec.selection_policy, selection_state, label) {
         Ok(views) => {
             let now = unix_now();
             let mut roles_json = serde_json::to_value(&views).unwrap_or(serde_json::json!([]));
@@ -2578,6 +2598,7 @@ mod tests {
             runs_dir: Arc::new(dir.path().to_path_buf()),
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
             offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            selection_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             assistant_url: assistant_url.map(Arc::from),
             github_token: None,
             http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().expect("build http client"),
@@ -4497,6 +4518,7 @@ exit 1"#);
             runs_dir: Arc::new(runs_dir),
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
             offers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            selection_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             assistant_url: None,
             github_token: None,
             http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().expect("build http client"),
@@ -4689,6 +4711,62 @@ exit 1"#);
             bids[0]["seconds_since_issued"].as_u64().unwrap() > 0,
             "a bid issued at unix time 0 must show real, non-zero staleness right now"
         );
+    }
+
+    /// Real fix, 2026-08-05: `view_auction` used to construct a fresh
+    /// `SelectionState::default()` on every call, so `RoundRobin` could never
+    /// actually rotate across separate requests -- every single call re-picked
+    /// whichever holder sorts first, forever. `create_run`/`plan_only_spec`
+    /// always sets `LowestFloor` (there is no live API to choose a different
+    /// pipeline-wide policy), so this seeds a run's `spec.json`/`state.json`
+    /// directly via `persist_run` -- the same real functions the handlers
+    /// themselves use, not a hand-rolled fixture -- to actually exercise
+    /// `RoundRobin` through two independent HTTP requests.
+    #[tokio::test]
+    async fn round_robin_selection_state_really_persists_across_separate_auction_requests() {
+        let (state, dir) = test_state();
+        let spec = ct_common::pipeline::PipelineSpec {
+            id: "devsystem-rr-run".to_string(),
+            roles: vec![ct_common::pipeline::RequiredRole {
+                service: ServiceType::Custom("devsystem.plan".to_string()),
+                units: 1,
+                tag: "plan".to_string(),
+                selection_policy: None,
+            }],
+            operator_pubkey_hex: None,
+            selection_policy: ct_common::pipeline::SelectionPolicy::RoundRobin,
+        };
+        let run_state = devsystem_pipeline::runner::RunState::new("rr-run");
+        persist_run(&dir.path().join("rr-run"), &spec, &run_state).expect("seed the run directly, same real persist_run the handlers use");
+
+        let app = api_router(state);
+        for (seed, price) in [(1u8, 10u64), (2u8, 10u64)] {
+            let offer = real_offer(seed, "devsystem.plan", price);
+            let response = app.clone().oneshot(json_request("POST", "/api/runs/rr-run/offers/submit", serde_json::to_value(&offer).unwrap())).await.unwrap();
+            assert_eq!(response.status(), SC::OK, "both real offers must be accepted");
+        }
+
+        let winner_of = |body: &serde_json::Value| -> String {
+            let bids = body["roles"][0]["bids"].as_array().expect("a real auction_view result");
+            bids.iter().find(|b| b["win"] == true).expect("RoundRobin always picks exactly one winner among qualifying offers")["who"].as_str().unwrap().to_string()
+        };
+
+        let first = app.clone().oneshot(Request::builder().uri("/api/runs/rr-run/auction").body(Body::empty()).unwrap()).await.unwrap();
+        let first_winner = winner_of(&body_json(first).await);
+
+        let second = app.clone().oneshot(Request::builder().uri("/api/runs/rr-run/auction").body(Body::empty()).unwrap()).await.unwrap();
+        let second_winner = winner_of(&body_json(second).await);
+
+        assert_ne!(
+            first_winner, second_winner,
+            "RoundRobin must actually rotate to the other qualifying holder on the very next request -- if this fails, SelectionState is being reset per-request again"
+        );
+
+        // A real third call wraps back to the first winner (only two candidates in the ring) --
+        // proving this is genuine rotation, not just "always differs from last time" by chance.
+        let third = app.clone().oneshot(Request::builder().uri("/api/runs/rr-run/auction").body(Body::empty()).unwrap()).await.unwrap();
+        let third_winner = winner_of(&body_json(third).await);
+        assert_eq!(third_winner, first_winner, "with exactly two candidates, the third real request must wrap back to the first winner");
     }
 
     #[tokio::test]
