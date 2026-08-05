@@ -193,9 +193,18 @@ toward the ranked gaps below, not a single unbounded attempt to reach the whole 
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
-2. **A mandatory quality gate** before an iteration counts as done (§5) — now the single highest
-   remaining leverage point, since it's the direct mechanism the incompetent-agent stress test
-   (§8) needs to prove the pipeline (not the filler) drives quality.
+2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
+   a run that declares
+   a real `devsystem.review` role can no longer mark a requirement verified without a real,
+   successful `devsystem.review` iteration that actually names it (`requirement_indices`) in
+   history — a hard 409 block, not an advisory annotation. Scoped to runs that opt `review` into
+   their own spec (`plan_only_spec`, what every new run starts as, has no such role, so this never
+   blocks a run that hasn't declared it). Along the way, found and fixed a real related DAU-lens
+   bug: the Requirements panel's checkbox stayed visually "checked" after a blocked toggle,
+   silently misleading whoever's looking at it — now reverts to the real state on rejection.
+   Still open for a later increment: this is one concrete slice of §5's quality bar (review actually
+   happened), not the whole table (Stand der Technik / dependency freshness, Kunstgerecht /
+   idiomatic-code checks, etc. remain unenforced).
 3. **Context-relevant panels** (§7.1) — show what this run's actual state needs, not a fixed set.
 4. **Assistant-editable panel values generally** (§7.2) — beyond the current fixed `Action` enum.
 5. **An agents/tokens/costs overview** (§7.3) — real usage data already parsed per-call; needs
@@ -206,22 +215,6 @@ toward the ranked gaps below, not a single unbounded attempt to reach the whole 
 8. **ECC skills catalog audit** (§2) — beyond `ecc-plan-canvas`, for spec-authoring and
    step-decomposition.
 9. **A `devsystem.process_improve` role** (§4.3) — self-optimizing the process itself, not just
-   the stage list.
-
-This ranking is a proposal, not a decision — the operator leads (§4.3).
-
-## Summary: the highest-leverage real gaps, ranked
-
-1. **Provenance on `Requirement`** (§3, blocks §4.2 and §4.4) — LLM-authored vs. user-authored,
-   per requirement and per acceptance criterion.
-2. **A mandatory quality gate** before an iteration counts as done (§5) — review/dependency-freshness/
-   defect-free-at-delivery, not just "a role that exists if someone fills it".
-3. **A unified decision-basis view** (§4.2) — requirements + constraints + the actual chat/docs
-   that produced them, in one place.
-4. **A real requirements export** (§4.4) — a downloadable document, not just a JSON blob.
-5. **ECC skills catalog audit** (§2) — beyond `ecc-plan-canvas`, for spec-authoring and
-   step-decomposition.
-6. **A `devsystem.process_improve` role** (§4.3) — self-optimizing the process itself, not just
    the stage list.
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).

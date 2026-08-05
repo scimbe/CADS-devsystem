@@ -2055,7 +2055,7 @@ function renderRequirementsPanel(id, data) {
     <div id="requirement-status" class="status-line"></div>
   `;
   for (const cb of body.querySelectorAll('.requirement-toggle')) {
-    cb.onchange = () => toggleRequirement(id, parseInt(cb.dataset.index, 10));
+    cb.onchange = () => toggleRequirement(id, parseInt(cb.dataset.index, 10), cb);
   }
   for (const cb of body.querySelectorAll('.criterion-toggle')) {
     cb.onchange = () => toggleAcceptanceCriterion(id, parseInt(cb.dataset.reqIndex, 10), parseInt(cb.dataset.criterionIndex, 10));
@@ -2092,11 +2092,19 @@ async function toggleRequirementAutoJudge(id, index) {
   }
 }
 
-async function toggleRequirement(id, index) {
+async function toggleRequirement(id, index, checkbox) {
   try {
     await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements/${index}/toggle`, { method: 'POST' });
     await selectRun(id);
   } catch (e) {
+    // Real gap found+fixed alongside the review gate (#382 goal doc §7/§8, DAU
+    // lens): the browser flips a checkbox's own visual state on click, before
+    // this handler ever runs -- if the backend rejects the toggle (e.g. the
+    // real review-gate block above), the checkbox was left showing "checked"
+    // even though nothing actually changed, silently misleading whoever's
+    // looking at it. Revert it to match reality now that we know the change
+    // did NOT happen.
+    if (checkbox) checkbox.checked = !checkbox.checked;
     const status = document.getElementById('requirement-status');
     if (status) { status.textContent = e.message; status.className = 'status-line err'; }
   }

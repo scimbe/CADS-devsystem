@@ -338,8 +338,39 @@ pub fn toggle_milestone(state: &mut RunState, index: usize) -> Result<(), String
 /// a one-time checkpoint; marking it verified (or un-verifying it after a
 /// regression) is routine bookkeeping, not an event that should interrupt the
 /// loop.
-pub fn toggle_requirement(state: &mut RunState, index: usize) -> Result<(), String> {
-    let requirement = state.requirements.get_mut(index).ok_or_else(|| format!("no requirement at index {index}"))?;
+///
+/// **Real, mandatory quality gate** (#382 goal doc §5/§8, gap #2 -- "it is the
+/// fault of the pipeline, not the user, if the process leads them not to the
+/// perfect result"): a requirement can only be marked verified (false -> true)
+/// if this run's own spec declares a `review` role AND a real
+/// `devsystem.review` iteration that `succeeded` and named this requirement in
+/// its `requirement_indices` already exists in history. This is a hard block,
+/// not an advisory annotation like `preflight`'s risk findings -- a role-filler
+/// (competent or not) cannot simply mark its own work done without a real
+/// review having actually addressed it.
+///
+/// Scoped to runs that declare `review` as a role at all: `plan_only_spec` (what
+/// every new run starts as) has no such role, so this never blocks a run that
+/// hasn't opted `review` into its own pipeline -- there is nothing to gate
+/// against for a stage that was never declared. Un-verifying (true -> false) is
+/// always allowed unconditionally -- loosening a claim never needs a review to
+/// justify it.
+pub fn toggle_requirement(spec: &PipelineSpec, state: &mut RunState, index: usize) -> Result<(), String> {
+    let requirement = state.requirements.get(index).ok_or_else(|| format!("no requirement at index {index}"))?;
+    if !requirement.verified && spec.roles.iter().any(|r| r.tag == "review") {
+        let reviewed = state
+            .history
+            .iter()
+            .any(|h| h.stage == "devsystem.review" && h.succeeded && h.requirement_indices.contains(&index));
+        if !reviewed {
+            return Err(format!(
+                "requirement {index} cannot be marked verified yet -- this run declares a devsystem.review \
+                 role, but no successful devsystem.review iteration addressing requirement {index} (via its \
+                 requirement_indices) exists yet. Submit one first."
+            ));
+        }
+    }
+    let requirement = state.requirements.get_mut(index).unwrap();
     requirement.verified = !requirement.verified;
     Ok(())
 }
@@ -453,7 +484,7 @@ pub fn persist_run(run_dir: &Path, spec: &PipelineSpec, state: &RunState) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::STAGE_IMPLEMENT;
+    use crate::{full_spec, STAGE_IMPLEMENT};
 
     fn record(iteration: u32, succeeded: bool, proposals: Vec<crate::StageProposal>) -> IterationRecord {
         IterationRecord {
@@ -497,6 +528,7 @@ mod tests {
 
     #[test]
     fn toggling_a_requirement_flips_verified_and_never_auto_pauses() {
+        let spec = plan_only_spec("run-req", None);
         let mut state = RunState::new("run-req");
         state.requirements.push(Requirement {
             statement: "WHEN a user sends a text message over an established channel, THE SYSTEM SHALL persist it locally before confirming delivery to the UI".into(),
@@ -506,18 +538,95 @@ mod tests {
             auto_judge: false,
             proposed_by: None,
         });
-        toggle_requirement(&mut state, 0).unwrap();
+        toggle_requirement(&spec, &mut state, 0).unwrap();
         assert!(state.requirements[0].verified);
         assert!(!state.paused, "unlike a milestone, verifying a requirement must not auto-pause the run");
 
-        toggle_requirement(&mut state, 0).unwrap();
+        toggle_requirement(&spec, &mut state, 0).unwrap();
         assert!(!state.requirements[0].verified);
     }
 
     #[test]
     fn toggling_an_out_of_range_requirement_index_fails_loudly() {
+        let spec = plan_only_spec("run-req-oob", None);
         let mut state = RunState::new("run-req-oob");
-        assert!(toggle_requirement(&mut state, 0).is_err());
+        assert!(toggle_requirement(&spec, &mut state, 0).is_err());
+    }
+
+    #[test]
+    fn a_run_with_no_review_role_declared_can_verify_a_requirement_freely() {
+        let spec = plan_only_spec("run-req-no-review", None);
+        let mut state = RunState::new("run-req-no-review");
+        state.requirements.push(Requirement {
+            statement: "WHEN ..., THE SYSTEM SHALL ...".into(),
+            acceptance_criteria: vec!["criterion".into()],
+            verified: false,
+            verified_criteria: Vec::new(),
+            auto_judge: false,
+            proposed_by: None,
+        });
+        // No devsystem.review role in plan_only_spec -- nothing to gate against.
+        toggle_requirement(&spec, &mut state, 0).unwrap();
+        assert!(state.requirements[0].verified);
+    }
+
+    #[test]
+    fn a_run_that_declares_review_blocks_verifying_without_a_real_successful_review() {
+        let spec = full_spec("run-req-gated", None);
+        let mut state = RunState::new("run-req-gated");
+        state.requirements.push(Requirement {
+            statement: "WHEN ..., THE SYSTEM SHALL ...".into(),
+            acceptance_criteria: vec!["criterion".into()],
+            verified: false,
+            verified_criteria: Vec::new(),
+            auto_judge: false,
+            proposed_by: None,
+        });
+
+        let err = toggle_requirement(&spec, &mut state, 0).expect_err("no review iteration exists yet -- must be blocked");
+        assert!(err.contains("devsystem.review"), "the error must explain what's missing: {err}");
+        assert!(!state.requirements[0].verified, "a rejected toggle must not have mutated the requirement");
+
+        // A review iteration that FAILED, or that never named this requirement, still
+        // doesn't satisfy the gate.
+        state.history.push(IterationRecord {
+            run_id: "run-req-gated".into(),
+            stage: "devsystem.review".into(),
+            iteration: 1,
+            feedback: "review failed".into(),
+            succeeded: false,
+            proposals: vec![],
+            requirement_indices: vec![0],
+        });
+        assert!(toggle_requirement(&spec, &mut state, 0).is_err(), "a failed review must not satisfy the gate");
+
+        state.history.push(IterationRecord {
+            run_id: "run-req-gated".into(),
+            stage: "devsystem.review".into(),
+            iteration: 2,
+            feedback: "reviewed a different requirement".into(),
+            succeeded: true,
+            proposals: vec![],
+            requirement_indices: vec![],
+        });
+        assert!(toggle_requirement(&spec, &mut state, 0).is_err(), "a review that didn't name this requirement must not satisfy the gate");
+
+        // A real, successful review that actually names this requirement satisfies it.
+        state.history.push(IterationRecord {
+            run_id: "run-req-gated".into(),
+            stage: "devsystem.review".into(),
+            iteration: 3,
+            feedback: "reviewed and approved".into(),
+            succeeded: true,
+            proposals: vec![],
+            requirement_indices: vec![0],
+        });
+        toggle_requirement(&spec, &mut state, 0).unwrap();
+        assert!(state.requirements[0].verified);
+
+        // Un-verifying is always allowed unconditionally, gate or not.
+        toggle_requirement(&spec, &mut state, 0).unwrap();
+        assert!(!state.requirements[0].verified);
     }
 
     #[test]

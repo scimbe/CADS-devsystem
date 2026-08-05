@@ -1070,8 +1070,9 @@ async fn toggle_requirement_handler(
     if !owner_authorized(&headers, &run_state) {
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
     }
-    if let Err(e) = toggle_requirement(&mut run_state, index) {
-        return (StatusCode::NOT_FOUND, e).into_response();
+    if let Err(e) = toggle_requirement(&spec, &mut run_state, index) {
+        let status = if e.contains("no requirement at index") { StatusCode::NOT_FOUND } else { StatusCode::CONFLICT };
+        return (status, e).into_response();
     }
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
@@ -3774,6 +3775,70 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    /// Real, mandatory quality gate over HTTP (#382 goal doc §5/§8, gap #2): once a run
+    /// declares a real `devsystem.review` role (via a real, immediately-applied stage
+    /// proposal -- the same self-optimizing path any role-filler uses), marking a
+    /// requirement verified is blocked with a real 409 until a successful review
+    /// iteration actually names it. A run that never declares review stays ungated.
+    async fn a_declared_review_role_gates_verifying_a_requirement_over_http() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-gate-run"})))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-gate-run/requirements",
+                serde_json::json!({"statement": "a real requirement", "acceptance_criteria": ["checkable"]}),
+            ))
+            .await
+            .unwrap();
+
+        // Declare devsystem.review as a real role -- the same immediately-applied
+        // proposal path any role-filler's iteration uses.
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-gate-run/iterate",
+                serde_json::json!({
+                    "stage": "devsystem.improve",
+                    "feedback": "this run needs a real review gate",
+                    "succeeded": true,
+                    "proposals": [{"proposed_by": "devsystem.improve", "stage_id": "devsystem.review", "tag": "review", "rationale": "quality gate", "use_existing_service": null, "units": 1, "price_ceiling": null}],
+                }),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/req-gate-run/requirements/0/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::CONFLICT, "review is declared but never happened -- must be blocked, not silently accepted");
+
+        // A real, successful review naming this requirement satisfies the gate.
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-gate-run/iterate",
+                serde_json::json!({"stage": "devsystem.review", "feedback": "reviewed and approved", "succeeded": true, "requirement_indices": [0]}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/req-gate-run/requirements/0/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["requirements"][0]["verified"], true);
     }
 
     #[tokio::test]
