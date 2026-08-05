@@ -314,8 +314,12 @@ faster than cold**, recompiling only what actually changed instead of the full d
    cumulative cost + a token breakdown instead of raw JSON. Confirmed live: deployed in 14s (only
    the static file changed, no rebuild needed) and the panel's real markers verified present in the
    served page.
-6. **A unified decision-basis view** (§4.2) — requirements + constraints + the actual chat/docs
-   that produced them, in one place.
+6. **A unified decision-basis view** (§4.2) — **first slice done** (`CADS-devsystem@cfaac7d`): each
+   requirement's Requirements-panel entry now expands into a real "decision basis" -- the actual
+   feedback and real constraints from every iteration that claimed to address it, right there,
+   instead of sending someone to piece it together from the separate History/Memory Log panels.
+   Still open: the assistant's own chat exchanges aren't pulled in yet, only iteration history --
+   the "chat/docs" half of this gap's own description.
 7. ~~**A real requirements export**~~ — **done** (`CADS-devsystem@950931a`): `GET
    /api/runs/{id}/requirements/export` renders a real Markdown document (statement, a real
    verified checklist per acceptance criterion, provenance from gap #1), real `Content-Disposition`
