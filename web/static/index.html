@@ -2011,13 +2011,22 @@ function renderRequirementsPanel(id, data) {
   const body = document.getElementById('body-requirements');
   const requirements = data.state.requirements || [];
   // Real traceability, reverse direction from the History panel: which real
-  // iterations (if any) actually claimed to address each requirement.
+  // iterations (if any) actually claimed to address each requirement. Keeps the
+  // full record, not just the iteration number, so the panel can show the real
+  // decision basis right here (#382 goal doc §4.2, gap #6 -- "requirements +
+  // constraints + the actual chat/docs that produced them, in one place") instead
+  // of sending someone to the Memory Log panel to piece it together by hand.
   const addressedBy = requirements.map(() => []);
   for (const h of (data.state.history || [])) {
     for (const i of (h.requirement_indices || [])) {
-      if (addressedBy[i]) addressedBy[i].push(h.iteration);
+      if (addressedBy[i]) addressedBy[i].push(h);
     }
   }
+  // Same real derivation envelope.rs's own server-side rendering uses
+  // (constraints = proposals.map(p => "stage_id: rationale")) -- mirrored here so
+  // this panel doesn't need a second fetch to the Memory Log endpoint just to show
+  // the same real data.
+  const constraintsOf = (h) => (h.proposals || []).map(p => `${p.stage_id}: ${p.rationale}`);
   // Real, purely additive per-criterion tracking (2026-08-05 follow-up):
   // verified_criteria may be shorter than acceptance_criteria (or entirely
   // absent) for any requirement that predates this field or simply hasn't
@@ -2044,7 +2053,19 @@ function renderRequirementsPanel(id, data) {
                 <span>${escapeHtml(c)}</span>
               </label>`).join('')}
           </div>
-          <div class="lede" style="font-size:.7rem;margin-top:.3rem">${addressedBy[i].length ? `addressed by iteration(s) ${addressedBy[i].join(', ')}` : 'not yet addressed by any iteration'}</div>
+          <div class="lede" style="font-size:.7rem;margin-top:.3rem">${addressedBy[i].length ? `addressed by iteration(s) ${addressedBy[i].map(h => h.iteration).join(', ')}` : 'not yet addressed by any iteration'}</div>
+          ${addressedBy[i].length ? `
+          <details style="margin-top:.3rem">
+            <summary class="lede" style="font-size:.7rem;cursor:pointer">decision basis</summary>
+            <div style="margin-top:.25rem;display:flex;flex-direction:column;gap:.45rem">
+              ${addressedBy[i].map(h => `
+                <div style="border-left:2px solid var(--border);padding-left:.5rem">
+                  <div class="lede" style="font-size:.68rem">iteration ${h.iteration} (\`${escapeHtml(h.stage)}\`, ${h.succeeded ? 'ok' : 'FAILED'})</div>
+                  <div style="font-size:.75rem;margin-top:.1rem">${escapeHtml(truncate(h.feedback, 220))}</div>
+                  ${constraintsOf(h).length ? `<div class="lede" style="font-size:.68rem;margin-top:.2rem">constraints for what comes next: ${constraintsOf(h).map(c => escapeHtml(c)).join('; ')}</div>` : ''}
+                </div>`).join('')}
+            </div>
+          </details>` : ''}
           <label class="backlog-item" style="margin-top:.3rem;font-size:.72rem" title="Human by default. Opt in to let devsystem.assistant judge this requirement's acceptance criteria itself.">
             <input type="checkbox" class="requirement-auto-judge-toggle" data-index="${i}" ${r.auto_judge ? 'checked' : ''}>
             <span>automode (let the assistant judge this one)</span>
