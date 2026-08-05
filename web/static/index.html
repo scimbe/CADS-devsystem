@@ -1240,6 +1240,13 @@ async function renderRagPanel(id, data) {
         <button type="submit">Upload</button>
         <span id="rag-upload-status" class="status-line"></span>
       </form>
+      <form id="rag-file-upload-form" style="margin-top:.6rem;border-top:1px solid var(--border,#333);padding-top:.5rem">
+        <label style="font-size:.72rem;color:var(--muted)">or upload a real file (PDF/DOCX/image -- extracted via Unstructured, may report itself unconfigured if RAG_UNSTRUCTURED_API_KEY isn't set on this deployment)
+          <input id="rag-file-input" type="file" accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.gif,.webp,.tiff" required style="display:block;margin-top:.3rem">
+        </label>
+        <button type="submit">Upload file</button>
+        <span id="rag-file-upload-status" class="status-line"></span>
+      </form>
     </details>`;
 
   const resultsEl = document.getElementById('rag-results');
@@ -1285,6 +1292,29 @@ async function renderRagPanel(id, data) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ path, text }),
       });
+      await renderRagPanel(id, data);
+    } catch (err) {
+      statusEl.textContent = err.message; statusEl.className = 'status-line err';
+    }
+  });
+  document.getElementById('rag-file-upload-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const statusEl = document.getElementById('rag-file-upload-status');
+    const fileInput = document.getElementById('rag-file-input');
+    const file = fileInput.files[0];
+    if (!file) { statusEl.textContent = 'Choose a file first.'; statusEl.className = 'status-line err'; return; }
+    statusEl.textContent = 'Uploading and extracting…'; statusEl.className = 'status-line';
+    // Real multipart/form-data, no 'content-type' header set here on purpose --
+    // the browser sets it (with the real boundary) automatically for a
+    // FormData body; setting it by hand would omit the boundary and the
+    // server's multipart parser would reject the request.
+    const form = new FormData();
+    form.append('file', file, file.name);
+    try {
+      const r = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/rag/upload-file`, { method: 'POST', body: form });
+      statusEl.textContent = `Extracted ${r.elements_extracted} element(s)${r.extracted_text_truncated ? ' (text truncated to the size cap)' : ''}.`;
+      statusEl.className = 'status-line ok';
+      fileInput.value = '';
       await renderRagPanel(id, data);
     } catch (err) {
       statusEl.textContent = err.message; statusEl.className = 'status-line err';

@@ -100,11 +100,16 @@ design. Landed so far:
   `devsystem.android_native_bridge` (the real, CI-green native-bridge work
   above) is queued and awaiting the operator's own approval, not
   auto-applied.
+- ✅ **RAG search** (`web/`, `#7`): real keyword + semantic search + real
+  Unstructured document/image extraction over a run's synced repo and
+  uploaded documents, real Postgres+pgvector storage for the semantic index.
+  See [`docs/rag-search.md`](docs/rag-search.md) for the required environment
+  variables and what degrades honestly when they're unset.
 - ❌ Not started: mem0/Qdrant actually loading `memory.jsonl` (the log format
-  is ready; nothing consumes it yet), the resource/SaaS/agent catalog, the
-  local git server, and automatic (LLM-judged) acceptance-criteria
-  verification — all real, explicitly deferred design questions, not
-  guessed at.
+  is ready; nothing consumes it yet), the visual pipeline editor, the
+  resource/SaaS/agent catalog, the local git server, and automatic
+  (LLM-judged) acceptance-criteria verification — all real, explicitly
+  deferred design questions, not guessed at.
 
 ## What's reused from CADS-Tunnel/ct-agent, unchanged
 

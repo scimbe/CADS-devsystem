@@ -7,6 +7,7 @@
 //! is just the first one, not a hardcoded case anywhere in this file.
 
 mod rag;
+mod vector_store;
 
 use axum::extract::{Path as AxPath, Query, State};
 use axum::http::StatusCode;
@@ -69,6 +70,31 @@ struct AppState {
     /// success. Never logged, never returned in any response.
     github_token: Option<Arc<str>>,
     http_client: reqwest::Client,
+    /// Real embedding credential for RAG semantic search (`rag::embed_texts`),
+    /// `RAG_EMBEDDING_API_KEY` at startup -- `None` when unconfigured, the same
+    /// honest-degrade contract `assistant_url` already established: `search_rag`
+    /// falls back to keyword-only search rather than fabricating a "semantic"
+    /// result with no real embedding behind it.
+    rag_embedding_api_key: Option<Arc<str>>,
+    /// Embedding provider's API base URL, `RAG_EMBEDDING_API_BASE` at startup,
+    /// defaulting to OpenAI's -- overridable so a real alternate
+    /// OpenAI-compatible provider (or a test's own mock server) never requires
+    /// a code change, only a different env var.
+    rag_embedding_api_base: Arc<str>,
+    /// Real Unstructured API credential (`rag::parse_with_unstructured`),
+    /// `RAG_UNSTRUCTURED_API_KEY` at startup -- `None` when unconfigured, same
+    /// honest-degrade contract: `upload_rag_file` reports a clear "not
+    /// configured" error rather than pretending to extract anything.
+    rag_unstructured_api_key: Option<Arc<str>>,
+    /// `RAG_UNSTRUCTURED_API_BASE` at startup, defaulting to the real hosted
+    /// `api.unstructured.io`.
+    rag_unstructured_api_base: Arc<str>,
+    /// Real Postgres+pgvector pool for RAG semantic search
+    /// (`vector_store::semantic_search`), `DATABASE_URL` at startup --
+    /// `None` when unconfigured, same honest-degrade contract as the other
+    /// two RAG credentials: `search_rag` falls back to the embedded/JSON
+    /// semantic search path rather than erroring.
+    rag_db_pool: Option<sqlx::PgPool>,
 }
 
 fn unix_now() -> u64 {
@@ -111,6 +137,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/rag/sync", post(sync_rag))
         .route("/api/runs/{id}/rag/search", get(search_rag))
         .route("/api/runs/{id}/rag/documents", post(add_rag_document))
+        .route("/api/runs/{id}/rag/upload-file", post(upload_rag_file))
         .route("/api/runs/{id}/rag/documents/{doc_id}/remove", post(remove_rag_document))
         .route("/api/runs/{id}/panels", post(add_custom_panel))
         .route("/api/runs/{id}/panels/{panel_id}/remove", post(remove_custom_panel))
@@ -202,6 +229,40 @@ async fn main() {
     if assistant_url.is_none() {
         println!("DEVSYSTEM_ASSISTANT_URL not set -- the Assistant panel will report itself unconfigured");
     }
+    let rag_embedding_api_key: Option<Arc<str>> = std::env::var("RAG_EMBEDDING_API_KEY").ok().filter(|s| !s.trim().is_empty()).map(Arc::from);
+    if rag_embedding_api_key.is_none() {
+        println!("RAG_EMBEDDING_API_KEY not set -- RAG search will stay keyword-only, no semantic results");
+    }
+    let rag_embedding_api_base: Arc<str> =
+        std::env::var("RAG_EMBEDDING_API_BASE").ok().filter(|s| !s.trim().is_empty()).map(Arc::from).unwrap_or_else(|| Arc::from("https://api.openai.com/v1"));
+    let rag_unstructured_api_key: Option<Arc<str>> = std::env::var("RAG_UNSTRUCTURED_API_KEY").ok().filter(|s| !s.trim().is_empty()).map(Arc::from);
+    if rag_unstructured_api_key.is_none() {
+        println!("RAG_UNSTRUCTURED_API_KEY not set -- POST /rag/upload-file will report itself unconfigured");
+    }
+    let rag_unstructured_api_base: Arc<str> = std::env::var("RAG_UNSTRUCTURED_API_BASE")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(Arc::from)
+        .unwrap_or_else(|| Arc::from("https://api.unstructured.io"));
+    // Real, not best-effort: if DATABASE_URL is set, this deployment is
+    // declaring it wants real Postgres-backed semantic search, so a real
+    // connect/migrate failure here is a real startup error, not something to
+    // silently degrade past -- unlike the other RAG credentials, an unset
+    // DATABASE_URL (rag_db_pool: None) is the honest "not configured" case;
+    // a *set-but-broken* one should fail loudly at boot, not at the first
+    // real search request.
+    let rag_db_pool: Option<sqlx::PgPool> = match std::env::var("DATABASE_URL").ok().filter(|s| !s.trim().is_empty()) {
+        Some(url) => {
+            let pool = vector_store::connect(&url).await.expect("connect to DATABASE_URL");
+            vector_store::run_migrations(&pool).await.expect("run RAG vector_store migrations");
+            println!("DATABASE_URL configured -- RAG semantic search backed by real Postgres+pgvector");
+            Some(pool)
+        }
+        None => {
+            println!("DATABASE_URL not set -- RAG semantic search stays on the embedded/JSON-index path");
+            None
+        }
+    };
     let github_token: Option<Arc<str>> = std::env::var("DEVSYSTEM_GITHUB_TOKEN").ok().filter(|s| !s.trim().is_empty()).map(Arc::from);
     if github_token.is_none() {
         println!("DEVSYSTEM_GITHUB_TOKEN not set -- approving an issue proposal will report itself unconfigured");
@@ -213,6 +274,11 @@ async fn main() {
         assistant_url,
         github_token,
         http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().expect("build http client"),
+        rag_embedding_api_key,
+        rag_embedding_api_base,
+        rag_unstructured_api_key,
+        rag_unstructured_api_base,
+        rag_db_pool,
     };
 
     let static_dir = std::env::var("DEVSYSTEM_STATIC_DIR").unwrap_or_else(|_| "web/static".to_string());
@@ -1090,6 +1156,75 @@ fn persist_rag_index(state: &AppState, id: &str, index: &rag::RagIndex) -> Resul
     fs::write(rag_index_path(state, id), s).map_err(|e| e.to_string())
 }
 
+/// Real batch embedding of whatever in `index` doesn't have one yet -- chunks
+/// from a fresh `sync_repo` always lack one (real chunks are never embedded
+/// twice), manual documents already carrying an embedding (preserved across a
+/// re-sync) are skipped so a re-sync doesn't re-spend real embedding cost on
+/// unchanged text. One real batched API call for however many texts need it,
+/// not one call per chunk -- `embed_texts` already accepts a batch. No-ops
+/// (and costs nothing) when no embedding credential is configured, or when
+/// there's genuinely nothing new to embed. Logs, never panics, on a real
+/// provider failure -- a sync/upload still succeeds with keyword-only search
+/// for the new content rather than failing the whole operation over a
+/// secondary feature.
+async fn embed_index_in_place(state: &AppState, index: &mut rag::RagIndex) {
+    let Some(api_key) = state.rag_embedding_api_key.clone() else {
+        return;
+    };
+    let chunk_idxs: Vec<usize> = index.chunks.iter().enumerate().filter(|(_, c)| c.embedding.is_none()).map(|(i, _)| i).collect();
+    let doc_idxs: Vec<usize> = index.manual_documents.iter().enumerate().filter(|(_, d)| d.embedding.is_none()).map(|(i, _)| i).collect();
+    if chunk_idxs.is_empty() && doc_idxs.is_empty() {
+        return;
+    }
+    let texts: Vec<String> =
+        chunk_idxs.iter().map(|&i| index.chunks[i].text.clone()).chain(doc_idxs.iter().map(|&i| index.manual_documents[i].text.clone())).collect();
+    match rag::embed_texts(&state.http_client, &state.rag_embedding_api_base, &api_key, &texts).await {
+        Ok(embeddings) => {
+            for (offset, &i) in chunk_idxs.iter().enumerate() {
+                index.chunks[i].embedding = Some(embeddings[offset].clone());
+            }
+            for (offset, &i) in doc_idxs.iter().enumerate() {
+                index.manual_documents[i].embedding = Some(embeddings[chunk_idxs.len() + offset].clone());
+            }
+        }
+        Err(e) => eprintln!("devsystem-web: RAG embedding failed for {} chunk(s)/{} document(s), continuing keyword-only for them: {e}", chunk_idxs.len(), doc_idxs.len()),
+    }
+}
+
+/// Mirrors the current in-memory `index` into real Postgres (when
+/// `DATABASE_URL` is configured), source-kind by source-kind so
+/// [`vector_store::replace_chunks`]'s wholesale-replace semantics apply
+/// independently to repo-synced chunks vs. manual/uploaded documents --
+/// re-syncing a repo must not wipe uploaded documents from Postgres either,
+/// the same real invariant `sync_rag`'s own JSON-index splicing already
+/// protects. A real Postgres write failure is logged, never panics or fails
+/// the caller's request: Postgres here is a real second index alongside the
+/// JSON one, not (yet) the sole source of truth, so a transient DB error
+/// degrades to "semantic search via Postgres missed this update," not "the
+/// whole upload/sync failed."
+async fn sync_vector_store(state: &AppState, run_id: &str, index: &rag::RagIndex) {
+    let Some(pool) = &state.rag_db_pool else {
+        return;
+    };
+    let now = unix_now() as i64;
+    let repo_chunks: Vec<vector_store::ChunkToStore> = index
+        .chunks
+        .iter()
+        .map(|c| vector_store::ChunkToStore { path: c.path.clone(), chunk_index: c.index as i32, text: c.text.clone(), embedding: c.embedding.clone() })
+        .collect();
+    if let Err(e) = vector_store::replace_chunks(pool, run_id, "repo_sync", &repo_chunks, now).await {
+        eprintln!("devsystem-web: could not mirror repo-synced chunks into Postgres for run {run_id}: {e}");
+    }
+    let manual_chunks: Vec<vector_store::ChunkToStore> = index
+        .manual_documents
+        .iter()
+        .map(|d| vector_store::ChunkToStore { path: d.path.clone(), chunk_index: 0, text: d.text.clone(), embedding: d.embedding.clone() })
+        .collect();
+    if let Err(e) = vector_store::replace_chunks(pool, run_id, "manual_document", &manual_chunks, now).await {
+        eprintln!("devsystem-web: could not mirror manual documents into Postgres for run {run_id}: {e}");
+    }
+}
+
 /// `POST /api/runs/{id}/rag/sync` (#382 task 29): real fetch + chunk + index of
 /// whatever `RunState.repo_url` currently names, via [`rag::sync_repo`]. Owner-
 /// restricted like every other GUI mutation -- this hits GitHub's real API on the
@@ -1120,6 +1255,8 @@ async fn sync_rag(State(state): State<AppState>, AxPath(id): AxPath<String>, hea
     match rag::sync_repo(&state.http_client, &repo_url, unix_now()).await {
         Ok(mut index) => {
             index.manual_documents = existing_manual;
+            embed_index_in_place(&state, &mut index).await;
+            sync_vector_store(&state, &id, &index).await;
             let summary = serde_json::json!({
                 "repo_url": index.repo_url,
                 "branch": index.branch,
@@ -1168,7 +1305,49 @@ async fn search_rag(
     let Some(index) = load_rag_index(&state, &id) else {
         return Json(serde_json::json!({"configured": false, "results": [], "manual_documents": []})).into_response();
     };
-    let results = rag::search(&index, q.q.trim(), 10);
+    // Real semantic search only when a real embedding credential is configured
+    // -- an embedding failure (bad key, provider outage) degrades to
+    // keyword-only results rather than failing the whole search, since the
+    // keyword path never depended on this credential and shouldn't start
+    // failing because of it.
+    let query_embedding = match &state.rag_embedding_api_key {
+        Some(key) => match rag::embed_texts(&state.http_client, &state.rag_embedding_api_base, key, &[q.q.trim().to_string()]).await {
+            Ok(mut embeddings) => embeddings.pop(),
+            Err(e) => {
+                eprintln!("devsystem-web: RAG query embedding failed, falling back to keyword-only search: {e}");
+                None
+            }
+        },
+        None => None,
+    };
+    let mut results = rag::combined_search(&index, q.q.trim(), query_embedding.as_deref(), 10);
+    // Real Postgres semantic search, additive to the embedded/JSON path
+    // above -- when both are configured, Postgres is the real source of
+    // truth for "closest embedding" (a real ANN index, not a brute-force
+    // scan of whatever's in this request's in-memory RagIndex), but a
+    // Postgres error degrades to whatever the embedded path already found
+    // rather than failing the whole search.
+    if let (Some(pool), Some(qe)) = (&state.rag_db_pool, &query_embedding) {
+        match vector_store::semantic_search(pool, &id, qe, 10).await {
+            Ok(hits) => {
+                for hit in hits {
+                    let snippet: String = hit.text.trim().chars().take(400).collect();
+                    let score = (hit.score * 100.0).round() as u32;
+                    match results.iter_mut().find(|r| r.path == hit.path && r.snippet == snippet) {
+                        Some(existing) if score > existing.score => {
+                            existing.score = score;
+                            existing.match_kind = rag::MatchKind::Semantic;
+                        }
+                        Some(_) => {}
+                        None => results.push(rag::RagSearchResult { path: hit.path, score, snippet, match_kind: rag::MatchKind::Semantic }),
+                    }
+                }
+                results.sort_by(|a, b| b.score.cmp(&a.score));
+                results.truncate(10);
+            }
+            Err(e) => eprintln!("devsystem-web: real Postgres semantic search failed for run {id}, falling back to the embedded results already found: {e}"),
+        }
+    }
     // Metadata only (id/path/added_at) -- the real text is only ever returned
     // via a search match's snippet, not the management listing, so the GUI's
     // document list doesn't have to fetch (and the network doesn't have to
@@ -1243,10 +1422,106 @@ async fn add_rag_document(
         chunks: Vec::new(),
         manual_documents: Vec::new(),
     });
-    let doc = rag::RagDocument { id: format!("{:016x}", rand::random::<u64>()), path, text: body.text, added_at: unix_now() };
+    let doc = rag::RagDocument { id: format!("{:016x}", rand::random::<u64>()), path, text: body.text, added_at: unix_now(), embedding: None };
     index.manual_documents.push(doc.clone());
+    embed_index_in_place(&state, &mut index).await;
+    sync_vector_store(&state, &id, &index).await;
     match persist_rag_index(&state, &id, &index) {
         Ok(()) => Json(serde_json::json!({"id": doc.id, "path": doc.path, "added_at": doc.added_at})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the index: {e}")).into_response(),
+    }
+}
+
+/// Real cap on a raw upload's bytes before it's even sent to Unstructured --
+/// the requirements doc's own ask ("an image file needs its own real, stated
+/// size cap"), separate from [`rag::MAX_UNSTRUCTURED_EXTRACTED_CHARS`] (which
+/// caps the *extracted text*, not the upload itself). 10MB covers a real
+/// scanned page or a typical PDF without letting an unbounded upload spend
+/// unbounded real Unstructured API cost on this operator's behalf.
+const MAX_RAG_UPLOAD_BYTES: usize = 10_000_000;
+
+/// `POST /api/runs/{id}/rag/upload-file` -- real image/PDF/DOCX upload via the
+/// real Unstructured API (`rag::parse_with_unstructured`), the operator's
+/// explicit image-OCR ask from CADS-devsystem#7. `multipart/form-data`, one
+/// field named `file`. Owner-restricted like every other GUI mutation; a real
+/// `503` (not a silent no-op) when `RAG_UNSTRUCTURED_API_KEY` isn't
+/// configured, matching `ask_assistant`'s own "not configured" precedent
+/// rather than pretending to accept a file it can't actually process.
+async fn upload_rag_file(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap, mut multipart: axum::extract::Multipart) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let Some(api_key) = state.rag_unstructured_api_key.clone() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "RAG_UNSTRUCTURED_API_KEY is not configured on this deployment").into_response();
+    };
+    let _guard = state.write_lock.lock().await;
+    let run_state = match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, s)) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let mut filename = String::new();
+    let mut bytes: Vec<u8> = Vec::new();
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => return (StatusCode::BAD_REQUEST, format!("malformed multipart upload: {e}")).into_response(),
+        };
+        if field.name() != Some("file") {
+            continue;
+        }
+        filename = field.file_name().unwrap_or("upload").to_string();
+        bytes = match field.bytes().await {
+            Ok(b) => b.to_vec(),
+            Err(e) => return (StatusCode::BAD_REQUEST, format!("could not read the uploaded file: {e}")).into_response(),
+        };
+    }
+    if bytes.is_empty() {
+        return (StatusCode::BAD_REQUEST, "no file field found in the upload (expected a multipart field named 'file')").into_response();
+    }
+    if bytes.len() > MAX_RAG_UPLOAD_BYTES {
+        return (StatusCode::BAD_REQUEST, format!("upload must be under {MAX_RAG_UPLOAD_BYTES} bytes")).into_response();
+    }
+    let elements = match rag::parse_with_unstructured(&state.http_client, &state.rag_unstructured_api_base, &api_key, &filename, bytes).await {
+        Ok(e) => e,
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("Unstructured extraction failed: {e}")).into_response(),
+    };
+    let (text, truncated) = rag::elements_to_text(&elements);
+    if text.trim().is_empty() {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "Unstructured extracted no text from this file", "elements": elements.len()})),
+        )
+            .into_response();
+    }
+    let mut index = load_rag_index(&state, &id).unwrap_or_else(|| rag::RagIndex {
+        repo_url: run_state.repo_url.clone().unwrap_or_default(),
+        synced_at: 0,
+        branch: String::new(),
+        files_seen: 0,
+        files_indexed: 0,
+        chunks: Vec::new(),
+        manual_documents: Vec::new(),
+    });
+    let doc = rag::RagDocument { id: format!("{:016x}", rand::random::<u64>()), path: filename, text, added_at: unix_now(), embedding: None };
+    index.manual_documents.push(doc.clone());
+    embed_index_in_place(&state, &mut index).await;
+    sync_vector_store(&state, &id, &index).await;
+    match persist_rag_index(&state, &id, &index) {
+        Ok(()) => Json(serde_json::json!({
+            "id": doc.id,
+            "path": doc.path,
+            "added_at": doc.added_at,
+            "elements_extracted": elements.len(),
+            "extracted_text_truncated": truncated,
+        }))
+        .into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the index: {e}")).into_response(),
     }
 }
@@ -1278,10 +1553,16 @@ async fn remove_rag_document(
     let Some(mut index) = load_rag_index(&state, &id) else {
         return (StatusCode::NOT_FOUND, "no RAG index for this run yet").into_response();
     };
+    let removed_path = index.manual_documents.iter().find(|d| d.id == doc_id).map(|d| d.path.clone());
     let before = index.manual_documents.len();
     index.manual_documents.retain(|d| d.id != doc_id);
     if index.manual_documents.len() == before {
         return (StatusCode::NOT_FOUND, format!("no manual document with id {doc_id:?}")).into_response();
+    }
+    if let (Some(pool), Some(path)) = (&state.rag_db_pool, &removed_path) {
+        if let Err(e) = vector_store::delete_by_path(pool, &id, "manual_document", path).await {
+            eprintln!("devsystem-web: could not remove {path:?} from Postgres for run {id}: {e}");
+        }
     }
     match persist_rag_index(&state, &id, &index) {
         Ok(()) => Json(serde_json::json!({"removed": doc_id})).into_response(),
@@ -2055,7 +2336,26 @@ mod tests {
             assistant_url: assistant_url.map(Arc::from),
             github_token: None,
             http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().expect("build http client"),
+            rag_embedding_api_key: None,
+            rag_embedding_api_base: Arc::from("https://api.openai.com/v1"),
+            rag_unstructured_api_key: None,
+            rag_unstructured_api_base: Arc::from("https://api.unstructured.io"),
+            rag_db_pool: None,
         };
+        (state, dir)
+    }
+
+    fn test_state_with_rag_embedding(api_key: &str, api_base: &str) -> (AppState, tempfile::TempDir) {
+        let (mut state, dir) = test_state();
+        state.rag_embedding_api_key = Some(Arc::from(api_key));
+        state.rag_embedding_api_base = Arc::from(api_base);
+        (state, dir)
+    }
+
+    fn test_state_with_rag_unstructured(api_key: &str, api_base: &str) -> (AppState, tempfile::TempDir) {
+        let (mut state, dir) = test_state();
+        state.rag_unstructured_api_key = Some(Arc::from(api_key));
+        state.rag_unstructured_api_base = Arc::from(api_base);
         (state, dir)
     }
 
@@ -3674,6 +3974,11 @@ mod tests {
             assistant_url: None,
             github_token: None,
             http_client: reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().expect("build http client"),
+            rag_embedding_api_key: None,
+            rag_embedding_api_base: Arc::from("https://api.openai.com/v1"),
+            rag_unstructured_api_key: None,
+            rag_unstructured_api_base: Arc::from("https://api.unstructured.io"),
+            rag_db_pool: None,
         };
         let app = api_router(state);
 
@@ -4005,6 +4310,198 @@ mod tests {
             axum::serve(listener, mock_app).await.expect("serve mock");
         });
         (port, rx)
+    }
+
+    /// Real local embedding-API mock -- always returns the same fixed unit
+    /// vector for every input, real HTTP round trip through the exact
+    /// `rag::embed_texts` client code, not a stub of that function itself.
+    /// Good enough to prove the real wiring (upload -> embed -> persist ->
+    /// query-embed -> cosine-match -> `match_kind: "semantic"` in the real
+    /// HTTP response) without needing a real OpenAI credential.
+    async fn spawn_mock_embedding_server() -> String {
+        let mock_app = axum::Router::new().route(
+            "/embeddings",
+            axum::routing::post(|Json(body): Json<serde_json::Value>| async move {
+                let n = body["input"].as_array().map(|a| a.len()).unwrap_or(1);
+                let data: Vec<_> = (0..n).map(|i| serde_json::json!({"embedding": [1.0, 0.0], "index": i})).collect();
+                Json(serde_json::json!({"data": data}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind mock listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, mock_app).await.expect("serve mock");
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn rag_search_returns_a_real_semantic_match_when_an_embedding_credential_is_configured() {
+        let base = spawn_mock_embedding_server().await;
+        let (state, _dir) = test_state_with_rag_embedding("fake-key", &base);
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-semantic-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/rag-semantic-run/rag/documents",
+                serde_json::json!({"path": "notes.txt", "text": "completely different wording with no shared keywords at all"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "upload must succeed even though it triggers a real embedding call");
+
+        // A query with zero keyword overlap against the uploaded text -- the
+        // mock server embeds everything to the identical vector, so this can
+        // only match via the real semantic path, never score_chunk's keyword
+        // overlap. Proves match_kind: "semantic" is real, not a label slapped
+        // on a keyword hit.
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/rag-semantic-run/rag/search?q=xyz-no-overlap-query").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        let results = body["results"].as_array().expect("real results array");
+        assert_eq!(results.len(), 1, "the semantic-only match must still surface");
+        assert_eq!(results[0]["path"], "notes.txt");
+        assert_eq!(results[0]["match_kind"], "semantic");
+    }
+
+    #[tokio::test]
+    async fn rag_search_stays_keyword_only_when_no_embedding_credential_is_configured() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-keyword-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/rag-keyword-run/rag/documents", serde_json::json!({"path": "notes.txt", "text": "hello world"})))
+            .await
+            .unwrap();
+
+        let response =
+            app.oneshot(Request::builder().uri("/api/runs/rag-keyword-run/rag/search?q=hello").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["results"][0]["match_kind"], "keyword", "no credential configured must never fabricate a semantic result");
+    }
+
+    /// Real `multipart/form-data` body, hand-built rather than via `reqwest`'s
+    /// multipart builder -- this drives `api_router()` in-process via
+    /// `tower::ServiceExt::oneshot`, no real socket, so the request has to be
+    /// assembled as raw bytes the same way a real client's would arrive.
+    fn multipart_file_request(uri: &str, filename: &str, content: &[u8]) -> Request<Body> {
+        let boundary = "----ragtestboundary";
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes());
+        body.extend_from_slice(content);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+            .body(Body::from(body))
+            .unwrap()
+    }
+
+    async fn spawn_mock_unstructured_server(status: SC, response_body: serde_json::Value) -> String {
+        let mock_app = Router::new().route(
+            "/general/v0/general",
+            post(move || {
+                let status = status;
+                let response_body = response_body.clone();
+                async move { (status, Json(response_body)) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind mock listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, mock_app).await.expect("serve mock");
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn upload_rag_file_reports_unconfigured_honestly_not_silently() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-upload-run"}))).await.unwrap();
+
+        let response = app.oneshot(multipart_file_request("/api/runs/rag-upload-run/rag/upload-file", "scan.png", b"fake-image-bytes")).await.unwrap();
+        assert_eq!(response.status(), SC::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn upload_rag_file_extracts_real_text_and_makes_it_searchable() {
+        let base = spawn_mock_unstructured_server(
+            SC::OK,
+            serde_json::json!([
+                {"text": "Invoice Number 4471", "type": "Title"},
+                {"text": "A real OCR pass over the uploaded image extracted this line.", "type": "NarrativeText"}
+            ]),
+        )
+        .await;
+        let (state, _dir) = test_state_with_rag_unstructured("fake-key", &base);
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-upload-run"}))).await.unwrap();
+
+        let response = app.clone().oneshot(multipart_file_request("/api/runs/rag-upload-run/rag/upload-file", "invoice.png", b"fake-image-bytes")).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let created = body_json(response).await;
+        assert_eq!(created["path"], "invoice.png");
+        assert_eq!(created["elements_extracted"], 2);
+        assert_eq!(created["extracted_text_truncated"], false);
+
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/rag-upload-run/rag/search?q=Invoice+4471").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["results"][0]["path"], "invoice.png", "the real extracted text must be genuinely searchable, not just stored");
+    }
+
+    #[tokio::test]
+    async fn upload_rag_file_with_no_file_field_is_a_real_400() {
+        let (state, _dir) = test_state_with_rag_unstructured("fake-key", "http://127.0.0.1:1");
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-upload-run"}))).await.unwrap();
+
+        let boundary = "----empty";
+        let body = format!("--{boundary}--\r\n");
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/runs/rag-upload-run/rag/upload-file")
+            .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+            .body(Body::from(body))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn upload_rag_file_of_a_genuinely_blank_image_is_a_real_422_not_a_placeholder_document() {
+        let base = spawn_mock_unstructured_server(SC::OK, serde_json::json!([])).await;
+        let (state, _dir) = test_state_with_rag_unstructured("fake-key", &base);
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-upload-run"}))).await.unwrap();
+
+        let response = app.oneshot(multipart_file_request("/api/runs/rag-upload-run/rag/upload-file", "blank.png", b"fake-blank-image")).await.unwrap();
+        assert_eq!(response.status(), SC::UNPROCESSABLE_ENTITY, "an upload that extracts no real text must not silently become an empty stored document");
+    }
+
+    #[tokio::test]
+    async fn a_different_account_cannot_upload_a_rag_file_to_someone_elses_run() {
+        let base = spawn_mock_unstructured_server(SC::OK, serde_json::json!([{"text": "text", "type": "Title"}])).await;
+        let (state, _dir) = test_state_with_rag_unstructured("fake-key", &base);
+        let app = api_router(state);
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "owner@example.com", Some(serde_json::json!({"run_id": "rag-upload-owned-run"}))))
+            .await
+            .unwrap();
+
+        let mut request = multipart_file_request("/api/runs/rag-upload-owned-run/rag/upload-file", "scan.png", b"fake-image-bytes");
+        request.headers_mut().insert("x-gate-email", "someone-else@example.com".parse().unwrap());
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), SC::FORBIDDEN);
     }
 
     #[tokio::test]
