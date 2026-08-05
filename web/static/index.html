@@ -194,6 +194,9 @@
  .paused-banner{background:rgba(217,138,79,.15);border:1px solid var(--accent);color:var(--accent);
                 border-radius:8px;padding:.5rem .7rem;font-family:var(--mono);font-size:.78rem;
                 font-weight:700;margin-bottom:.6rem}
+ .start-here-banner{background:rgba(95,184,171,.15);border:1px solid var(--accent2);color:var(--accent2);
+                border-radius:8px;padding:.5rem .7rem;font-family:var(--mono);font-size:.75rem;
+                margin-bottom:.6rem}
  .health{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:.8rem;font-family:var(--mono);font-size:.75rem}
  .health .stat{border:1px solid var(--border);border-radius:6px;padding:.3rem .55rem;color:var(--muted)}
  .health .stat b{color:var(--text)}
@@ -2100,8 +2103,20 @@ function renderRequirementsPanel(id, data) {
           </label>
         </div>`;
       }).join('')
-    : '<span class="lede">No requirements yet.</span>';
+    : '';
+  // Real DAU-lens gap (#382 goal doc §7.1, gap #3): "a run with zero
+  // requirements yet should foreground 'add your first requirement', not bury
+  // it behind six other panels." Requirements is already in the sensible
+  // default-visible panel set, but its own empty state was just a plain muted
+  // "No requirements yet." line -- easy to skim past, no active nudge toward
+  // the form sitting right below it. A genuinely fresh run now gets an
+  // explicit first-action callout instead, and the statement field is
+  // auto-focused so a DAU can start typing immediately.
+  const startHere = requirements.length ? '' : `
+    <div class="start-here-banner">👋 Start here: this run has no requirements yet.
+    Add your first one below -- it's what gives the pipeline something concrete to build toward.</div>`;
   body.innerHTML = `
+    ${startHere}
     <div class="backlog-list">${items}</div>
     <div class="lede" style="font-size:.72rem;margin-top:.4rem">EARS-style: "WHEN &lt;trigger&gt;, THE SYSTEM SHALL &lt;behavior&gt;". One acceptance criterion per line, at least one required.</div>
     <form class="inline" id="requirement-form" style="margin-top:.6rem;flex-direction:column;align-items:stretch;gap:.3rem">
@@ -2112,6 +2127,14 @@ function renderRequirementsPanel(id, data) {
     <div id="requirement-status" class="status-line"></div>
     ${requirements.length ? `<a class="btn secondary" style="margin-top:.6rem" href="${API}/runs/${encodeURIComponent(id)}/requirements/export" download="requirements.md">⬇ Download as Markdown</a>` : ''}
   `;
+  // Only steal focus into a visible panel the user can actually see -- this
+  // panel is in the sensible default-visible set, but a user may have hidden
+  // it, and an invisible input silently grabbing keystrokes would be its own
+  // real DAU-lens bug, not a fix for one.
+  if (!requirements.length && panelRect('requirements').visible) {
+    const statementInput = document.getElementById('requirement-statement');
+    if (statementInput) statementInput.focus();
+  }
   for (const cb of body.querySelectorAll('.requirement-toggle')) {
     cb.onchange = () => {
       // Real DAU-lens gap: un-verifying is always unconditional server-side (by
