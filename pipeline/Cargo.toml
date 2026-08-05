@@ -28,4 +28,9 @@ rand = "0.8"
 # takes several real seconds for the LLM call -- serialized handling is a
 # feature here, not a limitation, it caps concurrent LLM spend).
 tiny_http = "0.12"
+# devsystem_document_extraction_client only -- the MCP service/<slug> schema fixes
+# the request shape to a single string (#149-A.1, ct-common/src/mcp.rs), so a real
+# document's binary bytes (PDF/DOCX/image) have to travel as text somehow to reach
+# the extraction agent over the channel. Standard, no alternative encoding invented.
+base64 = "0.22"
 
