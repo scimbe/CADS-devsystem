@@ -307,6 +307,16 @@ faster than cold**, recompiling only what actually changed instead of the full d
    idiomatic-code checks, etc. remain unenforced).
 3. **Context-relevant panels** (§7.1) — show what this run's actual state needs, not a fixed set.
 4. **Assistant-editable panel values generally** (§7.2) — beyond the current fixed `Action` enum.
+   **First slice done** (`CADS-devsystem@920f66e`): a human could already toggle one acceptance
+   criterion independently of the whole requirement (`toggle_acceptance_criterion_handler`, the
+   Requirements panel's per-criterion checkboxes); the assistant had no matching action at all
+   until now. Verified live end to end against the actually-running `devsystem_assistant --serve`
+   process (not just the unit suite): a real `/ask` call asking to toggle one specific criterion
+   made the LLM correctly choose the new `toggle_acceptance_criterion` action, which dispatched to
+   the real endpoint and actually flipped `verified_criteria[0]` from `true` to `false` on a live
+   run. Still open: this closes one specific action, not the general gap -- most panel values (the
+   Backlog panel's items, `RunState.repo_url` beyond the one existing `set_repo_url`, custom-panel
+   contents) still have no assistant-editable path at all.
 5. ~~**An agents/tokens/costs overview**~~ — **done** (`CADS-devsystem@19c03ef` backend,
    `705b30e` GUI): `RunState.assistant_usage` persists real running totals (call count,
    input/output/cache tokens, `total_cost_usd`) on every real `/ask` call, and a real Assistant
