@@ -23,15 +23,37 @@
 #   own web/Dockerfile, then stops/removes/recreates the real container with
 #   its full, real production config.
 #
-# Real env vars this expects to already exist on the host (never baked into
-# the image or this script): the github-issue-channel-relay noise keys/cert
-# under ~/.local/var/, the ct-agent binary at ~/alice-host/ct-agent. If any
-# of these paths don't exist on a fresh host, create/provision them first --
+# Real env vars this needs: the github-issue-channel-relay noise keys under
+# ~/.local/var/keys/, the ct-agent binary at ~/alice-host/ct-agent. If any of
+# these paths don't exist on a fresh host, create/provision them first --
 # this script does not fabricate placeholders for real credentials.
+#
+# Real incident, 2026-08-05: this script used to *require*
+# CT_CHANNEL_NOISE_KEY/CT_CHANNEL_PEER_NOISE_KEY already exported in the
+# caller's shell, with no fallback -- and it stopped/removed the OLD
+# container unconditionally before ever checking whether the new one could
+# actually start. Run from a shell that hadn't exported them, it took
+# production down for real (the old container gone, the new one refusing to
+# start on the unset `:?` check) until caught and fixed live. Now: read the
+# real key material straight from its known on-disk location by default (the
+# env vars still override, for a host where the keys live elsewhere), and
+# check it exists *before* touching the running container at all.
 set -euo pipefail
 
 IMAGE_TAG="${1:-devsystem-web:latest}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+KEYS_DIR="/home/becke/.local/var/keys"
+
+if [ -z "${CT_CHANNEL_NOISE_KEY:-}" ]; then
+  CT_CHANNEL_NOISE_KEY="$(cat "$KEYS_DIR/devsystem-web-issue-channel-noise.key" 2>/dev/null || true)"
+fi
+if [ -z "${CT_CHANNEL_PEER_NOISE_KEY:-}" ]; then
+  CT_CHANNEL_PEER_NOISE_KEY="$(cat "$KEYS_DIR/github-issue-agent-handler-noise.pub" 2>/dev/null || true)"
+fi
+if [ -z "$CT_CHANNEL_NOISE_KEY" ] || [ -z "$CT_CHANNEL_PEER_NOISE_KEY" ]; then
+  echo "Missing real channel key material -- checked \$CT_CHANNEL_NOISE_KEY/\$CT_CHANNEL_PEER_NOISE_KEY env vars and $KEYS_DIR/{devsystem-web-issue-channel-noise.key,github-issue-agent-handler-noise.pub}. Not touching the running container." >&2
+  exit 1
+fi
 
 echo "Building $IMAGE_TAG from $ROOT/web/Dockerfile ..."
 docker build -f "$ROOT/web/Dockerfile" -t "$IMAGE_TAG" "$ROOT"
@@ -46,8 +68,8 @@ docker run -d --name devsystem-web \
   --add-host=host.docker.internal:host-gateway \
   --restart unless-stopped \
   -p 127.0.0.1:8790:8790 \
-  -e CT_CHANNEL_NOISE_KEY="${CT_CHANNEL_NOISE_KEY:?set CT_CHANNEL_NOISE_KEY -- this container's own real channel identity}" \
-  -e CT_CHANNEL_PEER_NOISE_KEY="${CT_CHANNEL_PEER_NOISE_KEY:?set CT_CHANNEL_PEER_NOISE_KEY -- github_issue_channel_handler's real public key}" \
+  -e CT_CHANNEL_NOISE_KEY="$CT_CHANNEL_NOISE_KEY" \
+  -e CT_CHANNEL_PEER_NOISE_KEY="$CT_CHANNEL_PEER_NOISE_KEY" \
   -e CT_CHANNEL_PEER_CERT_FILE=/app/github-issue-agent-cert/current-cert.txt \
   -e DEVSYSTEM_STATIC_DIR=/app/web/static \
   -e DEVSYSTEM_RUNS_DIR=/app/runs \
