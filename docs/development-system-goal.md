@@ -289,11 +289,13 @@ faster than cold**, recompiling only what actually changed instead of the full d
    idiomatic-code checks, etc. remain unenforced).
 3. **Context-relevant panels** (§7.1) — show what this run's actual state needs, not a fixed set.
 4. **Assistant-editable panel values generally** (§7.2) — beyond the current fixed `Action` enum.
-5. **An agents/tokens/costs overview** (§7.3) — **backend done** (`CADS-devsystem@19c03ef`):
-   `RunState.assistant_usage` now persists real running totals (call count, input/output/cache
-   tokens, `total_cost_usd`) on every real `/ask` call, surfaced in `GET /api/runs/{id}`. Still
-   open: an actual GUI panel to show it — this slice is the data existing and being real, not yet
-   a human seeing it without reading raw JSON.
+5. ~~**An agents/tokens/costs overview**~~ — **done** (`CADS-devsystem@19c03ef` backend,
+   `705b30e` GUI): `RunState.assistant_usage` persists real running totals (call count,
+   input/output/cache tokens, `total_cost_usd`) on every real `/ask` call, and a real Assistant
+   Usage panel (registered the same way every other panel is, auto-refreshable) now shows real
+   cumulative cost + a token breakdown instead of raw JSON. Confirmed live: deployed in 14s (only
+   the static file changed, no rebuild needed) and the panel's real markers verified present in the
+   served page.
 6. **A unified decision-basis view** (§4.2) — requirements + constraints + the actual chat/docs
    that produced them, in one place.
 7. **A real requirements export** (§4.4) — a downloadable document, not just a JSON blob.
