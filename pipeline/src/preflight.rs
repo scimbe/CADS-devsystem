@@ -5,9 +5,18 @@
 //! LLM judgment call, just pattern checks a human reviewer would otherwise have to
 //! do by hand.
 
-use crate::runner::RunState;
+use crate::runner::{distinct_word_count, RunState};
 use crate::{STAGE_IMPLEMENT, STAGE_TEST};
 use ct_common::pipeline::PipelineSpec;
+
+/// Same real, mechanical substance bars `runner.rs`'s review gate uses
+/// (`MIN_REVIEW_FEEDBACK_LEN`/`MIN_REVIEW_DISTINCT_WORDS`), named separately
+/// here rather than shared -- these are two conceptually distinct gates (one
+/// about a review's real scrutiny, this one about a test stage's real
+/// substance) that could reasonably diverge later, even though they start at
+/// the same values.
+const MIN_TEST_FEEDBACK_LEN: usize = 25;
+const MIN_TEST_DISTINCT_WORDS: usize = 8;
 
 /// One real risk finding: a short label plus the concrete evidence that triggered it
 /// -- always traceable back to specific text/history, never asserted without a
@@ -62,16 +71,36 @@ fn security_keyword_hit(state: &RunState) -> Option<RiskAnnotation> {
 /// "no test stage before implement" (proposal §5's own example): a real
 /// `devsystem.implement` iteration ran with no `devsystem.test` iteration before it
 /// anywhere in the run's history.
+///
+/// **Real gap found live by the stress test, same day as the review-gate rubber-
+/// stamp findings, and closed the same way**: this check originally only asked
+/// *whether* a `devsystem.test` record existed before `implement` -- a
+/// substance-free `feedback: "tests pass"` counted exactly the same as real
+/// testing, silently neutering the risk annotation that's supposed to flag
+/// this. Live-verified before this fix: a rubber-stamp `devsystem.test`
+/// iteration made this risk annotation vanish, then a real `devsystem.implement`
+/// with feedback honestly admitting "no actual tests written for it" produced
+/// zero risk findings. Now requires the SAME two real, mechanical substance
+/// bars the review gate uses (length + distinct words) -- a test iteration that
+/// doesn't clear them doesn't count as real evidence testing happened.
 fn missing_test_before_implement(state: &RunState) -> Option<RiskAnnotation> {
     let implement_at = state.history.iter().position(|r| r.stage == STAGE_IMPLEMENT)?;
-    let test_before = state.history[..implement_at].iter().any(|r| r.stage == STAGE_TEST);
-    if test_before {
+    let real_test_before = state.history[..implement_at].iter().any(|r| {
+        r.stage == STAGE_TEST && {
+            let trimmed = r.feedback.trim();
+            trimmed.chars().count() >= MIN_TEST_FEEDBACK_LEN && distinct_word_count(trimmed) >= MIN_TEST_DISTINCT_WORDS
+        }
+    });
+    if real_test_before {
         None
     } else {
         Some(RiskAnnotation {
             label: "no test stage before implement".into(),
             evidence: format!(
-                "devsystem.implement first ran at iteration {}, with no devsystem.test iteration before it",
+                "devsystem.implement first ran at iteration {}, with no devsystem.test iteration \
+                 before it that's substantive enough to count as real evidence testing happened \
+                 ({MIN_TEST_FEEDBACK_LEN}+ characters and {MIN_TEST_DISTINCT_WORDS}+ distinct words \
+                 of feedback, not a rubber-stamp)",
                 state.history[implement_at].iteration
             ),
         })
@@ -192,7 +221,7 @@ mod tests {
     #[test]
     fn no_security_finding_when_nothing_mentions_a_keyword() {
         let mut state = RunState::new("run-preflight");
-        state.history.push(iteration(STAGE_TEST, 1, "added a unit test", vec![]));
+        state.history.push(iteration(STAGE_TEST, 1, "added a real unit test covering the empty-input edge case and confirmed it fails without the fix", vec![]));
         state.history.push(iteration(STAGE_IMPLEMENT, 2, "wrote a helper function", vec![]));
         assert!(preflight_annotations(&state).is_empty());
     }
@@ -208,7 +237,7 @@ mod tests {
     #[test]
     fn does_not_flag_when_a_test_iteration_precedes_implement() {
         let mut state = RunState::new("run-preflight");
-        state.history.push(iteration(STAGE_TEST, 1, "added a test", vec![]));
+        state.history.push(iteration(STAGE_TEST, 1, "added a real test asserting the empty-message case never calls sendText and keeps focus", vec![]));
         state.history.push(iteration(STAGE_IMPLEMENT, 2, "wrote code", vec![]));
         assert!(preflight_annotations(&state).is_empty());
     }
@@ -217,12 +246,29 @@ mod tests {
     fn does_not_flag_when_test_runs_after_implement_but_still_before_a_later_implement() {
         let mut state = RunState::new("run-preflight");
         state.history.push(iteration(STAGE_IMPLEMENT, 1, "wrote code", vec![]));
-        state.history.push(iteration(STAGE_TEST, 2, "added a test", vec![]));
+        state.history.push(iteration(STAGE_TEST, 2, "added a real test asserting the empty-message case never calls sendText and keeps focus", vec![]));
         state.history.push(iteration(STAGE_VERIFY, 3, "verified", vec![]));
         // Still flags -- the FIRST implement had no test before it, and that's the
         // real historical fact this check reports; it does not retroactively clear.
         let findings = preflight_annotations(&state);
         assert!(findings.iter().any(|f| f.label == "no test stage before implement"));
+    }
+
+    #[test]
+    /// Real gap found live by the stress test, same day as the review-gate
+    /// rubber-stamp findings: a substance-free devsystem.test iteration
+    /// ("tests pass") used to count exactly the same as real testing.
+    /// Live-verified against the actual deployment before this fix: the risk
+    /// annotation silently vanished.
+    fn a_rubber_stamp_test_iteration_still_flags_as_missing_real_test_evidence() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_TEST, 1, "tests pass", vec![]));
+        state.history.push(iteration(STAGE_IMPLEMENT, 2, "shipped a real feature, no actual tests written for it though", vec![]));
+        let findings = preflight_annotations(&state);
+        assert!(
+            findings.iter().any(|f| f.label == "no test stage before implement"),
+            "a rubber-stamp test iteration must not silently satisfy this check: {findings:?}"
+        );
     }
 
     fn proposal(use_existing_service: Option<&str>, price_ceiling: Option<u64>) -> StageProposal {

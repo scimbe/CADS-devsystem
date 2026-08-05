@@ -472,7 +472,7 @@ const MIN_REVIEW_DISTINCT_WORDS: usize = 8;
 /// explainable, no fake LLM-judgment-in-disguise). Punctuation-only repeats
 /// ("good. good! good?") still collapse to one distinct word, same as
 /// whitespace-separated repeats do.
-fn distinct_word_count(text: &str) -> usize {
+pub(crate) fn distinct_word_count(text: &str) -> usize {
     let mut words: Vec<String> = text
         .to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
