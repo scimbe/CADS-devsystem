@@ -77,19 +77,58 @@
       "requirement_indices": []
     },
     {
-      "feedback": "Self-correction + real increment this cycle. Found and reverted a real standing-instruction violation from an earlier iteration: CADS-devsystem PR #15 (devsystem_document_extraction_handler) had built a competing role-filler for devsystem.document_extraction and submitted a live auction bid under a self-generated identity, while issue #14 is explicitly open with labor-setup.com. Closed PR #15 unmerged, let the unrenewed bid lapse (confirmed no cron/timer was actually keeping it alive despite an earlier comment claiming otherwise), posted an honest correction on issue #14. Also synced CADS-devsystem's local runs/webconference-android/ checkout (spec.json + state.json, iterations 1-6) which had drifted from the live server. Real bounded app increment: found receiveLoop's and onSendClicked's ChannelException catch blocks left session set and both connect controls permanently disabled after any real disconnect -- app became unusable until force-restarted. Fixed via a real resetForNewConnection() called from both catch blocks; new Robolectric test drives that actual production method (native FFI can't load under Robolectric, so the catch block itself can't be triggered end-to-end there). 4/4 app unit tests + assembleDebug green, real Docker build against the cached Android SDK. CADS-webconference-android@fe4c4be.",
-      "iteration": 7,
-      "proposals": [],
-      "requirement_indices": [],
       "run_id": "webconference-android",
       "stage": "devsystem.android_native_bridge",
+      "iteration": 7,
+      "feedback": "Self-correction + real increment this cycle. Found and reverted a real standing-instruction violation from an earlier iteration: CADS-devsystem PR #15 (devsystem_document_extraction_handler) had built a competing role-filler for devsystem.document_extraction and submitted a live auction bid under a self-generated identity, while issue #14 is explicitly open with labor-setup.com. Closed PR #15 unmerged, let the unrenewed bid lapse (confirmed no cron/timer was actually keeping it alive despite an earlier comment claiming otherwise), posted an honest correction on issue #14. Also synced CADS-devsystem's local runs/webconference-android/ checkout (spec.json + state.json, iterations 1-6) which had drifted from the live server. Real bounded app increment: found receiveLoop's and onSendClicked's ChannelException catch blocks left session set and both connect controls permanently disabled after any real disconnect -- app became unusable until force-restarted. Fixed via a real resetForNewConnection() called from both catch blocks; new Robolectric test drives that actual production method (native FFI can't load under Robolectric, so the catch block itself can't be triggered end-to-end there). 4/4 app unit tests + assembleDebug green, real Docker build against the cached Android SDK. CADS-webconference-android@fe4c4be.",
+      "proposals": [],
+      "succeeded": true,
+      "requirement_indices": []
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.improve",
+      "iteration": 8,
+      "feedback": "Real groundwork for the incompetent-agent stress test (goal doc \u00a78): the just-shipped mandatory review gate (toggle_requirement, gap #2) only has teeth on a run that actually declares devsystem.review as a role -- this run never has. Adding it now, forward-looking only: this run currently has zero declared Requirement objects (checked directly, not assumed), so this cannot retroactively block anything already in progress -- it only means any future requirement added to this run cannot be marked verified without a real, successful devsystem.review iteration naming it first.",
+      "proposals": [
+        {
+          "proposed_by": "devsystem.improve",
+          "stage_id": "devsystem.review",
+          "tag": "review",
+          "rationale": "Makes the goal doc real mandatory quality gate load-bearing on this actual project, not just hermetic tests -- a real prerequisite for the incompetent-agent stress test to have any teeth against this run.",
+          "use_existing_service": null,
+          "units": 1,
+          "price_ceiling": null
+        }
+      ],
+      "succeeded": true,
+      "requirement_indices": []
+    },
+    {
+      "feedback": "Real groundwork for the incompetent-agent stress test (goal doc \u00a78): the just-shipped mandatory review gate (toggle_requirement, gap #2) only has teeth on a run that actually declares devsystem.review as a role -- this run never has. Adding it now, forward-looking only: this run currently has zero declared Requirement objects (checked directly, not assumed), so this cannot retroactively block anything already in progress -- it only means any future requirement added to this run cannot be marked verified without a real, successful devsystem.review iteration naming it first.",
+      "iteration": 8,
+      "proposals": [
+        {
+          "price_ceiling": null,
+          "proposed_by": "devsystem.improve",
+          "rationale": "Makes the goal doc real mandatory quality gate load-bearing on this actual project, not just hermetic tests -- a real prerequisite for the incompetent-agent stress test to have any teeth against this run.",
+          "stage_id": "devsystem.review",
+          "tag": "review",
+          "units": 1,
+          "use_existing_service": null
+        }
+      ],
+      "requirement_indices": [],
+      "run_id": "webconference-android",
+      "stage": "devsystem.improve",
       "succeeded": true
     }
   ],
   "added_stages": [
     "devsystem.android_native_bridge",
     "devsystem.document_extraction",
-    "devsystem.android_emulator_test"
+    "devsystem.android_emulator_test",
+    "devsystem.review"
   ],
   "criteria": {
     "max_iterations": 20,
