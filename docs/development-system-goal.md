@@ -128,6 +128,88 @@ Already real and strong: hermetic Docker-based test gates throughout, `scripts/d
 / `scripts/deploy-devsystem-assistant.sh` (real, reproducible, single-command redeploys with
 readiness checks). Matches the goal as-is — no gap identified here.
 
+## 7. Panels/windows (operator addendum, 2026-08-05)
+
+Extends §4's user-support goal with concrete GUI requirements:
+
+1. **Windows/panels must relate to the process actually needed right now** — not a fixed, always-
+   identical panel set regardless of what stage/state a run is in. **Real gap**: today's GUI shows
+   the same panel set (Runs, Roles, Requirements, Backlog, Milestones, History, RAG, Assistant,
+   custom panels) for every run in every state — nothing hides an irrelevant panel or surfaces a
+   more relevant one contextually (e.g. a run with zero requirements yet should foreground "add
+   your first requirement", not bury it behind six other panels).
+2. **Panel values must be editable by the user AND by `devsystem.assistant`** — today the assistant
+   can only act through its fixed `Action` enum (`AddRequirement`, `ToggleBacklogItem`, ...,
+   `pipeline/src/bin/devsystem_assistant.rs:248`), a real but narrow, pre-enumerated set. **Real
+   gap**: no general "the assistant can edit whatever a human could edit in this panel" capability
+   — every new editable field needs a new hand-written `Action` variant.
+3. **A real overview of every agent used, its tokens, and its cost must exist.** **Real gap,
+   confirmed by direct check**: no such view exists anywhere in `web/src/main.rs` or `index.html`
+   today. `devsystem_assistant.rs` already parses real `usage` fields from the Claude CLI's JSON
+   output (`tests::missing_usage_fields_default_to_zero_not_a_parse_failure` proves the field
+   exists and is parsed) — the raw data is closer to hand than a blank slate, but it's parsed and
+   discarded per-call, never persisted or aggregated per-run/per-agent.
+
+## 8. Validation methodology: the incompetent-agent stress test and the DAU lens (operator
+   mandate, 2026-08-05)
+
+**The governing principle, stated by the operator directly**: *"It is the fault of the pipeline,
+not the user of the pipeline, if the process leads him not to the perfect result."* Every gap in
+this document is judged by this standard from here forward — a bad outcome is a missing or weak
+gate, unclear guidance, or a process defect, fixed at the process level, never blamed on the
+specific agent or human who hit it.
+
+**Two adversarial validation lenses, both required, neither optional**:
+
+- **The incompetent-agent stress test**: an LLM agent deliberately simulating the least competent
+  realistic software engineer fills real pipeline roles (starting with `CADS-webconference-android`,
+  explicitly authorized as a disposable proving ground — free to delete, overwrite, or reset as
+  this test needs, since the goal is the *pipeline*, not this particular app). The pipeline's own
+  gates (§5's quality bar, once real and mandatory — see gap #2) must catch what the agent misses
+  and drive the *output* to senior-engineer quality regardless of the *filler's* competence. If the
+  incompetent agent's bad output ships anyway, that is a real pipeline defect to fix, not evidence
+  the test agent was "too bad" to use.
+- **The DAU lens** (*Duemmster anzunehmender User* — the least competent user still assumed to
+  engage in good faith): the human operator may have poor judgment, listen to the LLM's advice,
+  weigh it, and sometimes choose wrong anyway. The GUI and `devsystem.assistant`'s guidance must
+  still lead such a user toward a good outcome — catching and visibly flagging a bad choice (e.g. a
+  vague requirement, a skipped review, an ignored risk annotation) rather than silently accepting
+  it and letting a bad decision propagate unchallenged.
+
+**Concrete, checkable success criterion** (translating "top 100 App Store level" into something
+actually verifiable, since no real ranking is available to test against): the incompetent-agent run
+produces an Android fragment that a real senior-engineer review would pass against every row of
+§5's quality table, with genuinely polished UX (not scaffold-level), zero known open defects at
+delivery, and full test coverage of its own acceptance criteria — not "compiles and has a
+scaffold's worth of tests," which is roughly where `CADS-webconference-android` sits today.
+
+**Standing mandate, not a bounded task**: *"do not stop until it is reached."* Honored via the
+recurring dev-loop mechanism (a session-scoped, ~5-minute-cadence loop; the operator was told
+directly that true unattended persistence past this session's lifetime needs a cloud schedule, not
+just a session-only cron) — each firing lands one real, bounded, hermetically-tested increment
+toward the ranked gaps below, not a single unbounded attempt to reach the whole goal at once.
+
+## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
+
+1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
+   distinguishes LLM-proposed from human-authored, surfaced in the GUI.
+2. **A mandatory quality gate** before an iteration counts as done (§5) — now the single highest
+   remaining leverage point, since it's the direct mechanism the incompetent-agent stress test
+   (§8) needs to prove the pipeline (not the filler) drives quality.
+3. **Context-relevant panels** (§7.1) — show what this run's actual state needs, not a fixed set.
+4. **Assistant-editable panel values generally** (§7.2) — beyond the current fixed `Action` enum.
+5. **An agents/tokens/costs overview** (§7.3) — real usage data already parsed per-call; needs
+   persisting and aggregating, then a real panel.
+6. **A unified decision-basis view** (§4.2) — requirements + constraints + the actual chat/docs
+   that produced them, in one place.
+7. **A real requirements export** (§4.4) — a downloadable document, not just a JSON blob.
+8. **ECC skills catalog audit** (§2) — beyond `ecc-plan-canvas`, for spec-authoring and
+   step-decomposition.
+9. **A `devsystem.process_improve` role** (§4.3) — self-optimizing the process itself, not just
+   the stage list.
+
+This ranking is a proposal, not a decision — the operator leads (§4.3).
+
 ## Summary: the highest-leverage real gaps, ranked
 
 1. **Provenance on `Requirement`** (§3, blocks §4.2 and §4.4) — LLM-authored vs. user-authored,
