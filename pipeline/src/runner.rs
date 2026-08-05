@@ -257,6 +257,51 @@ pub struct RunState {
     /// yet) still load.
     #[serde(default)]
     pub requirements: Vec<Requirement>,
+    /// Real, running totals of `devsystem.assistant`'s own real token/cost usage
+    /// (#382 goal doc §7.3, gap #5) -- every `/ask` call already parses this
+    /// exact data from the LLM CLI's own JSON output (`devsystem_assistant.rs`'s
+    /// `parse_llm_json_output`), but until now it was returned to the caller once
+    /// and never persisted anywhere, so there was no way to see this run's real
+    /// cumulative spend. A running aggregate, not a per-call log: the goal here is
+    /// "how much has this run's assistant usage cost so far", not a full replay
+    /// history (that already exists, informally, in each chat exchange). `#[serde(default)]`
+    /// so pre-existing `state.json` files (no usage recorded yet) still load as
+    /// all-zero, not a migration.
+    #[serde(default)]
+    pub assistant_usage: AssistantUsageTotals,
+}
+
+/// See [`RunState::assistant_usage`]'s doc comment. `total_cost_usd` is a plain
+/// running sum of the LLM CLI's own real per-call `total_cost_usd` -- not derived
+/// or estimated from token counts, since the actual provider-billed cost isn't a
+/// pure function of token counts alone (cache-read pricing differs from
+/// cache-write, etc.) and the CLI already reports the real number directly.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+pub struct AssistantUsageTotals {
+    pub call_count: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+    pub cache_read_input_tokens: u64,
+    pub total_cost_usd: f64,
+}
+
+impl AssistantUsageTotals {
+    /// Adds one real call's usage (as `devsystem_assistant`'s own `/ask` response
+    /// shape: `{"input_tokens", "output_tokens", "cache_creation_input_tokens",
+    /// "cache_read_input_tokens", "total_cost_usd"}`) to this run's running
+    /// totals. Missing/non-numeric fields count as zero rather than failing --
+    /// usage accounting is real but deliberately best-effort, since it must never
+    /// be the reason a real assistant reply fails to reach the caller.
+    pub fn add_call(&mut self, usage: &serde_json::Value) {
+        let tok = |field: &str| usage.get(field).and_then(|v| v.as_u64()).unwrap_or(0);
+        self.call_count += 1;
+        self.input_tokens += tok("input_tokens");
+        self.output_tokens += tok("output_tokens");
+        self.cache_creation_input_tokens += tok("cache_creation_input_tokens");
+        self.cache_read_input_tokens += tok("cache_read_input_tokens");
+        self.total_cost_usd += usage.get("total_cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    }
 }
 
 /// See [`RunState::pending_stage_proposals`]'s doc comment for why this wraps
@@ -314,6 +359,7 @@ impl RunState {
             pending_stage_proposals: Vec::new(),
             pending_issue_proposals: Vec::new(),
             requirements: Vec::new(),
+            assistant_usage: AssistantUsageTotals::default(),
         }
     }
 }
@@ -528,6 +574,28 @@ mod tests {
             succeeded,
             requirement_indices: Vec::new(),
         }
+    }
+
+    #[test]
+    /// Real usage accounting (#382 goal doc §7.3, gap #5): running totals across
+    /// several real calls, and missing/non-numeric fields treated as zero rather
+    /// than a failure -- usage accounting must never be the reason a real
+    /// assistant reply fails.
+    fn assistant_usage_totals_accumulate_across_real_calls_and_tolerate_missing_fields() {
+        let mut totals = AssistantUsageTotals::default();
+        totals.add_call(&serde_json::json!({
+            "input_tokens": 100, "output_tokens": 50,
+            "cache_creation_input_tokens": 10, "cache_read_input_tokens": 5,
+            "total_cost_usd": 0.02,
+        }));
+        totals.add_call(&serde_json::json!({"input_tokens": 200, "output_tokens": 75, "total_cost_usd": 0.05}));
+
+        assert_eq!(totals.call_count, 2);
+        assert_eq!(totals.input_tokens, 300);
+        assert_eq!(totals.output_tokens, 125);
+        assert_eq!(totals.cache_creation_input_tokens, 10, "the second call's missing field must count as zero, not reset the running total");
+        assert_eq!(totals.cache_read_input_tokens, 5);
+        assert!((totals.total_cost_usd - 0.07).abs() < 1e-12);
     }
 
     #[test]

@@ -2612,6 +2612,21 @@ async fn ask_assistant(
         Ok(r) => {
             let status = StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
             let text = r.text().await.unwrap_or_else(|e| serde_json::json!({"error": format!("could not read assistant response body: {e}")}).to_string());
+            // Real usage accounting (#382 goal doc §7.3, gap #5): this bridge call
+            // already computes real token/cost usage (devsystem_assistant.rs's
+            // parse_llm_json_output) and has always returned it in this exact
+            // response -- forwarded straight to the caller below and, until now,
+            // never persisted anywhere, so a run's real cumulative assistant spend
+            // was unrecoverable once the browser tab closed. Best-effort: a usage
+            // field that's missing or fails to parse never blocks the real reply
+            // below from reaching the caller.
+            if status.is_success() {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if let Some(usage) = parsed.get("usage") {
+                        persist_assistant_usage(&state, &id, usage).await;
+                    }
+                }
+            }
             (status, [(axum::http::header::CONTENT_TYPE, "application/json")], text).into_response()
         }
         Err(e) => (
@@ -2620,6 +2635,21 @@ async fn ask_assistant(
         )
             .into_response(),
     }
+}
+
+/// See [`ask_assistant`]'s own doc comment for why this exists. Silently does
+/// nothing if the run doesn't exist (nothing real to persist into) or if the
+/// load/persist round-trip fails for any reason -- usage accounting is real, but
+/// it must never be the reason a real assistant reply fails to reach the caller.
+async fn persist_assistant_usage(state: &AppState, id: &str, usage: &serde_json::Value) {
+    if !run_exists(state, id) {
+        return;
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(state, id);
+    let Ok((spec, mut run_state)) = load_or_init_run(&dir, id) else { return };
+    run_state.assistant_usage.add_call(usage);
+    let _ = persist_run(&dir, &spec, &run_state);
 }
 
 #[cfg(test)]
@@ -5393,6 +5423,34 @@ exit 1"#);
         let forwarded = rx.await.expect("mock received a request");
         assert_eq!(forwarded["run_id"], "asst-run", "the real selected run_id must reach the bridge");
         assert_eq!(forwarded["instruction"], "anything need attention?");
+    }
+
+    #[tokio::test]
+    /// Real usage accounting (#382 goal doc §7.3, gap #5): the bridge's own real
+    /// usage field, forwarded to the caller on every /ask call already, is now
+    /// ALSO persisted into the run's own state as a running total -- proven here
+    /// across two real calls, confirming it accumulates rather than resets.
+    async fn assistant_calls_accumulate_real_usage_into_the_runs_own_state() {
+        let (port, _rx) = spawn_mock_assistant(
+            StatusCode::OK,
+            serde_json::json!({"response": "ok", "usage": {"input_tokens": 100, "output_tokens": 40, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "total_cost_usd": 0.01}}),
+        )
+        .await;
+        let (state, _dir) = test_state_with_assistant(Some(&format!("http://127.0.0.1:{port}")));
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "usage-run"}))).await.unwrap();
+
+        app.clone().oneshot(json_request("POST", "/api/runs/usage-run/assistant", serde_json::json!({"instruction": "first question"}))).await.unwrap();
+        app.clone().oneshot(json_request("POST", "/api/runs/usage-run/assistant", serde_json::json!({"instruction": "second question"}))).await.unwrap();
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/usage-run").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        let usage = &body["state"]["assistant_usage"];
+        assert_eq!(usage["call_count"], 2, "two real calls must accumulate, not overwrite");
+        assert_eq!(usage["input_tokens"], 200);
+        assert_eq!(usage["output_tokens"], 80);
+        assert!((usage["total_cost_usd"].as_f64().unwrap() - 0.02).abs() < 1e-9);
     }
 
     #[tokio::test]
