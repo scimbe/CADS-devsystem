@@ -197,6 +197,11 @@
  .health .stat b{color:var(--text)}
  .health .stat.warn{border-color:var(--accent);color:var(--accent)}
  .health .stat.warn b{color:var(--accent)}
+ .usage-cost{font-family:var(--mono);font-size:1.6rem;font-weight:700;color:var(--accent)}
+ .usage-row{display:flex;justify-content:space-between;font-family:var(--mono);font-size:.78rem;
+            padding:.25rem 0;border-bottom:1px solid var(--border);color:var(--muted)}
+ .usage-row b{color:var(--text);font-weight:600}
+ .usage-row:last-child{border-bottom:none}
  .health .stat.danger{border-color:var(--danger);color:var(--danger)}
  .health .stat.danger b{color:var(--danger)}
  details.criteria{font-size:.85rem}
@@ -408,6 +413,7 @@ const PANEL_DEFAULTS = {
   // Panels sat underneath Flow). Starting below rag/panels' own y+h means no
   // vertical overlap with either exists before any cascade even runs.
   flow:       { title: 'Flow',               x: 16,   y: 1108, w: 620, h: 400 },
+  usage:      { title: 'Assistant Usage',    x: 1420, y: 952,  w: 340, h: 260 },
 };
 
 // Real gap found 2026-08-05, simulating a genuinely fresh first-time user via
@@ -483,6 +489,7 @@ const REFRESHABLE_PANELS = {
   risks: (data) => renderRisksPanel(data),
   history: (data) => renderHistoryPanel(data),
   flow: (data) => renderFlowPanel(currentRun, data),
+  usage: (data) => renderUsagePanel(data),
 };
 const REFRESH_INTERVALS = [
   { seconds: 0, label: 'off' },
@@ -1164,7 +1171,7 @@ async function selectRun(id) {
     for (const pid of Object.keys(REFRESHABLE_PANELS)) lastRefreshedAt[pid] = Date.now();
   }
   await refreshRunsList();
-  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow']) {
+  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow', 'usage']) {
     document.getElementById(`body-${panelId}`).innerHTML = '<span class="lede">Loading…</span>';
   }
   try {
@@ -1189,8 +1196,9 @@ async function selectRun(id) {
     renderCustomPanelsManager(id, data);
     renderCustomPanels(id, data);
     renderFlowPanel(id, data);
+    renderUsagePanel(data);
   } catch (e) {
-    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow']) {
+    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow', 'usage']) {
       document.getElementById(`body-${panelId}`).innerHTML = `<span class="status-line err">${e.message}</span>`;
     }
   }
@@ -2246,6 +2254,36 @@ function renderRisksPanel(data) {
   for (const btn of body.querySelectorAll('.stalled-fill')) {
     btn.onclick = () => setSelectedStage(btn.dataset.stage);
   }
+}
+
+// Real usage/cost overview (#382 goal doc §7.3, gap #5 -- "the pipeline should
+// support the user by knowing... the tokens and the costs"). u.assistant_usage
+// is a real running total devsystem-web itself accumulates on every /ask call
+// (RunState.assistant_usage) -- this panel is the first human-readable view of
+// it; before this it only existed as raw JSON in GET /api/runs/{id}.
+function renderUsagePanel(data) {
+  const body = document.getElementById('body-usage');
+  const u = (data.state && data.state.assistant_usage) || {};
+  const calls = u.call_count || 0;
+  if (!calls) {
+    body.innerHTML = '<span class="lede">No devsystem.assistant calls yet on this run.</span>';
+    return;
+  }
+  const cost = typeof u.total_cost_usd === 'number' ? u.total_cost_usd : 0;
+  const inTok = u.input_tokens || 0;
+  const outTok = u.output_tokens || 0;
+  const cacheW = u.cache_creation_input_tokens || 0;
+  const cacheR = u.cache_read_input_tokens || 0;
+  const row = (label, value) => `<div class="usage-row"><span>${escapeHtml(label)}</span><b>${value}</b></div>`;
+  body.innerHTML = `
+    <div class="usage-cost">$${cost.toFixed(4)}</div>
+    <div class="lede" style="font-size:.72rem;margin-bottom:.5rem">real cumulative devsystem.assistant spend on this run</div>
+    ${row('calls', calls.toLocaleString())}
+    ${row('input tokens', inTok.toLocaleString())}
+    ${row('output tokens', outTok.toLocaleString())}
+    ${row('cache write tokens', cacheW.toLocaleString())}
+    ${row('cache read tokens', cacheR.toLocaleString())}
+  `;
 }
 
 function renderNewIterationPanel(id, data) {
