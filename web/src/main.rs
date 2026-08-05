@@ -17,7 +17,7 @@ use axum::Router;
 use devsystem_pipeline::checkin::render_plan_markdown;
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration, govern_memory_entry, read_memory_log};
 use devsystem_pipeline::improve::stalled_stages;
-use devsystem_pipeline::preflight::preflight_annotations;
+use devsystem_pipeline::preflight::{preflight_annotations, process_annotations};
 use devsystem_pipeline::runner::{
     load_or_init_run, persist_run, render_requirements_markdown, run_iteration, toggle_acceptance_criterion, toggle_milestone, toggle_requirement,
     toggle_requirement_auto_judge, BacklogItem, CustomPanel,
@@ -466,7 +466,7 @@ async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap
                 continue;
             }
             let stalled = stalled_stages(&run_state);
-            let risk_count = preflight_annotations(&run_state).len();
+            let risk_count = preflight_annotations(&run_state).len() + process_annotations(&spec, &run_state).len();
             let health = run_health(&run_state);
             let pending_reviews = run_state.pending_panel_proposals.len() + run_state.pending_stage_proposals.len() + run_state.pending_issue_proposals.len();
             let alert = needs_attention(&health, pending_reviews);
@@ -539,7 +539,8 @@ async fn get_run(State(state): State<AppState>, AxPath(id): AxPath<String>, head
             }
             let stalled = stalled_stages(&run_state);
             let health = run_health(&run_state);
-            let risks = preflight_annotations(&run_state);
+            let mut risks = preflight_annotations(&run_state);
+            risks.extend(process_annotations(&spec, &run_state));
             Json(serde_json::json!({
                 "spec": spec,
                 "state": run_state,
@@ -2919,6 +2920,40 @@ mod tests {
         let body = body_json(response).await;
         assert!(body[0]["risk_count"].as_u64().unwrap() > 0, "the security-keyword feedback should register as a real risk");
         assert_eq!(body[0]["needs_attention"], true, "2/3 consecutive failures should already flag needs_attention");
+    }
+
+    #[tokio::test]
+    /// Real process-level check (#382 goal doc §4.3/§9, gap #9): a run with real
+    /// progress but no devsystem.review role declared surfaces as a real risk in
+    /// both GET /api/runs (risk_count) and GET /api/runs/{id} (risks), not just in
+    /// the pipeline crate's own unit tests.
+    async fn a_run_with_real_progress_and_no_review_role_is_flagged_as_a_process_risk() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "process-risk-run"}))).await.unwrap();
+
+        for i in 0..3 {
+            app.clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/runs/process-risk-run/iterate",
+                    serde_json::json!({"stage": "devsystem.android_native_bridge", "feedback": format!("real work {i}"), "succeeded": true}),
+                ))
+                .await
+                .unwrap();
+        }
+
+        let response = app.clone().oneshot(Request::builder().uri("/api/runs/process-risk-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        let risks = body["risks"].as_array().unwrap();
+        assert!(
+            risks.iter().any(|r| r["label"] == "no review role declared despite real progress"),
+            "3 successful iterations with no review role declared must be flagged: {risks:?}"
+        );
+
+        let response = app.oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert!(body[0]["risk_count"].as_u64().unwrap() > 0, "the same process risk must also count toward the list view's risk_count");
     }
 
     #[tokio::test]

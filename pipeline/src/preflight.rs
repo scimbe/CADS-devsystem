@@ -7,6 +7,7 @@
 
 use crate::runner::RunState;
 use crate::{STAGE_IMPLEMENT, STAGE_TEST};
+use ct_common::pipeline::PipelineSpec;
 
 /// One real risk finding: a short label plus the concrete evidence that triggered it
 /// -- always traceable back to specific text/history, never asserted without a
@@ -92,6 +93,53 @@ fn no_price_ceiling(state: &RunState) -> Option<RiskAnnotation> {
         evidence: format!(
             "proposal `{}` needs a new service (no use_existing_service) and sets no price_ceiling -- nothing bounds what filling it could cost",
             unbounded.stage_id
+        ),
+    })
+}
+
+const MIN_ITERATIONS_BEFORE_FLAGGING_NO_REVIEW: usize = 3;
+
+/// Real, mechanical **process**-level checks (#382 goal doc §4.3/§9: "self-
+/// optimizing the process itself, not just the stage list"). Unlike
+/// [`preflight_annotations`], these need the run's own live [`PipelineSpec`] too
+/// -- they're about which roles are declared, not just what already happened --
+/// so this is a genuinely separate function rather than folded into
+/// `preflight_annotations` itself (which every existing caller, including
+/// `checkin.rs`'s history-only rendering and `devsystem_checkin`'s binary, only
+/// ever has a bare [`RunState`] for).
+pub fn process_annotations(spec: &PipelineSpec, state: &RunState) -> Vec<RiskAnnotation> {
+    let mut findings = Vec::new();
+    if let Some(a) = no_review_role_despite_real_progress(spec, state) {
+        findings.push(a);
+    }
+    findings
+}
+
+/// "no review role declared despite real progress": a run with real successful
+/// iterations but no `devsystem.review` role in its own spec has no teeth on
+/// gap #2's own mandatory review gate at all -- `toggle_requirement`'s gate is
+/// scoped to only bite once `review` is declared, by design, so a run that never
+/// declares it is silently exempt from the whole mechanism. Counts real
+/// *successful* iterations, not just any history entry, and deliberately doesn't
+/// match on a specific stage name (`devsystem.implement`) -- this pipeline's own
+/// stages are custom-named per project (`devsystem.android_native_bridge`, not
+/// `devsystem.implement`, on `webconference-android` itself), so "real progress
+/// happened" is the honest, general signal available, not "the implement stage
+/// specifically ran".
+fn no_review_role_despite_real_progress(spec: &PipelineSpec, state: &RunState) -> Option<RiskAnnotation> {
+    if spec.roles.iter().any(|r| r.tag == "review") {
+        return None;
+    }
+    let successful = state.history.iter().filter(|h| h.succeeded).count();
+    if successful < MIN_ITERATIONS_BEFORE_FLAGGING_NO_REVIEW {
+        return None;
+    }
+    Some(RiskAnnotation {
+        label: "no review role declared despite real progress".into(),
+        evidence: format!(
+            "{successful} successful iteration(s) so far, but this run has never declared a devsystem.review \
+             role -- gap #2's mandatory review gate (requirements can't be marked verified without a real \
+             review) has no teeth here at all, since it only applies once review is declared."
         ),
     })
 }
@@ -209,5 +257,56 @@ mod tests {
         let mut state = RunState::new("run-preflight");
         state.history.push(iteration(STAGE_REVIEW, 1, "no risk words here", vec![proposal(Some("android-build-box"), None)]));
         assert!(preflight_annotations(&state).is_empty());
+    }
+
+    #[test]
+    fn flags_real_progress_with_no_review_role_declared() {
+        let spec = crate::plan_only_spec("run-process", None);
+        let mut state = RunState::new("run-process");
+        // A custom-named stage, on purpose -- proves this check doesn't match on
+        // "devsystem.implement" specifically, since real runs use project-specific
+        // stage names (e.g. devsystem.android_native_bridge).
+        for i in 1..=3 {
+            state.history.push(iteration("devsystem.android_native_bridge", i, "real work", vec![]));
+        }
+        let findings = process_annotations(&spec, &state);
+        assert!(findings.iter().any(|f| f.label == "no review role declared despite real progress"));
+    }
+
+    #[test]
+    fn does_not_flag_before_the_minimum_iteration_count() {
+        let spec = crate::plan_only_spec("run-process", None);
+        let mut state = RunState::new("run-process");
+        state.history.push(iteration("devsystem.android_native_bridge", 1, "real work", vec![]));
+        state.history.push(iteration("devsystem.android_native_bridge", 2, "real work", vec![]));
+        assert!(process_annotations(&spec, &state).is_empty(), "2 successful iterations is under the minimum -- must not flag yet");
+    }
+
+    #[test]
+    fn does_not_flag_failed_iterations_toward_the_count() {
+        let spec = crate::plan_only_spec("run-process", None);
+        let mut state = RunState::new("run-process");
+        for i in 1..=3 {
+            state.history.push(IterationRecord {
+                run_id: "run-process".into(),
+                stage: "devsystem.android_native_bridge".into(),
+                iteration: i,
+                feedback: "failed attempt".into(),
+                proposals: vec![],
+                succeeded: false,
+                requirement_indices: Vec::new(),
+            });
+        }
+        assert!(process_annotations(&spec, &state).is_empty(), "failed iterations aren't real progress -- must not count toward the threshold");
+    }
+
+    #[test]
+    fn does_not_flag_once_review_is_declared() {
+        let spec = crate::full_spec("run-process", None);
+        let mut state = RunState::new("run-process");
+        for i in 1..=3 {
+            state.history.push(iteration("devsystem.android_native_bridge", i, "real work", vec![]));
+        }
+        assert!(process_annotations(&spec, &state).is_empty(), "full_spec declares review -- must not flag a run that already has it");
     }
 }
