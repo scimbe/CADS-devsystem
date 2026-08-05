@@ -189,6 +189,25 @@ directly that true unattended persistence past this session's lifetime needs a c
 just a session-only cron) — each firing lands one real, bounded, hermetically-tested increment
 toward the ranked gaps below, not a single unbounded attempt to reach the whole goal at once.
 
+**First real groundwork step, 2026-08-05 (iteration 8)**: the mandatory review gate (gap #2) only
+has teeth on a run that actually declares `devsystem.review` as a role — `webconference-android`
+itself never had. Added it for real via a `devsystem.improve` proposal, the same immediately-applied
+self-optimizing path any role-filler uses (not a special-cased admin action) — checked first that
+this run has zero declared `Requirement` objects yet, so the addition is purely forward-looking and
+retroactively blocks nothing already in progress. This is the real precondition the stress test
+itself needs before it can prove anything: without `review` declared, there is no gate to test
+against on this actual project, only in hermetic tests.
+
+**Real infrastructure incident found and fixed along the way, same day**: multiple autonomous loops
+now firing concurrently means multiple `deploy-devsystem-web.sh` invocations can race each other's
+`docker build` against the same BuildKit cache mount — confirmed directly (`docker exec ...
+strings` showed a "successfully deployed" container running a binary that had literally none of the
+day's committed source changes in it, despite every deploy reporting a clean exit). Fixed with a
+`flock` serializing real invocations of the script (`CADS-devsystem@2914d91`). Worth stating
+plainly: this is exactly the class of failure §8's own governing principle is about — a process gap
+that silently produced a wrong result with no visible error, not a competence failure of whichever
+loop triggered it.
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
