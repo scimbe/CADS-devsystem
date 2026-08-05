@@ -325,7 +325,15 @@ faster than cold**, recompiling only what actually changed instead of the full d
    same-day deploy race was) — the single most relevant unadopted skill to "The Development System"
    as a whole, not any one stage. Audit only; none of these are wired into the pipeline yet — real,
    separate follow-up work, sized by the operator.
-9. **A `devsystem.process_improve` role** (§4.3) — self-optimizing the process itself, not just
-   the stage list.
+9. **A `devsystem.process_improve` role** (§4.3) — **first slice done** (`CADS-devsystem@57f2ca9`):
+   `process_annotations(spec, state)`, a new process-level dimension alongside `preflight_annotations`
+   (needs the live `PipelineSpec`, not just history) — flags a run with 3+ real successful
+   iterations that has never declared a `devsystem.review` role, since gap #2's own mandatory
+   review gate is silently a no-op until `review` is declared. Verified live against both a real
+   positive (a fresh test run, correctly flagged) and negative (the real `webconference-android`
+   run, which already declared `review` in iteration 8 — correctly shows no risk). Still open: this
+   is one mechanical check, not a real `devsystem.process_improve` *role* a filler could bid on and
+   actively propose process changes through — that's the fuller version of this gap, not claimed
+   done here.
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).
