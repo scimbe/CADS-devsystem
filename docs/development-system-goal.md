@@ -111,7 +111,7 @@ not just referenced:
 |---|---|---|
 | **Anerkannte Regeln der Technik** (recognized rules of engineering) | Follows this ecosystem's own established, load-bearing patterns (hermetic gates, no secrets in git, real tests over mocks) | Partially — `check-no-secrets.sh`, the hermetic gate; no single explicit gate role |
 | **Stand der Technik** (state of the art) | Current, non-deprecated dependencies and idioms at time of delivery | Not checked — no dependency-freshness/deprecation gate exists |
-| **Vertragsgemäße / Sachmangelfreie Leistung** (contract-conforming, defect-free delivery) | Satisfies every declared acceptance criterion, zero known open defects at delivery | Requirements/acceptance-criteria machinery exists; nothing blocks marking work "done" with open, known defects |
+| **Vertragsgemäße / Sachmangelfreie Leistung** (contract-conforming, defect-free delivery) | Satisfies every declared acceptance criterion, zero known open defects at delivery | Requirements/acceptance-criteria machinery exists; **partially checked as of `CADS-devsystem@9f9f5d2`** -- a `succeeded: true` iteration whose own feedback admits a known defect (`DEFECT_ADMISSION_PHRASES`) is now flagged as a real risk. Advisory, not a hard block, and beatable by phrasing a real defect without those exact words -- not the whole gap closed |
 | **Fachgerecht / Fachmännisch** (professionally correct) | Passes the same review bar a competent human reviewer would apply | The `review` stage exists as a role; not mandatory for every change today |
 | **Kunstgerecht** (in accordance with the craft) | Idiomatic to the language/framework, not just "works" | Not mechanically checked; currently relies on the role-filler's own judgment |
 | **Kollektives Qualitätsverständnis** (collective quality understanding) | Meets what this project's own established conventions (this doc, `role-contracts.md`, CLAUDE.md files) already agree quality means | This document itself is a step toward making that explicit and checkable |
@@ -394,6 +394,19 @@ this" against an entry nobody actually reviewed. Fixed the same way, honestly ph
 attestation rather than data loss (`CADS-devsystem@0622996`). Verified live via a real Playwright
 browser: the dialog names the exact stage/role, cancel leaves it genuinely "unreviewed", accept
 genuinely flips it to "governed".
+
+**The stress test's sixth real run, 2026-08-05, a different flavor**: rather than simulating a lazy
+agent's next move, went after a gap §5's own quality-bar table already named directly --
+Vertragsgemäße/Sachmangelfreie's "nothing blocks marking work 'done' with open, known defects."
+Live-verified before this fix: a `devsystem.implement` iteration marked `succeeded: true` whose own
+feedback said *"Known issue: crashes on a null id, not fixed yet, workaround needed"* produced zero
+risk findings -- the pipeline had no way to notice an iteration contradicting itself. Fixed with a
+new preflight check, same crude-but-honest mechanical spirit as `SECURITY_KEYWORDS`:
+`DEFECT_ADMISSION_PHRASES`, six specific multi-word phrases, only fires on `succeeded: true` (a
+FAILED iteration honestly saying it's broken is the behavior this wants to encourage, not flag)
+(`CADS-devsystem@9f9f5d2`). Re-verified live against the exact run already used to prove the gap:
+the same historical data that showed no relevant risk before now correctly surfaces it. Advisory,
+not a hard gate, and honestly beatable by different phrasing -- named as such, not oversold.
 
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
