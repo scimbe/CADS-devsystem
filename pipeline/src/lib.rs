@@ -90,7 +90,7 @@ pub fn plan_only_spec(run_id: &str, operator_pubkey_hex: Option<String>) -> Pipe
 /// an Android emulator to test the next slice against". This is the actual mechanism
 /// behind the self-optimizing design (#382): the pipeline is not fixed at `full_spec()`,
 /// it grows via proposals like this one, applied to the *live* spec by [`apply_proposal`].
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StageProposal {
     /// Which role/agent raised this (e.g. `"devsystem.implement"`, matching a stage
     /// tag) -- not a human identity, an accountability trail for which stage's

@@ -628,6 +628,31 @@ async fn iterate_run(
         return (StatusCode::BAD_REQUEST, format!("requirement_indices references index {bad}, but state.requirements only has {} entries", run_state.requirements.len()))
             .into_response();
     }
+    // Real idempotency guard, found necessary live (2026-08-05): a same-day window of
+    // overlapping devsystem-web container instances during a redeploy let two
+    // functionally-identical iterations both land with the same computed iteration
+    // number (two "iteration: 8" entries, no "9" -- confirmed directly in this run's
+    // own real history). `write_lock` already serializes concurrent requests *within*
+    // one process; it can't help against two separate process instances each running
+    // their own independent lock. This is process-external, not stage-specific -- a
+    // submission that's byte-identical (stage/feedback/succeeded/proposals/
+    // requirement_indices) to the run's own immediately-preceding entry is rejected
+    // outright, regardless of *why* a duplicate arrived (a client retry, an overlapping
+    // deploy, two callers doing the same real work independently).
+    if let Some(last) = run_state.history.last() {
+        if last.stage == body.stage
+            && last.feedback == body.feedback
+            && last.succeeded == body.succeeded
+            && last.proposals == body.proposals
+            && last.requirement_indices == body.requirement_indices
+        {
+            return (
+                StatusCode::CONFLICT,
+                format!("this submission is byte-identical to iteration {}, the run's own immediately-preceding entry -- refusing to record it as a distinct, new iteration", last.iteration),
+            )
+                .into_response();
+        }
+    }
 
     let iteration = run_state.history.len() as u32 + 1;
     let record = IterationRecord {
@@ -2784,16 +2809,19 @@ mod tests {
         assert_eq!(body[0]["needs_attention"], false);
         assert_eq!(body[0]["pending_reviews"], 0);
 
-        // Push it to 2 consecutive failures against the default max of 3 --
-        // one away from the abort bound, so the list should flag it now.
-        for _ in 0..2 {
+        // Push it to 2 consecutive failures against the default max of 3 -- one away
+        // from the abort bound, so the list should flag it now. Distinct feedback per
+        // attempt: two byte-identical submissions in a row are now a real, deliberate
+        // 409 (the idempotency guard, found necessary live 2026-08-05), not a way to
+        // simulate two separate failures.
+        for i in 0..2 {
             app.clone()
                 .oneshot(json_request(
                     "POST",
                     "/api/runs/list-health-run/iterate",
                     serde_json::json!({
                         "stage": "devsystem.implement",
-                        "feedback": "wired the real session handshake and key material",
+                        "feedback": format!("attempt {i}: wired the real session handshake and key material"),
                         "succeeded": false
                     }),
                 ))
@@ -4699,6 +4727,38 @@ exit 1"#);
         let after = fs::read_to_string(&state_path).expect("state.json still exists");
         assert!(after.contains("\"real progress\""), "iteration feedback should be persisted to disk");
         assert!(!after.contains("\"history\": []"), "history should no longer be empty on disk");
+    }
+
+    #[tokio::test]
+    /// Real idempotency guard (found necessary live, 2026-08-05): a same-day window of
+    /// overlapping devsystem-web instances during a redeploy let two functionally-
+    /// identical iterations both land, with the SAME computed iteration number and no
+    /// gap filled -- confirmed directly in webconference-android's own real history (two
+    /// "iteration: 8" entries, no "9"). `write_lock` only serializes concurrent requests
+    /// *within* one process, not across two separate instances. This is the defense-in-
+    /// depth fix: a submission byte-identical to the run's own immediately-preceding
+    /// entry is rejected outright, regardless of why a duplicate arrived.
+    async fn iterate_run_rejects_a_submission_byte_identical_to_the_immediately_preceding_one() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "dup-run"}))).await.unwrap();
+
+        let body = serde_json::json!({"stage": "devsystem.improve", "feedback": "declare a role", "succeeded": true});
+        let response = app.clone().oneshot(json_request("POST", "/api/runs/dup-run/iterate", body.clone())).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        assert_eq!(body_json(response).await["iteration"], 1);
+
+        // The exact same submission again -- must be rejected, not silently recorded
+        // as a second, distinct iteration.
+        let response = app.clone().oneshot(json_request("POST", "/api/runs/dup-run/iterate", body.clone())).await.unwrap();
+        assert_eq!(response.status(), SC::CONFLICT);
+
+        // A genuinely different submission (different feedback) is never blocked by
+        // this guard -- it's not a blanket "no two iterations from the same stage."
+        let different = serde_json::json!({"stage": "devsystem.improve", "feedback": "a real, different piece of work", "succeeded": true});
+        let response = app.oneshot(json_request("POST", "/api/runs/dup-run/iterate", different)).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        assert_eq!(body_json(response).await["iteration"], 2, "the rejected duplicate must not have consumed an iteration number");
     }
 
     #[tokio::test]
