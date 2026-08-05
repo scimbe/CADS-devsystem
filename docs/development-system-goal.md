@@ -298,7 +298,12 @@ faster than cold**, recompiling only what actually changed instead of the full d
    served page.
 6. **A unified decision-basis view** (§4.2) — requirements + constraints + the actual chat/docs
    that produced them, in one place.
-7. **A real requirements export** (§4.4) — a downloadable document, not just a JSON blob.
+7. ~~**A real requirements export**~~ — **done** (`CADS-devsystem@950931a`): `GET
+   /api/runs/{id}/requirements/export` renders a real Markdown document (statement, a real
+   verified checklist per acceptance criterion, provenance from gap #1), real `Content-Disposition`
+   so a browser actually downloads it, and a "Download as Markdown" link in the Requirements panel.
+   Verified live against both an empty run (webconference-android, honestly "no requirements
+   defined yet") and a populated one.
 8. ~~**ECC skills catalog audit**~~ — **audited** (`docs/ecc-skills-audit.md`, 2026-08-05): real
    fits found for `plan` (`architecture-decision-records`), `implement` (`android-clean-architecture`),
    `test` (`rust-testing`/`kotlin-testing`), `review` (`security-review`), `improve`
