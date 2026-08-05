@@ -200,13 +200,27 @@ against on this actual project, only in hermetic tests.
 
 **Real infrastructure incident found and fixed along the way, same day**: multiple autonomous loops
 now firing concurrently means multiple `deploy-devsystem-web.sh` invocations can race each other's
-`docker build` against the same BuildKit cache mount — confirmed directly (`docker exec ...
-strings` showed a "successfully deployed" container running a binary that had literally none of the
-day's committed source changes in it, despite every deploy reporting a clean exit). Fixed with a
-`flock` serializing real invocations of the script (`CADS-devsystem@2914d91`). Worth stating
-plainly: this is exactly the class of failure §8's own governing principle is about — a process gap
-that silently produced a wrong result with no visible error, not a competence failure of whichever
-loop triggered it.
+`docker build` against the same BuildKit cache mount. Real evidence: a `devsystem-demo.
+bunsenbrenner.org` API round-trip (add a requirement, declare `review`, toggle before any review
+iteration exists) returned `200`/`verified:true` instead of the expected `409` block, and a deploy
+run's own logged output named a different image manifest hash than what `docker images` showed as
+actually tagged moments later -- two builds landed close together and the wrong one won. Fixed with
+a `flock` serializing real invocations of the script (`CADS-devsystem@2914d91`).
+
+**Self-correction, same investigation**: the first attempt to *confirm* the stale binary used
+`docker exec devsystem-web strings /app/devsystem-web | grep ...`, which reported zero matches for
+newly-added code -- taken at the time as proof of staleness. It wasn't real evidence: `strings`
+isn't installed at all in this container's `debian:trixie-slim` runtime base (confirmed directly,
+`which strings` returns empty), so every one of those checks silently failed and reported zero
+matches regardless of the binary's actual contents. The underlying diagnosis (a real race, evidenced
+above) still holds and the fix is still correct -- but the specific "confirmed via strings" claim in
+an earlier version of this section was false and has been corrected here. After the `flock` fix and
+a clean rebuild+redeploy, the gate was re-verified with a real functional HTTP round-trip against
+`127.0.0.1:8790` directly (bypassing the public gate cookie entirely) and now correctly returns
+`409` before a review and `200` after one. Worth stating plainly, both halves: the race itself is
+exactly the class of failure §8's own governing principle is about (a silent process gap, not a
+competence failure of whichever loop triggered it) -- and so is trusting an unverified diagnostic
+tool as if it were real evidence. Both get fixed, not just the first one.
 
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
