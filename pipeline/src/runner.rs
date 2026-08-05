@@ -355,18 +355,50 @@ pub fn toggle_milestone(state: &mut RunState, index: usize) -> Result<(), String
 /// against for a stage that was never declared. Un-verifying (true -> false) is
 /// always allowed unconditionally -- loosening a claim never needs a review to
 /// justify it.
+///
+/// **Real gap found and closed by the incompetent-agent stress test itself**
+/// (#382 goal doc §8, 2026-08-05): the gate above only checked that a
+/// `devsystem.review` iteration *existed* and `succeeded` -- a real, live test
+/// against this exact gate proved a completely lazy rubber-stamp
+/// (`feedback: "looks fine to me"`) satisfied it just as well as real scrutiny
+/// would have. That's precisely the failure mode the goal doc's own governing
+/// principle names: the pipeline let a bad outcome through, not the reviewer's
+/// fault to have written a short answer -- the gate's fault for not checking.
+/// `MIN_REVIEW_FEEDBACK_LEN` is a deliberately crude, honestly-scoped mechanical
+/// proxy (this codebase's own established convention -- see `preflight.rs` --
+/// is simple, explainable checks, never fake LLM-judgment-in-disguise): a review
+/// under this length cannot plausibly be real scrutiny of a specific
+/// requirement's specific acceptance criteria. It does **not** verify the
+/// review is actually good, only that it isn't trivially empty. A longer but
+/// still-lazy review (padded filler text) is a real, known, undefended gap --
+/// noted honestly in the goal doc, not claimed solved here.
+const MIN_REVIEW_FEEDBACK_LEN: usize = 25;
+
 pub fn toggle_requirement(spec: &PipelineSpec, state: &mut RunState, index: usize) -> Result<(), String> {
     let requirement = state.requirements.get(index).ok_or_else(|| format!("no requirement at index {index}"))?;
     if !requirement.verified && spec.roles.iter().any(|r| r.tag == "review") {
-        let reviewed = state
-            .history
-            .iter()
-            .any(|h| h.stage == "devsystem.review" && h.succeeded && h.requirement_indices.contains(&index));
-        if !reviewed {
+        // Every qualifying review (right requirement, succeeded), not just the first
+        // or the last -- an early lazy rubber-stamp must not poison a genuinely
+        // substantive review submitted afterward, and a later lazy one must not
+        // undo an earlier real review either. The gate passes if AT LEAST ONE
+        // qualifying review clears the length bar.
+        let reviews: Vec<&IterationRecord> =
+            state.history.iter().filter(|h| h.stage == "devsystem.review" && h.succeeded && h.requirement_indices.contains(&index)).collect();
+        if reviews.is_empty() {
             return Err(format!(
                 "requirement {index} cannot be marked verified yet -- this run declares a devsystem.review \
                  role, but no successful devsystem.review iteration addressing requirement {index} (via its \
                  requirement_indices) exists yet. Submit one first."
+            ));
+        }
+        if !reviews.iter().any(|r| r.feedback.trim().chars().count() >= MIN_REVIEW_FEEDBACK_LEN) {
+            let longest = reviews.iter().max_by_key(|r| r.feedback.trim().chars().count()).unwrap();
+            return Err(format!(
+                "requirement {index} cannot be marked verified yet -- every devsystem.review iteration \
+                 addressing it is too short to plausibly be real scrutiny (longest is iteration {}, {} \
+                 character(s), minimum {MIN_REVIEW_FEEDBACK_LEN}). A rubber-stamp review doesn't satisfy this gate.",
+                longest.iteration,
+                longest.feedback.trim().chars().count(),
             ));
         }
     }
@@ -611,12 +643,28 @@ mod tests {
         });
         assert!(toggle_requirement(&spec, &mut state, 0).is_err(), "a review that didn't name this requirement must not satisfy the gate");
 
-        // A real, successful review that actually names this requirement satisfies it.
+        // A short, lazy rubber-stamp review -- succeeded, names the right
+        // requirement, but still doesn't satisfy the gate (the real gap the
+        // incompetent-agent stress test found live, 2026-08-05).
         state.history.push(IterationRecord {
             run_id: "run-req-gated".into(),
             stage: "devsystem.review".into(),
             iteration: 3,
-            feedback: "reviewed and approved".into(),
+            feedback: "looks fine to me".into(),
+            succeeded: true,
+            proposals: vec![],
+            requirement_indices: vec![0],
+        });
+        let err = toggle_requirement(&spec, &mut state, 0).expect_err("a rubber-stamp review must not satisfy the gate");
+        assert!(err.contains("too short"), "the error must explain why: {err}");
+
+        // A real, successful review that actually names this requirement, with
+        // real substance, satisfies it.
+        state.history.push(IterationRecord {
+            run_id: "run-req-gated".into(),
+            stage: "devsystem.review".into(),
+            iteration: 4,
+            feedback: "confirmed empty/whitespace input never reaches sendText and focus is retained".into(),
             succeeded: true,
             proposals: vec![],
             requirement_indices: vec![0],

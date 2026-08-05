@@ -3855,7 +3855,7 @@ mod tests {
             .oneshot(json_request(
                 "POST",
                 "/api/runs/req-gate-run/iterate",
-                serde_json::json!({"stage": "devsystem.review", "feedback": "reviewed and approved", "succeeded": true, "requirement_indices": [0]}),
+                serde_json::json!({"stage": "devsystem.review", "feedback": "confirmed the acceptance criteria are all met in the real diff", "succeeded": true, "requirement_indices": [0]}),
             ))
             .await
             .unwrap();
@@ -3867,6 +3867,57 @@ mod tests {
         assert_eq!(response.status(), SC::OK);
         let body = body_json(response).await;
         assert_eq!(body["requirements"][0]["verified"], true);
+    }
+
+    #[tokio::test]
+    /// Real gap found and closed by actually running the incompetent-agent stress
+    /// test (#382 goal doc §8, 2026-08-05): a live round-trip against this exact
+    /// gate proved a completely lazy rubber-stamp review ("looks fine to me")
+    /// satisfied it just as well as real scrutiny would have. Proven over real HTTP
+    /// here, not just the pipeline crate's own unit test.
+    async fn a_lazy_rubber_stamp_review_does_not_satisfy_the_gate_over_http() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "lazy-review-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/lazy-review-run/requirements",
+                serde_json::json!({"statement": "a real requirement", "acceptance_criteria": ["checkable"]}),
+            ))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/lazy-review-run/iterate",
+                serde_json::json!({
+                    "stage": "devsystem.improve",
+                    "feedback": "this run needs a real review gate",
+                    "succeeded": true,
+                    "proposals": [{"proposed_by": "devsystem.improve", "stage_id": "devsystem.review", "tag": "review", "rationale": "quality gate", "use_existing_service": null, "units": 1, "price_ceiling": null}],
+                }),
+            ))
+            .await
+            .unwrap();
+
+        // The real, live rubber-stamp that surfaced this gap.
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/lazy-review-run/iterate",
+                serde_json::json!({"stage": "devsystem.review", "feedback": "looks fine to me", "succeeded": true, "requirement_indices": [0]}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/lazy-review-run/requirements/0/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::CONFLICT, "a rubber-stamp review must not satisfy the gate, even though it succeeded and named the right requirement");
+        let body = String::from_utf8(axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+        assert!(body.contains("too short"), "the error must explain why: {body}");
     }
 
     #[tokio::test]
