@@ -336,6 +336,22 @@ first fix: a generic-but-varied review ("looks good, works fine, nothing to flag
 would still clear both bars without being real scrutiny -- a real, known, still-undefended gap,
 named here rather than papered over.
 
+**The stress test's fourth real run, 2026-08-05**: went after the exact remaining gap the third
+run's own writeup had just named -- a generic-but-varied review would still clear both mechanical
+bars. Tried the next realistic move: copy-paste a real, substantive review's feedback (the
+device-rotation requirement's own genuine review text) and reuse it verbatim to "review" a
+completely unrelated requirement (network-retry-on-send), naming that different requirement in
+`requirement_indices` instead. **It worked again** -- a real `200`, both the length and distinct-
+word bars passing trivially since the reused text genuinely was long and varied, just not actually
+about the requirement it was applied to. Fixed for real: a qualifying review's feedback must not be
+byte-identical (trimmed) to another successful `devsystem.review` iteration in this run's history
+that named a different, non-overlapping set of requirements (`same_requirement_set`, a real
+`HashSet` comparison) (`CADS-devsystem@187c4ac`). Re-verified live against the actual deployment
+after shipping: the exact same reused-verbatim feedback that got a `200` before now gets a real
+`409`; a genuinely distinct review of the same requirement still gets a clean `200`. Four real
+stress-test runs, four real gaps found and closed the same day -- each one specifically the gap the
+previous run's own writeup had honestly flagged as still open, not a new speculative worry.
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
