@@ -385,6 +385,16 @@ means finding and re-uploading the real file again, not a quick undo. Fixed the 
 Playwright browser: added a real manual document, the dialog names the exact file, cancel preserves
 it, accept removes it.
 
+**A third real DAU-lens finding, same sweep, different shape**: marking a memory entry "reviewed"
+(`Trust::Governed`) is a real, one-directional attestation -- `govern_memory_entry`'s own doc
+comment confirms it, and live-verified there's no un-govern route anywhere (calling it twice just
+no-ops). Different from the first two findings -- no data is lost, only a trust flag flips -- but
+the same permanence-with-no-undo shape: a careless click permanently records "a human reviewed
+this" against an entry nobody actually reviewed. Fixed the same way, honestly phrased as an
+attestation rather than data loss (`CADS-devsystem@0622996`). Verified live via a real Playwright
+browser: the dialog names the exact stage/role, cancel leaves it genuinely "unreviewed", accept
+genuinely flips it to "governed".
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
