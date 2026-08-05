@@ -27,12 +27,25 @@ COPY web ./web
 # separate, isolated github_issue_channel_handler agent instead of POSTing to
 # GitHub directly. Built from the same pipeline/ checkout, same cache mounts,
 # in the one cargo invocation so this doesn't double the dependency-compile cost.
+#
+# Real bug found and fixed (2026-08-05, same day as the cache mount above was
+# added): the cache mount below targets /work/target, but neither `cargo build
+# --manifest-path web/Cargo.toml` nor `--manifest-path pipeline/Cargo.toml`
+# writes there by default -- each defaults to <manifest-dir>/target
+# (/work/web/target, /work/pipeline/target), confirmed directly against the
+# cp commands below, which have always read from exactly those paths, never
+# from /work/target. The mount was caching an empty, unused directory --
+# compiled artifacts (the expensive part, all the real rustc invocation time)
+# were never actually persisted across builds, only the registry cache mount
+# (crate source downloads) was doing anything. CARGO_TARGET_DIR redirects both
+# cargo invocations' real output to the one directory the mount actually is.
+ENV CARGO_TARGET_DIR=/work/target
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/work/target \
     cargo build --release --manifest-path web/Cargo.toml --jobs 1 \
     && cargo build --release --manifest-path pipeline/Cargo.toml --jobs 1 --bin github_issue_channel_client \
-    && cp web/target/release/devsystem-web /tmp/devsystem-web \
-    && cp pipeline/target/release/github_issue_channel_client /tmp/github_issue_channel_client
+    && cp /work/target/release/devsystem-web /tmp/devsystem-web \
+    && cp /work/target/release/github_issue_channel_client /tmp/github_issue_channel_client
 
 # Real fix (2026-08-05): rust:1-slim above now tracks Debian 13 (trixie,
 # glibc 2.41) upstream, not bookworm -- discovered the hard way when this
