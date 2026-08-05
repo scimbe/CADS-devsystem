@@ -352,6 +352,21 @@ after shipping: the exact same reused-verbatim feedback that got a `200` before 
 stress-test runs, four real gaps found and closed the same day -- each one specifically the gap the
 previous run's own writeup had honestly flagged as still open, not a new speculative worry.
 
+**The stress test's fifth real run, 2026-08-05**: diversified beyond the review gate into the
+OTHER real risk check this pipeline already had -- `missing_test_before_implement` (proposal §5's
+own example: "no test stage before implement"). It only ever asked *whether* a `devsystem.test`
+record existed before implement, never whether it had any real substance. Live-verified before this
+fix: a rubber-stamp `feedback: "tests pass"` `devsystem.test` iteration silently made the risk
+annotation vanish, then a real `devsystem.implement` iteration whose own feedback honestly admitted
+"no actual tests written for it" produced zero risk findings on the run. Fixed the same way as the
+review gate: a `devsystem.test` record only counts as real evidence testing happened if its feedback
+clears the same two mechanical substance bars (25+ characters, 8+ distinct words --
+`distinct_word_count` reused directly, not reimplemented) (`CADS-devsystem@49d6544`). Re-verified
+live against the actual deployment after shipping, against the exact same run already used to prove
+the gap: the same historical data that showed zero risks before this fix now correctly surfaces the
+risk annotation, no resubmission needed. Five real stress-test runs, five real gaps found and closed
+the same day.
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
