@@ -448,10 +448,41 @@ pub fn toggle_milestone(state: &mut RunState, index: usize) -> Result<(), String
 /// is simple, explainable checks, never fake LLM-judgment-in-disguise): a review
 /// under this length cannot plausibly be real scrutiny of a specific
 /// requirement's specific acceptance criteria. It does **not** verify the
-/// review is actually good, only that it isn't trivially empty. A longer but
-/// still-lazy review (padded filler text) is a real, known, undefended gap --
-/// noted honestly in the goal doc, not claimed solved here.
+/// review is actually good, only that it isn't trivially empty.
+///
+/// **The exact "longer but still-lazy" gap the goal doc named, closed for real,
+/// live-verified before this fix and again after**: a real POST against this
+/// gate with `feedback: "looks good looks good looks good looks good"` (45
+/// characters, well past the length bar) got a real `200` and marked the
+/// requirement verified -- length alone can't tell real scrutiny from padded
+/// filler repeating the same few words. `MIN_REVIEW_DISTINCT_WORDS` adds a
+/// second, complementary mechanical proxy: a real review of a specific
+/// requirement's specific acceptance criteria uses more than a handful of
+/// distinct words, even a short one. Both bars must clear -- length alone
+/// passed "looks good looks good..."; distinct-word-count alone would pass a
+/// single very long repeated word. Still an honestly crude proxy, not real
+/// judgment: a generic-but-varied review ("looks good, works fine, nothing to
+/// flag, all clear here") clears both bars without being real scrutiny either
+/// -- that remaining gap is noted in the goal doc, not claimed solved here.
 const MIN_REVIEW_FEEDBACK_LEN: usize = 25;
+const MIN_REVIEW_DISTINCT_WORDS: usize = 8;
+
+/// Case-insensitive distinct alphanumeric "words" in `text` -- the same
+/// tokenization spirit as `preflight.rs`'s other mechanical checks (simple,
+/// explainable, no fake LLM-judgment-in-disguise). Punctuation-only repeats
+/// ("good. good! good?") still collapse to one distinct word, same as
+/// whitespace-separated repeats do.
+fn distinct_word_count(text: &str) -> usize {
+    let mut words: Vec<String> = text
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_string())
+        .collect();
+    words.sort();
+    words.dedup();
+    words.len()
+}
 
 pub fn toggle_requirement(spec: &PipelineSpec, state: &mut RunState, index: usize) -> Result<(), String> {
     let requirement = state.requirements.get(index).ok_or_else(|| format!("no requirement at index {index}"))?;
@@ -470,14 +501,21 @@ pub fn toggle_requirement(spec: &PipelineSpec, state: &mut RunState, index: usiz
                  requirement_indices) exists yet. Submit one first."
             ));
         }
-        if !reviews.iter().any(|r| r.feedback.trim().chars().count() >= MIN_REVIEW_FEEDBACK_LEN) {
-            let longest = reviews.iter().max_by_key(|r| r.feedback.trim().chars().count()).unwrap();
+        let qualifies = |r: &&IterationRecord| {
+            let trimmed = r.feedback.trim();
+            trimmed.chars().count() >= MIN_REVIEW_FEEDBACK_LEN && distinct_word_count(trimmed) >= MIN_REVIEW_DISTINCT_WORDS
+        };
+        if !reviews.iter().any(qualifies) {
+            let best = reviews.iter().max_by_key(|r| (r.feedback.trim().chars().count(), distinct_word_count(r.feedback.trim()))).unwrap();
             return Err(format!(
                 "requirement {index} cannot be marked verified yet -- every devsystem.review iteration \
-                 addressing it is too short to plausibly be real scrutiny (longest is iteration {}, {} \
-                 character(s), minimum {MIN_REVIEW_FEEDBACK_LEN}). A rubber-stamp review doesn't satisfy this gate.",
-                longest.iteration,
-                longest.feedback.trim().chars().count(),
+                 addressing it is too short or too repetitive to plausibly be real scrutiny (best is \
+                 iteration {}, {} character(s) and {} distinct word(s); minimum {MIN_REVIEW_FEEDBACK_LEN} \
+                 characters AND {MIN_REVIEW_DISTINCT_WORDS} distinct words). A rubber-stamp or padded \
+                 filler review doesn't satisfy this gate.",
+                best.iteration,
+                best.feedback.trim().chars().count(),
+                distinct_word_count(best.feedback.trim()),
             ));
         }
     }
@@ -660,6 +698,18 @@ mod tests {
     }
 
     #[test]
+    fn distinct_word_count_collapses_case_and_punctuation_repeats() {
+        assert_eq!(distinct_word_count("looks good looks good looks good looks good"), 2);
+        assert_eq!(distinct_word_count("Good. good! GOOD?"), 1, "case and punctuation must not create false-distinct words");
+        assert_eq!(distinct_word_count(""), 0);
+        assert_eq!(
+            distinct_word_count("confirmed empty/whitespace input never reaches sendText and focus is retained"),
+            11,
+            "a real review's genuinely varied vocabulary must count each distinct word once"
+        );
+    }
+
+    #[test]
     fn toggling_a_requirement_flips_verified_and_never_auto_pauses() {
         let spec = plan_only_spec("run-req", None);
         let mut state = RunState::new("run-req");
@@ -792,12 +842,30 @@ mod tests {
         let err = toggle_requirement(&spec, &mut state, 0).expect_err("a rubber-stamp review must not satisfy the gate");
         assert!(err.contains("too short"), "the error must explain why: {err}");
 
+        // A LONGER but still-lazy review -- padded filler repeating the same
+        // few words, well past the character minimum -- must not satisfy the
+        // gate either (the exact "longer but still-lazy" gap the goal doc
+        // named as undefended, live-verified against the real deployment
+        // 2026-08-05: this exact feedback string got a real 200 before this
+        // fix).
+        state.history.push(IterationRecord {
+            run_id: "run-req-gated".into(),
+            stage: "devsystem.review".into(),
+            iteration: 4,
+            feedback: "looks good looks good looks good looks good".into(),
+            succeeded: true,
+            proposals: vec![],
+            requirement_indices: vec![0],
+        });
+        let err = toggle_requirement(&spec, &mut state, 0).expect_err("a padded, repetitive review must not satisfy the gate");
+        assert!(err.contains("too short or too repetitive") || err.contains("distinct word"), "the error must explain why: {err}");
+
         // A real, successful review that actually names this requirement, with
         // real substance, satisfies it.
         state.history.push(IterationRecord {
             run_id: "run-req-gated".into(),
             stage: "devsystem.review".into(),
-            iteration: 4,
+            iteration: 5,
             feedback: "confirmed empty/whitespace input never reaches sendText and focus is retained".into(),
             succeeded: true,
             proposals: vec![],
