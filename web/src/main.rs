@@ -1011,6 +1011,7 @@ struct AddRequirementRequest {
 const MAX_REQUIREMENT_STATEMENT_LEN: usize = 2_000;
 const MAX_ACCEPTANCE_CRITERIA: usize = 20;
 const MAX_ACCEPTANCE_CRITERION_LEN: usize = 500;
+const MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS: usize = 5;
 
 /// Real, structured requirement management (2026-08-04 operator ask, grounded
 /// in researched industry practice -- EARS notation, spec-driven-development's
@@ -1048,6 +1049,28 @@ async fn add_requirement(
     }
     if let Some(c) = acceptance_criteria.iter().find(|c| c.len() > MAX_ACCEPTANCE_CRITERION_LEN) {
         return (StatusCode::BAD_REQUEST, format!("acceptance criterion \"{c}\" is over {MAX_ACCEPTANCE_CRITERION_LEN} characters")).into_response();
+    }
+    // Real gap found and closed by the incompetent-agent stress test (#382 goal
+    // doc §8, 2026-08-05): a live round-trip proved criteria like "ok", ".", and
+    // "done" -- plus a criterion that was ONLY a zero-width space (U+200B), which
+    // .trim() doesn't strip (it's Unicode category Cf/Format, not White_Space, so
+    // it renders as apparently blank in the GUI while passing the "not empty"
+    // check) -- all sailed through as real, checkable criteria. Same mechanical-
+    // check convention as MIN_REVIEW_FEEDBACK_LEN: requiring a minimum count of
+    // alphanumeric characters (not just total length) catches both problems with
+    // one rule -- a criterion with too few real letters/digits to be checkable,
+    // and one with none at all (which is what an invisible-character-only string
+    // actually is under this count).
+    if let Some(c) = acceptance_criteria.iter().find(|c| c.chars().filter(|ch| ch.is_alphanumeric()).count() < MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS) {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!(
+                "acceptance criterion \"{c}\" doesn't have enough real content to be checkable \
+                 (minimum {MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS} letters/digits) -- \"ok\", \".\", or an \
+                 invisible character aren't real acceptance criteria."
+            ),
+        )
+            .into_response();
     }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
@@ -3803,6 +3826,43 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST, "a requirement with no checkable acceptance criteria must be rejected");
+    }
+
+    #[tokio::test]
+    /// Real gap found and closed by the incompetent-agent stress test (#382 goal
+    /// doc §8, 2026-08-05): a live round-trip proved "ok", ".", "done", and a
+    /// criterion that was ONLY a zero-width space (U+200B, invisible in the GUI --
+    /// .trim() doesn't strip it, it's Unicode category Cf/Format, not White_Space)
+    /// all sailed through as real, checkable criteria.
+    async fn add_requirement_rejects_trivially_uncheckable_acceptance_criteria() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-trivial-run"}))).await.unwrap();
+
+        for trivial in ["ok", ".", "done", "\u{200b}"] {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/runs/req-trivial-run/requirements",
+                    serde_json::json!({"statement": "a real statement", "acceptance_criteria": [trivial]}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::BAD_REQUEST, "{trivial:?} must be rejected as not a real, checkable criterion");
+        }
+
+        // A genuinely short but real criterion must still be accepted -- this is
+        // "enough real content", not an unreasonably high bar.
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-trivial-run/requirements",
+                serde_json::json!({"statement": "a real statement", "acceptance_criteria": ["no crash"]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "a genuinely short but real criterion must not be rejected");
     }
 
     #[tokio::test]
