@@ -337,6 +337,17 @@ remain open with them, per the standing hand-off.
    happened), not the whole table (Stand der Technik / dependency freshness, Kunstgerecht /
    idiomatic-code checks, etc. remain unenforced).
 3. **Context-relevant panels** (§7.1) — show what this run's actual state needs, not a fixed set.
+   **First slice done** (`CADS-devsystem@de56d33`): the Pipeline chip on the panel toggle bar now
+   carries a real badge with the run's actual pending-proposal count (stage + panel + issue
+   proposals combined) -- a run with something awaiting approval no longer looks identical, from
+   the toggle bar, to one with nothing outstanding. Found and fixed a real bug while verifying this
+   live, not assumed correct from the diff: the toggle bar was never re-rendered after `selectRun`
+   or any of the six proposal approve/reject handlers updated the run's data, so the badge would
+   either never show on first opening a run or go stale after approving. Verified live both
+   directions (badge appears on a real pending proposal, disappears on a real approve) via
+   screenshots against a scratch run. Still open: this is one signal (pending approvals) on one
+   panel (Pipeline) -- the rest of §7.1's ask (foreground "add your first requirement" on an empty
+   run, hide panels genuinely irrelevant to the current stage) remains unaddressed.
 4. **Assistant-editable panel values generally** (§7.2) — beyond the current fixed `Action` enum.
    **First slice done** (`CADS-devsystem@920f66e`): a human could already toggle one acceptance
    criterion independently of the whole requirement (`toggle_acceptance_criterion_handler`, the
