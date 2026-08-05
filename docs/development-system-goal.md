@@ -320,6 +320,22 @@ merged for real: `devsystem_document_extraction_handler` (PDF-only) is now in `m
 ([CADS-devsystem@0937992](https://github.com/scimbe/CADS-devsystem/commit/0937992)). DOCX/image/OCR
 remain open with them, per the standing hand-off.
 
+**The stress test's third real run, 2026-08-05**: went after the exact gap the first run's own
+writeup had already named and left open -- "a longer-but-still-padded lazy review remains a real,
+known, undefended gap." Added a fresh requirement to `stress-incompetent-agent`, then submitted
+`feedback: "looks good looks good looks good looks good"` (45 characters, well past the existing
+25-character minimum), `succeeded: true`, correctly naming the requirement. **It worked again** --
+a real `200`, requirement marked verified, length alone unable to tell padded filler from real
+scrutiny. Fixed for real: a second, complementary mechanical bar,
+`MIN_REVIEW_DISTINCT_WORDS = 8` (`distinct_word_count`, case-insensitive, punctuation-collapsing) --
+both the length and distinct-word bars must clear now
+(`CADS-devsystem@b25e975`). Re-verified live against the actual deployment after shipping: the
+exact same padded-review string that got a `200` before now gets a real `409`; a genuinely
+substantive review submitted right after still gets a clean `200`. Honestly scoped, same as the
+first fix: a generic-but-varied review ("looks good, works fine, nothing to flag, all clear here")
+would still clear both bars without being real scrutiny -- a real, known, still-undefended gap,
+named here rather than papered over.
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
