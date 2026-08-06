@@ -122,6 +122,19 @@ struct AppState {
     /// this slice (see `approve_issue_proposal`'s own doc comment for the
     /// priority between the two paths).
     issue_channel: Option<IssueChannelConfig>,
+    /// Real fallback extraction path for `upload_rag_file` (#382 goal doc §4.2/
+    /// issue #7 & #14, 2026-08-06): when configured, an upload that can't use
+    /// `rag_unstructured_api_key` (unset -- no paid API key on this deployment)
+    /// shells out to a real `devsystem_document_extraction_client` subprocess,
+    /// which dials the real `devsystem.document_extraction` role-filler over a
+    /// real CADS-Tunnel Agent-Fabric channel, the same "separate isolated
+    /// subprocess holds the real credential/identity, this process never does"
+    /// shape `issue_channel` already established. `None` when any piece is
+    /// missing -- an ADDITIVE path: a deployment with `rag_unstructured_api_key`
+    /// configured is unaffected either way (Unstructured stays tried first,
+    /// see `upload_rag_file`'s own doc comment on the real priority), and a
+    /// deployment with neither keeps today's honest `503`.
+    document_extraction_channel: Option<DocumentExtractionChannelConfig>,
 }
 
 /// See `AppState::issue_channel`'s doc comment. Every field here maps directly
@@ -138,6 +151,26 @@ struct IssueChannelConfig {
     noise_key: Arc<str>,
     peer_noise_key: Arc<str>,
     peer_cert_file: Arc<str>,
+}
+
+/// See `AppState::document_extraction_channel`'s doc comment. Same real shape
+/// as `IssueChannelConfig`, one real field added: `grant_hex`/`holder_key_hex`
+/// -- this channel is grant-gated (`ct-agent channel grant`, unlike the older
+/// issue-channel relay), so this deployment's own real signed
+/// `SignedChannelGrant` and the real private holder key it was issued to both
+/// have to reach the spawned `ct-agent channel` subprocess too (inherited via
+/// explicit `.env(...)`, matching this file's own "every env var explicit,
+/// never left to ambient inheritance" convention -- see `call_extraction_channel`).
+#[derive(Clone)]
+struct DocumentExtractionChannelConfig {
+    client_bin: Arc<str>,
+    ct_agent_bin: Arc<str>,
+    addr: Arc<str>,
+    noise_key: Arc<str>,
+    peer_noise_key: Arc<str>,
+    peer_cert_file: Arc<str>,
+    grant_hex: Arc<str>,
+    holder_key_hex: Arc<str>,
 }
 
 fn unix_now() -> u64 {
@@ -348,6 +381,27 @@ async fn main() {
             "issue-proposal channel relay not fully configured (need ISSUE_CHANNEL_CLIENT_BIN, CT_AGENT_BIN, CT_CHANNEL_ADDR, CT_CHANNEL_NOISE_KEY, CT_CHANNEL_PEER_NOISE_KEY, CT_CHANNEL_PEER_CERT_FILE all set) -- approving a proposal will fall back to DEVSYSTEM_GITHUB_TOKEN if that's configured"
         );
     }
+    // Same all-or-nothing shape as issue_channel above, same real reason: a
+    // partially-set relay is not a real, usable one.
+    let document_extraction_channel: Option<DocumentExtractionChannelConfig> = (|| {
+        Some(DocumentExtractionChannelConfig {
+            client_bin: nonempty_env("DOCUMENT_EXTRACTION_CLIENT_BIN")?,
+            ct_agent_bin: nonempty_env("CT_AGENT_BIN")?,
+            addr: nonempty_env("CT_CHANNEL_ADDR")?,
+            noise_key: nonempty_env("DOCUMENT_EXTRACTION_CHANNEL_NOISE_KEY")?,
+            peer_noise_key: nonempty_env("DOCUMENT_EXTRACTION_CHANNEL_PEER_NOISE_KEY")?,
+            peer_cert_file: nonempty_env("DOCUMENT_EXTRACTION_CHANNEL_PEER_CERT_FILE")?,
+            grant_hex: nonempty_env("DOCUMENT_EXTRACTION_CHANNEL_GRANT")?,
+            holder_key_hex: nonempty_env("DOCUMENT_EXTRACTION_CHANNEL_HOLDER_KEY")?,
+        })
+    })();
+    if document_extraction_channel.is_some() {
+        println!("document-extraction channel fully configured -- a RAG upload will fall back to devsystem.document_extraction over a real channel when Unstructured isn't configured");
+    } else {
+        println!(
+            "document-extraction channel not fully configured (need DOCUMENT_EXTRACTION_CLIENT_BIN, CT_AGENT_BIN, CT_CHANNEL_ADDR, DOCUMENT_EXTRACTION_CHANNEL_NOISE_KEY, DOCUMENT_EXTRACTION_CHANNEL_PEER_NOISE_KEY, DOCUMENT_EXTRACTION_CHANNEL_PEER_CERT_FILE, DOCUMENT_EXTRACTION_CHANNEL_GRANT, DOCUMENT_EXTRACTION_CHANNEL_HOLDER_KEY all set) -- a RAG upload without RAG_UNSTRUCTURED_API_KEY stays a real 503"
+        );
+    }
     let state = AppState {
         runs_dir: Arc::new(runs_dir),
         write_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -362,6 +416,7 @@ async fn main() {
         rag_unstructured_api_base,
         rag_db_pool,
         issue_channel,
+        document_extraction_channel,
     };
 
     let static_dir = std::env::var("DEVSYSTEM_STATIC_DIR").unwrap_or_else(|_| "web/static".to_string());
@@ -1813,13 +1868,27 @@ async fn add_rag_document(
 /// unbounded real Unstructured API cost on this operator's behalf.
 const MAX_RAG_UPLOAD_BYTES: usize = 10_000_000;
 
-/// `POST /api/runs/{id}/rag/upload-file` -- real image/PDF/DOCX upload via the
-/// real Unstructured API (`rag::parse_with_unstructured`), the operator's
-/// explicit image-OCR ask from CADS-devsystem#7. `multipart/form-data`, one
-/// field named `file`. Owner-restricted like every other GUI mutation; a real
-/// `503` (not a silent no-op) when `RAG_UNSTRUCTURED_API_KEY` isn't
-/// configured, matching `ask_assistant`'s own "not configured" precedent
-/// rather than pretending to accept a file it can't actually process.
+/// `POST /api/runs/{id}/rag/upload-file` -- real image/PDF/DOCX upload,
+/// `multipart/form-data`, one field named `file`. Owner-restricted like every
+/// other GUI mutation. Two real extraction paths, tried in this order (same
+/// priority shape `approve_issue_proposal` already established for its own
+/// two real posting paths):
+///
+/// 1. The real Unstructured API (`rag::parse_with_unstructured`), when
+///    `RAG_UNSTRUCTURED_API_KEY` is configured -- the operator's explicit
+///    image-OCR ask from CADS-devsystem#7, and the only path that handles
+///    images at all. Unchanged behavior from before this fallback existed.
+/// 2. The real `devsystem.document_extraction` channel
+///    (`AppState::document_extraction_channel`), when Unstructured isn't
+///    configured but this is -- PDF/DOCX only as of this writing (see that
+///    role's own handler), never images. A real, free, already-auctioned
+///    capability instead of leaving every deployment without a paid
+///    Unstructured key permanently unable to upload at all.
+///
+/// A real `503` (not a silent no-op), naming which path(s) were checked,
+/// when neither is configured -- matching `ask_assistant`'s own "not
+/// configured" precedent rather than pretending to accept a file it can't
+/// actually process.
 async fn upload_rag_file(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap, mut multipart: axum::extract::Multipart) -> impl IntoResponse {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
@@ -1827,9 +1896,13 @@ async fn upload_rag_file(State(state): State<AppState>, AxPath(id): AxPath<Strin
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
     }
-    let Some(api_key) = state.rag_unstructured_api_key.clone() else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "RAG_UNSTRUCTURED_API_KEY is not configured on this deployment").into_response();
-    };
+    if state.rag_unstructured_api_key.is_none() && state.document_extraction_channel.is_none() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "neither RAG_UNSTRUCTURED_API_KEY nor the devsystem.document_extraction channel is configured on this deployment",
+        )
+            .into_response();
+    }
     let _guard = state.write_lock.lock().await;
     let run_state = match load_or_init_run(&run_dir(&state, &id), &id) {
         Ok((_spec, s)) => s,
@@ -1861,15 +1934,24 @@ async fn upload_rag_file(State(state): State<AppState>, AxPath(id): AxPath<Strin
     if bytes.len() > MAX_RAG_UPLOAD_BYTES {
         return (StatusCode::BAD_REQUEST, format!("upload must be under {MAX_RAG_UPLOAD_BYTES} bytes")).into_response();
     }
-    let elements = match rag::parse_with_unstructured(&state.http_client, &state.rag_unstructured_api_base, &api_key, &filename, bytes).await {
-        Ok(e) => e,
-        Err(e) => return (StatusCode::BAD_GATEWAY, format!("Unstructured extraction failed: {e}")).into_response(),
+    let (text, truncated, elements_extracted, via) = if let Some(api_key) = state.rag_unstructured_api_key.clone() {
+        let elements = match rag::parse_with_unstructured(&state.http_client, &state.rag_unstructured_api_base, &api_key, &filename, bytes).await {
+            Ok(e) => e,
+            Err(e) => return (StatusCode::BAD_GATEWAY, format!("Unstructured extraction failed: {e}")).into_response(),
+        };
+        let (text, truncated) = rag::elements_to_text(&elements);
+        (text, truncated, elements.len(), "unstructured")
+    } else {
+        let cfg = state.document_extraction_channel.clone().expect("checked Some above -- Unstructured branch is the only other option");
+        match extract_via_channel(&cfg, &filename, &bytes).await {
+            Ok(text) => (text, false, 0, "document_extraction_channel"),
+            Err(e) => return (StatusCode::BAD_GATEWAY, format!("devsystem.document_extraction channel extraction failed: {e}")).into_response(),
+        }
     };
-    let (text, truncated) = rag::elements_to_text(&elements);
     if text.trim().is_empty() {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
-            Json(serde_json::json!({"error": "Unstructured extracted no text from this file", "elements": elements.len()})),
+            Json(serde_json::json!({"error": format!("{via} extracted no text from this file"), "elements": elements_extracted})),
         )
             .into_response();
     }
@@ -1891,8 +1973,9 @@ async fn upload_rag_file(State(state): State<AppState>, AxPath(id): AxPath<Strin
             "id": doc.id,
             "path": doc.path,
             "added_at": doc.added_at,
-            "elements_extracted": elements.len(),
+            "elements_extracted": elements_extracted,
             "extracted_text_truncated": truncated,
+            "extracted_via": via,
         }))
         .into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the index: {e}")).into_response(),
@@ -2814,6 +2897,47 @@ async fn post_issue_via_channel(cfg: &IssueChannelConfig, repo: &str, title: &st
     }
 }
 
+/// See `AppState::document_extraction_channel`'s doc comment. Same real
+/// subprocess-shape as `post_issue_via_channel`, one real difference:
+/// `devsystem_document_extraction_client`'s own CLI contract is a real file
+/// *path* (it reads the file itself, to derive `mime_type` from the real
+/// extension -- see that binary's own `mime_type_for`), not stdin/argv content,
+/// so the real uploaded bytes are written to a real temp file first, named to
+/// preserve the original extension, and always cleaned up (`defer`-style via
+/// the `_cleanup` guard) whether the call succeeds or fails.
+async fn extract_via_channel(cfg: &DocumentExtractionChannelConfig, filename: &str, bytes: &[u8]) -> Result<String, String> {
+    let ext = std::path::Path::new(filename).extension().and_then(|e| e.to_str()).unwrap_or("bin");
+    let tmp_path = std::env::temp_dir().join(format!("devsystem-rag-upload-{:016x}.{ext}", rand::random::<u64>()));
+    if let Err(e) = tokio::fs::write(&tmp_path, bytes).await {
+        return Err(format!("could not write a real temp file for the extraction client: {e}"));
+    }
+    struct CleanupOnDrop(std::path::PathBuf);
+    impl Drop for CleanupOnDrop {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let _cleanup = CleanupOnDrop(tmp_path.clone());
+
+    let output = tokio::process::Command::new(cfg.client_bin.as_ref())
+        .arg(&tmp_path)
+        .env("CT_AGENT_BIN", cfg.ct_agent_bin.as_ref())
+        .env("CT_CHANNEL_ADDR", cfg.addr.as_ref())
+        .env("CT_CHANNEL_NOISE_KEY", cfg.noise_key.as_ref())
+        .env("CT_CHANNEL_PEER_NOISE_KEY", cfg.peer_noise_key.as_ref())
+        .env("CT_CHANNEL_PEER_CERT_FILE", cfg.peer_cert_file.as_ref())
+        .env("CT_CHANNEL_GRANT", cfg.grant_hex.as_ref())
+        .env("CT_CHANNEL_HOLDER_KEY", cfg.holder_key_hex.as_ref())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await;
+    match output {
+        Ok(out) if out.status.success() => Ok(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string()),
+        Ok(out) => Err(format!("devsystem_document_extraction_client exited with {}: {}", out.status, String::from_utf8_lossy(&out.stderr).trim())),
+        Err(e) => Err(format!("could not run the document-extraction channel client ({}): {e}", cfg.client_bin)),
+    }
+}
+
 /// `POST /api/runs/{id}/issues/proposals/{proposal_id}/approve` -- the actual
 /// "eingebaut nach meiner Zustimmung" (built in after my approval) step: files
 /// the real issue. Two real posting paths, tried in this order:
@@ -3214,6 +3338,7 @@ mod tests {
             rag_unstructured_api_base: Arc::from("https://api.unstructured.io"),
             rag_db_pool: None,
             issue_channel: None,
+            document_extraction_channel: None,
         };
         (state, dir)
     }
@@ -3261,6 +3386,39 @@ mod tests {
             noise_key: Arc::from("fake-noise-priv"),
             peer_noise_key: Arc::from("fake-noise-peer-pub"),
             peer_cert_file: Arc::from("/nonexistent/fake-cert-file"),
+        });
+        (state, dir)
+    }
+
+    /// A fake `devsystem_document_extraction_client` standing in for the real
+    /// subprocess -- same real reason `fake_issue_channel_client` fakes that
+    /// binary rather than a real `ct-agent`/real channel: proves
+    /// `extract_via_channel`'s own temp-file/env-passing/output-parsing logic,
+    /// not a real channel round trip (that's live-verified by hand against the
+    /// real deployment, same "hermetic test the logic, live-verify the real
+    /// transport by hand" precedent this file's own issue-channel tests
+    /// already established).
+    fn fake_extraction_client(dir: &std::path::Path, script: &str) -> String {
+        let path = dir.join("fake-extraction-client.sh");
+        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+        path.to_string_lossy().to_string()
+    }
+
+    fn test_state_with_document_extraction_channel(client_script: &str) -> (AppState, tempfile::TempDir) {
+        let (mut state, dir) = test_state();
+        let client_bin = fake_extraction_client(dir.path(), client_script);
+        state.document_extraction_channel = Some(DocumentExtractionChannelConfig {
+            client_bin: Arc::from(client_bin),
+            ct_agent_bin: Arc::from("fake-ct-agent"),
+            addr: Arc::from("127.0.0.1:1"),
+            noise_key: Arc::from("fake-noise-priv"),
+            peer_noise_key: Arc::from("fake-noise-peer-pub"),
+            peer_cert_file: Arc::from("/nonexistent/fake-cert-file"),
+            grant_hex: Arc::from("fake-grant-hex"),
+            holder_key_hex: Arc::from("fake-holder-key-hex"),
         });
         (state, dir)
     }
@@ -5974,6 +6132,7 @@ exit 1"#);
             rag_unstructured_api_base: Arc::from("https://api.unstructured.io"),
             rag_db_pool: None,
             issue_channel: None,
+            document_extraction_channel: None,
         };
         let app = api_router(state);
 
@@ -6597,6 +6756,62 @@ exit 1"#);
 
         let response = app.oneshot(multipart_file_request("/api/runs/rag-upload-run/rag/upload-file", "blank.png", b"fake-blank-image")).await.unwrap();
         assert_eq!(response.status(), SC::UNPROCESSABLE_ENTITY, "an upload that extracts no real text must not silently become an empty stored document");
+    }
+
+    #[tokio::test]
+    /// Real fallback path (#382 goal doc §4.2, issue #7 & #14, 2026-08-06):
+    /// a deployment with no RAG_UNSTRUCTURED_API_KEY at all used to hard-503
+    /// every upload, permanently, even with a real free extraction role
+    /// available. Proves the real wiring end to end: the fake client receives
+    /// the real file path as argv[1] (readable, real bytes on disk), and its
+    /// real stdout becomes the real indexed, searchable text.
+    async fn upload_rag_file_falls_back_to_the_document_extraction_channel_when_unstructured_is_not_configured() {
+        let (state, _dir) =
+            test_state_with_document_extraction_channel("test -f \"$1\" || { echo \"no such file: $1\" >&2; exit 1; }\necho 'real extracted text from the channel'");
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-upload-run"}))).await.unwrap();
+
+        let response = app.clone().oneshot(multipart_file_request("/api/runs/rag-upload-run/rag/upload-file", "report.pdf", b"fake-pdf-bytes")).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let created = body_json(response).await;
+        assert_eq!(created["extracted_via"], "document_extraction_channel");
+
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/rag-upload-run/rag/search?q=extracted+text+channel").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["results"][0]["path"], "report.pdf", "the real extracted text must be genuinely searchable, not just stored");
+    }
+
+    #[tokio::test]
+    /// Real priority: Unstructured (handles images too) stays tried first
+    /// even when both are configured -- the channel is a fallback for a
+    /// deployment that lacks Unstructured, not a replacement.
+    async fn upload_rag_file_prefers_unstructured_over_the_document_extraction_channel_when_both_are_configured() {
+        let base = spawn_mock_unstructured_server(SC::OK, serde_json::json!([{"text": "from unstructured", "type": "Title"}])).await;
+        let (mut state, _dir) = test_state_with_rag_unstructured("fake-key", &base);
+        let (channel_state, _channel_dir) = test_state_with_document_extraction_channel("echo 'this must never be used'");
+        state.document_extraction_channel = channel_state.document_extraction_channel;
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-upload-run"}))).await.unwrap();
+
+        let response = app.oneshot(multipart_file_request("/api/runs/rag-upload-run/rag/upload-file", "report.pdf", b"fake-pdf-bytes")).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let created = body_json(response).await;
+        assert_eq!(created["extracted_via"], "unstructured", "Unstructured must win the priority when both paths are configured");
+    }
+
+    #[tokio::test]
+    async fn upload_rag_file_surfaces_a_real_document_extraction_channel_failure_honestly() {
+        let (state, _dir) = test_state_with_document_extraction_channel("echo 'agent reported an error: no bidder online' >&2\nexit 1");
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-upload-run"}))).await.unwrap();
+
+        let response = app.oneshot(multipart_file_request("/api/runs/rag-upload-run/rag/upload-file", "report.pdf", b"fake-pdf-bytes")).await.unwrap();
+        assert_eq!(response.status(), SC::BAD_GATEWAY);
+        let body = String::from_utf8(axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+        assert!(body.contains("no bidder online"), "the real subprocess failure must be surfaced honestly, not hidden: {body}");
     }
 
     #[tokio::test]
