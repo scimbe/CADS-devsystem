@@ -3222,4 +3222,43 @@ specific angle -- the sitewide grep confirms these are the only two modal/popove
 exist; future firings should look toward a still-different DAU/accessibility lens (e.g. focus-trap
 behavior inside an open modal, or screen-reader labeling) rather than re-sweeping Escape coverage.
 
+**Goal-driven-loop firing, 2026-08-06 (www) -- the focus-trap candidate flagged in firing (vvv)'s own
+closing note, a genuinely severe double gap**: no new operator input on any of the three open `#382`
+checkpoints (all three most recent comments still my own); GitHub's incident still `major_outage`
+though CADS-devsystem's two most recent completed CI runs are both `success`; issue #14 unchanged;
+no scimbe-authored open PRs on either target repo.
+
+Checked the app's only real modal (the "New Project" dialog) for focus-trap behavior, exactly the
+lead the previous firing left open. Found two real, distinct bugs, both live-confirmed via
+Playwright against the actual production `devsystem-web` container before touching any code:
+
+1. The run-id input's own `autofocus` attribute never actually took effect --
+   `document.activeElement` after opening stayed on the trigger button, not the input, despite the
+   attribute genuinely being present in the DOM. A real, if obscure, browser behavior: the HTML
+   autofocus algorithm doesn't reliably fire for markup inserted via `innerHTML` into an
+   already-connected node.
+2. Far more severe: with no focus trap at all, `Tab` from the trigger button walked straight through
+   the *entire page behind the overlay* -- live-confirmed reaching `requirement-statement`/
+   `requirement-criteria` input fields completely hidden under the modal. A keyboard-only user had
+   zero indication they were editing invisible background state rather than the dialog in front of
+   them -- a materially worse instance of "the GUI not leading a plausible user toward a good
+   outcome" than the Escape-coverage gaps fixed so far this session.
+
+Fixed with the standard accessible-modal pattern (`web/static/index.html`,
+`CADS-devsystem@ed39496`): explicit `.focus()` on the first real field after insertion (not relying
+on the unreliable `autofocus` attribute alone), a real `Tab`/`Shift+Tab` trap confined to the
+modal's own focusable elements while it's open, and focus restored to whatever real element
+triggered the dialog on every close path -- Cancel, outside click, Escape, successful submit -- since
+they all already converge on `closeNewProjectDialog`.
+
+Live-verified after the fix and a real redeploy: focus now starts on the run-id input; 12
+consecutive Tabs cycle only the modal's own 4 real focusable elements and never escape;
+`Shift+Tab` from the first field correctly wraps to the last; `Escape` and Cancel both close the
+dialog and restore focus to the real trigger button; a full real create-run submission (scratch run
+created, then cleaned up via a real `DELETE`) still works end to end with zero console errors. Pure
+static-frontend change; hermetic `web` suite re-run for completeness, 190/190 unchanged.
+
+This closes the focus-trap candidate named in firing (vvv); the only other angle it named
+(screen-reader labeling) is still genuinely open for a future firing to pick up.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
