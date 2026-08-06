@@ -1900,4 +1900,26 @@ No new bugs found -- the sweep is now genuinely complete, not just three isolate
 to stop there. Reported honestly as a completed verification, not padded into a fabricated fourth
 fix.
 
+**Main-dev-loop firing, 2026-08-06 (k) -- the same lens, one severity notch down, in the GUI's own
+input validation**: with the `preflight.rs` sweep closed out, broadened the "does this hide multiple
+real, distinct, independently-actionable instances" lens to `web/src/main.rs` itself, surveying all
+13 `.find(` call sites. Most are legitimate find-by-unique-id lookups. Two were a real, if lower-
+severity, instance of the same class: `add_requirement`'s acceptance-criteria validation ran two
+separate `.find()`-based rejections (over-length, under-alnum-content) that each stopped at the FIRST
+bad criterion in the request. This isn't the "a real risk silently persists forever" severity of the
+`preflight.rs` bugs -- the caller does eventually learn about every bad criterion -- but it's a real,
+avoidable friction cost: a caller submitting several simultaneously-bad criteria in one request had
+to fix-and-resubmit once per additional mistake to discover them all, one real round-trip per extra
+error. Fixed (`CADS-devsystem@dddf6ac`): replaced both separate `.find()` blocks with a single
+`.filter_map()` pass collecting every bad criterion's description, returned together in one `400`.
+Confirmed via grep that no existing test depended on the old per-criterion error message text before
+changing it. New regression test
+(`add_requirement_reports_every_bad_acceptance_criterion_in_one_response_not_just_the_first`) proves
+a too-short AND too-long criterion in the same request both land in the same response body; hermetic
+web crate suite 178/178 (was 177, no regressions). Deployed, live-verified against the real running
+container (`curl` with both a too-short and a 501-character criterion in one request, got both
+problems named in the single `400` body). Stress-harness check [24] added
+(`CADS-devsystem@acb324b`), 50/50 assertions passing locally and confirmed green in the real GitHub
+Actions run against the deployed Docker image (`docker build`, containerized stress test, both green).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
