@@ -2690,7 +2690,7 @@ function renderRequirementsPanel(id, data) {
     <div class="backlog-list">${items}</div>
     <div class="lede" style="font-size:.72rem;margin-top:.4rem">EARS-style: "WHEN &lt;trigger&gt;, THE SYSTEM SHALL &lt;behavior&gt;". One acceptance criterion per line, at least one required.</div>
     <form class="inline" id="requirement-form" style="margin-top:.6rem;flex-direction:column;align-items:stretch;gap:.3rem">
-      <input id="requirement-statement" placeholder="WHEN ..., THE SYSTEM SHALL ...">
+      <input id="requirement-statement" maxlength="2000" placeholder="WHEN ..., THE SYSTEM SHALL ...">
       <textarea id="requirement-criteria" rows="2" placeholder="acceptance criterion (one per line)" style="font-family:var(--mono);font-size:.8rem"></textarea>
       <button type="submit">Add requirement</button>
     </form>
@@ -2734,6 +2734,24 @@ function renderRequirementsPanel(id, data) {
     const acceptance_criteria = document.getElementById('requirement-criteria').value.split('\n').map(s => s.trim()).filter(Boolean);
     if (!statement) { status.textContent = 'Statement is required.'; status.className = 'status-line err'; return; }
     if (!acceptance_criteria.length) { status.textContent = 'At least one acceptance criterion is required.'; status.className = 'status-line err'; return; }
+    // DAU-lens gap found live 2026-08-06 (#382 goal doc §8): the server's own real
+    // per-criterion checks (over 500 characters; under 5 real alphanumeric characters,
+    // catching "ok"/"."/an invisible-character-only string) had no client-side early
+    // warning at all -- a long or trivial criterion used to silently round-trip to the
+    // server before failing. `maxlength` alone can't express the per-line rule here
+    // (criteria share one textarea, one per line), so checked explicitly instead.
+    const tooLong = acceptance_criteria.find(c => c.length > 500);
+    if (tooLong) {
+      status.textContent = `"${tooLong.slice(0, 40)}${tooLong.length > 40 ? '…' : ''}" is over 500 characters.`;
+      status.className = 'status-line err';
+      return;
+    }
+    const tooTrivial = acceptance_criteria.find(c => (c.match(/[\p{L}\p{N}]/gu) || []).length < 5);
+    if (tooTrivial) {
+      status.textContent = `"${tooTrivial}" doesn't have enough real content to be checkable (minimum 5 letters/digits).`;
+      status.className = 'status-line err';
+      return;
+    }
     try {
       await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
