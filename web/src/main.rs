@@ -24,7 +24,7 @@ use devsystem_pipeline::runner::{
     Milestone, PendingIssueProposal, PendingNextStepDraft, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal, Requirement,
     RoleFillMode, RunOutcome, RunState,
 };
-use devsystem_pipeline::{apply_proposal, validate_feedback, validate_proposals, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal, MAX_ROLE_UNITS};
+use devsystem_pipeline::{apply_proposal, contains_bidi_control_char, validate_feedback, validate_proposals, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal, MAX_ROLE_UNITS};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
 use ct_common::pipeline::SelectionState;
 use serde::{Deserialize, Serialize};
@@ -1420,43 +1420,6 @@ const MAX_ACCEPTANCE_CRITERIA: usize = 20;
 const MAX_ACCEPTANCE_CRITERION_LEN: usize = 500;
 const MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS: usize = 5;
 
-/// Real DAU-lens gap found live by the incompetent-agent stress test (#382
-/// goal doc §8, 2026-08-06), extending the same zero-width-space finding
-/// (Unicode category Cf/Format sailing through `.trim()`) to a much more
-/// consequential member of the same category: bidi control characters
-/// (Trojan Source, CVE-2021-42574's own attack class). Live-confirmed before
-/// fixing: a statement/criterion containing U+202E (RIGHT-TO-LEFT OVERRIDE)
-/// stores and passes every existing check untouched, but *visually renders*
-/// with its text order scrambled -- "approved\u{202e} for production tset
-/// ton si sihT" (real alphanumeric content either side, so it clears
-/// `MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS` easily) actually displays as
-/// "approvedThis is not test noitcudorp rof" in this app's own GUI, which
-/// has no `unicode-bidi` isolation anywhere. A human reviewer relies on
-/// reading a criterion to decide whether to mark it verified -- text whose
-/// on-screen order doesn't match its real content is exactly the kind of
-/// thing that leads a good-faith reviewer to the wrong result through no
-/// fault of their own judgment, the same governing principle behind every
-/// other gate in this file. Originally scoped to just the requirement
-/// statement/criteria (the fields a human reads to decide
-/// `toggle_requirement`/`toggle_acceptance_criterion`), then extended the
-/// same firing's own noted follow-up candidates to milestones and backlog
-/// items too (2026-08-06) -- a milestone description mattered most of the
-/// remaining candidates, since `achieved: true` auto-pauses the run as a
-/// real checkpoint a human trusts at face value. Extended once more
-/// (2026-08-06) to custom-panel `title` at all four real entry points
-/// (add, direct-edit, assistant-propose, assistant-propose-edit) --
-/// deliberately NOT `html`, which is untrusted-by-design and rendered only
-/// inside a sandboxed iframe (see `add_custom_panel`'s own doc comment);
-/// `title`, by contrast, is real trusted UI chrome shown in the panel list
-/// and interpolated raw into this feature's own `confirm()` dialogs.
-/// Stage-proposal rationale remains the one open candidate for a future
-/// sweep.
-const BIDI_CONTROL_CHARS: [char; 9] = ['\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}'];
-
-fn contains_bidi_control_char(s: &str) -> bool {
-    s.chars().any(|c| BIDI_CONTROL_CHARS.contains(&c))
-}
-
 /// Real, structured requirement management (2026-08-04 operator ask, grounded
 /// in researched industry practice -- EARS notation, spec-driven-development's
 /// "the spec is the prompt", traceSDD/Spec Kit-style acceptance criteria) --
@@ -2442,7 +2405,8 @@ async fn add_custom_panel(
     }
     // Real gap found live by the incompetent-agent stress test (#382 goal doc
     // §8, 2026-08-06), closing out this class's last two noted candidates (see
-    // BIDI_CONTROL_CHARS's own doc comment): a panel's `title` is real, trusted
+    // devsystem_pipeline::BIDI_CONTROL_CHARS's own doc comment): a panel's
+    // `title` is real, trusted
     // UI chrome -- shown in the panel list, and interpolated raw into this
     // panel's own confirm() dialogs -- unlike `html`, which is deliberately
     // untrusted-by-design (rendered only inside a sandboxed iframe, per this
@@ -3196,6 +3160,19 @@ async fn propose_stage(
     let rationale = body.rationale.trim().to_string();
     if stage_id.is_empty() || tag.is_empty() || rationale.is_empty() {
         return (StatusCode::BAD_REQUEST, "stage_id, tag, and rationale must not be empty").into_response();
+    }
+    // Same real gap `validate_proposals` closes for the embedded-proposal path
+    // (devsystem_pipeline::lib.rs) -- see its own doc comment. This is the
+    // assistant-facing pending-review path: a human approving from the queue
+    // trusts exactly this rationale to justify the proposal at face value.
+    if contains_bidi_control_char(&rationale) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "rationale contains a Unicode bidi control character (e.g. a right-to-left override) \
+             -- these can make the visually displayed text not match what's actually stored"
+                .to_string(),
+        )
+            .into_response();
     }
     if body.units == 0 {
         return (StatusCode::BAD_REQUEST, "units must be at least 1").into_response();
@@ -6757,6 +6734,41 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST, "an absurdly large units value must be rejected, not silently accepted");
+    }
+
+    #[tokio::test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): closes out the bidi-control-character class's last
+    /// candidate at its assistant-facing entry point -- a human approving from
+    /// the pending-review queue trusts exactly this rationale to justify the
+    /// proposal at face value. Live-confirmed before fixing: a rationale
+    /// containing a real U+202E sailed through untouched.
+    async fn propose_stage_rejects_a_bidi_control_character_in_rationale() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "bidi-rationale-run"}))).await.unwrap();
+
+        let bidi_rationale = "Needed for real testing\u{202e} noitcaxe atad lautca sesopxe -- egats suoregnad a si sihT";
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/bidi-rationale-run/stages/propose",
+                serde_json::json!({"stage_id": "devsystem.x", "tag": "x", "rationale": bidi_rationale}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a rationale containing a bidi override character must be rejected");
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/bidi-rationale-run/stages/propose",
+                serde_json::json!({"stage_id": "devsystem.x", "tag": "x", "rationale": "a genuine, clean reason"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "a clean rationale must not be rejected");
     }
 
     #[tokio::test]

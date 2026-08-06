@@ -209,6 +209,23 @@ pub fn apply_proposal(spec: &mut PipelineSpec, proposal: &StageProposal) -> Prop
 /// separately-maintained copies.
 pub const MAX_ROLE_UNITS: u64 = 100;
 
+/// Trojan Source (CVE-2021-42574) bidi control characters -- a real DAU-lens gap
+/// found live by the incompetent-agent stress test (#382 goal doc §8, 2026-08-06).
+/// Moved here (from `web/src/main.rs`, where it was found and first fixed for
+/// requirement statement/criteria, then extended to milestones, backlog, and
+/// custom-panel title) so `validate_proposals` below -- reached from `devsystem-web`
+/// AND from `devsystem_iterate`'s local, non-`--remote` CLI path, which has no HTTP
+/// layer to share a check through any other way -- can close its own last-remaining
+/// candidate, `rationale`, from the single real place both entry points already
+/// share. `devsystem-web` re-exports this rather than keeping a second copy, the
+/// same "single source of truth" discipline `MAX_ROLE_UNITS` above already
+/// established for this exact pair of crates.
+pub const BIDI_CONTROL_CHARS: [char; 9] = ['\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}'];
+
+pub fn contains_bidi_control_char(s: &str) -> bool {
+    s.chars().any(|c| BIDI_CONTROL_CHARS.contains(&c))
+}
+
 /// DAU-lens gap found live 2026-08-06 (#382 goal doc §8), same lens and same shape as
 /// the `add_requirement` acceptance-criteria fix (`web/src/main.rs`): each of these
 /// two checks used to `find` and reject on the FIRST bad proposal in the batch only.
@@ -219,6 +236,16 @@ pub const MAX_ROLE_UNITS: u64 = 100;
 /// a single-element convenience wrapper), so this is a real, not hypothetical, case.
 /// Now reports every bad proposal in the one batch that has them, not one
 /// retry-and-learn cycle per additional mistake.
+///
+/// Extended 2026-08-06 (stress-test run 13) to reject a bidi control character in
+/// `rationale` too -- live-confirmed before fixing: a rationale reading "Needed for
+/// real testing" followed by a real U+202E and reversed text sailed through
+/// untouched, visually hiding an admission ("This is a dangerous stage -- exposes
+/// actual data extraction") that would otherwise have been the whole point of a
+/// human reading the rationale before approving. This is the more consequential of
+/// `rationale`'s two real entry points: an embedded proposal reaching this function
+/// applies *immediately* to the live spec, no human review gate at all (see
+/// `MAX_ROLE_UNITS`'s own doc comment above).
 pub fn validate_proposals(proposals: &[StageProposal]) -> Result<(), String> {
     let bad: Vec<String> = proposals
         .iter()
@@ -227,6 +254,12 @@ pub fn validate_proposals(proposals: &[StageProposal]) -> Result<(), String> {
                 Some(format!("proposal for stage_id {:?} needs a non-empty stage_id, tag, and rationale", p.stage_id))
             } else if p.units == 0 || p.units > MAX_ROLE_UNITS {
                 Some(format!("proposal for stage_id {:?} needs units between 1 and {MAX_ROLE_UNITS}, got {}", p.stage_id, p.units))
+            } else if contains_bidi_control_char(&p.rationale) {
+                Some(format!(
+                    "proposal for stage_id {:?} has a rationale containing a Unicode bidi control character (e.g. a \
+                     right-to-left override) -- these can make the visually displayed text not match what's actually stored",
+                    p.stage_id
+                ))
             } else {
                 None
             }
@@ -513,6 +546,35 @@ mod tests {
         let mut absurd_units = base;
         absurd_units.units = u64::MAX;
         assert!(validate_proposals(&[absurd_units]).is_err(), "an absurdly large units value must be rejected, not silently accepted");
+    }
+
+    #[test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06, stress-test run 13): closes out the bidi-control-
+    /// character class's last remaining candidate. `rationale` is what a human
+    /// reads to decide whether a proposal is safe to approve -- live-confirmed
+    /// before fixing: "Needed for real testing" + U+202E + reversed text sailed
+    /// through untouched, visually hiding "This is a dangerous stage -- exposes
+    /// actual data extraction" behind an innocuous-looking rationale. This is
+    /// the more consequential of `rationale`'s two real entry points: an
+    /// embedded proposal reaching this function applies immediately, no human
+    /// review gate at all (see MAX_ROLE_UNITS's own doc comment above).
+    fn validate_proposals_rejects_a_bidi_control_character_in_rationale() {
+        let base = StageProposal {
+            proposed_by: "devsystem.plan".to_string(),
+            stage_id: "devsystem.real".to_string(),
+            tag: "real".to_string(),
+            rationale: "a genuine reason".to_string(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: None,
+        };
+        assert!(validate_proposals(std::slice::from_ref(&base)).is_ok(), "a genuine, clean rationale must pass");
+
+        let mut bidi = base;
+        bidi.rationale = "Needed for real testing\u{202e} noitcaxe atad lautca sesopxe -- egats suoregnad a si sihT".to_string();
+        let err = validate_proposals(&[bidi]).expect_err("a rationale containing a bidi override character must be rejected");
+        assert!(err.contains("bidi control character"), "{err}");
     }
 
     #[test]
