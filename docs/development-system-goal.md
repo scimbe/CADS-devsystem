@@ -909,6 +909,23 @@ tab would, confirmed the real alert fires with the right message, confirmed the 
 another real run rather than getting stuck, confirmed the deleted run is genuinely gone from the
 list. Thirty-two real stress-test investigations, thirty-two real gaps found and closed.
 
+**The stress test's thirty-third real run, 2026-08-06**: applying the "two real entry points, one
+bug class" methodology (already used for `no_price_ceiling` earlier this session) to run 30's own
+fix -- the GUI checkbox isn't the only way to achieve a milestone. `devsystem.assistant`'s
+`toggle_milestone` action hits the identical real `/milestones/{index}/toggle` endpoint from a plain
+chat instruction, with the LLM given zero awareness in its own system prompt that this auto-pauses
+the entire run. Live-confirmed against the real deployed assistant before touching anything: asked
+it to "mark milestone 0 achieved, we just confirmed it works" on a real scratch run, got back
+"Milestone 0 ... marked achieved." with no mention of the run pausing -- the run's own real state
+showed `paused: true` immediately after, entirely unannounced. There's no `confirm()` equivalent for
+a chat action, so the fix is the only real lever available: an explicit system-prompt instruction to
+state the consequence plainly in the one-line confirmation whenever this action is taken
+(`CADS-devsystem@c20f808`). Hermetic: pipeline lib 99/99, `devsystem_assistant` bin 44/44 (one new
+test), clippy clean. Deployed and re-ran the exact live scenario that proved the bug: the real reply
+now reads "Milestone 0 (...) marked achieved -- this pauses the whole run; no new iterations are
+accepted until you explicitly resume it." Thirty-three real stress-test investigations, thirty-three
+real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
