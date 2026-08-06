@@ -2703,4 +2703,25 @@ errors, and the run's own `history`/`added_stages` stayed empty (confirmed nothi
 server). This closes out the bidi-control-character class's GUI-side coverage completely, not just
 its API-side coverage.
 
+**Goal-driven-loop firing, 2026-08-06 (ww) -- defense-in-depth for the closed bidi-spoofing class**:
+no new operator input on any of the three open `#382` checkpoints; CI still not reliably completing
+(same runner-dispatch symptom as last firing). Started this firing with a real audit rather than
+assuming the class was fully closed just because every write-time gate now exists: scanned all 110
+real `state.json` files this repo actually has (the same `runs/` directory `devsystem-web` itself
+is bind-mounted against) for a bidi control character -- **zero found**, a genuinely clean result,
+not assumed.
+
+But "audited once and found clean" isn't the same guarantee as "structurally can't happen again" --
+the write-time fixes only guard new writes, not data that predates them or a future field that adds
+free text without remembering the check. Added a retroactive `preflight.rs` risk check
+(`CADS-devsystem@6f7e89a`) scanning every field the write-time fixes cover (requirement statement/
+criteria, milestones, backlog, custom-panel title, pending and approved stage-proposal rationale),
+seeded into the canvas session the same way every other process gap in this file already is. 2 new
+regression tests, 114/114 pipeline-lib tests (was 112), 187/187 web tests unchanged, hermetic clippy
+clean. Live-verified against the real redeployed container required simulating genuinely
+pre-existing contaminated data, since the write-time gates now correctly block new bidi text via the
+normal API -- injected a bidi-laced milestone directly into a scratch run's `state.json` (root-owned
+by the container, written via a root-context Docker container, not the API) and confirmed the real
+`GET /api/runs/{id}` response surfaces the exact expected risk, then cleaned up.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
