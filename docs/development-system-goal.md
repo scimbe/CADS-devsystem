@@ -569,7 +569,7 @@ wasn't checked. Twelve real stress-test runs, twelve real gaps found and closed.
    Verified live both ways: a fresh run's statement input is genuinely focused (confirmed via
    `document.activeElement`), an existing run with requirements shows no banner. Still open: hiding
    panels genuinely irrelevant to the current stage (the rest of §7.1's ask) remains unaddressed.
-4. **Assistant-editable panel values generally** (§7.2) — beyond the current fixed `Action` enum.
+4. ~~**Assistant-editable panel values generally**~~ (§7.2) — beyond the current fixed `Action` enum.
    **First slice done** (`CADS-devsystem@920f66e`): a human could already toggle one acceptance
    criterion independently of the whole requirement (`toggle_acceptance_criterion_handler`, the
    Requirements panel's per-criterion checkboxes); the assistant had no matching action at all
@@ -617,6 +617,33 @@ wasn't checked. Twelve real stress-test runs, twelve real gaps found and closed.
    here rather than assumed done: **editing** an existing panel's title/HTML has no assistant path at
    all yet -- a human can only do it by removing and re-adding one via the direct GUI form, and the
    assistant still has no equivalent single-step edit action.
+
+   **Fourth slice done, 2026-08-06** (`CADS-devsystem@849f32a`): closes gap #4 for real -- the last
+   named-open piece. A human now has a genuine one-step **Edit** on every live panel card (a real
+   inline form, pre-filled with the panel's current title/HTML, `POST .../panels/{panel_id}/update`,
+   applies immediately -- same trust level as their own direct Remove button, their own content,
+   their own call), instead of the previous remove-then-re-add workaround that also threw away the
+   real `id`/`created_at`. The assistant gets the matching gated mirror,
+   `ProposeEditCustomPanel { panel_id, title, html }`, exactly the same "propose it, a human approves
+   the actual overwrite" trust model as `ProposeRemoveCustomPanel` -- overwriting real content is
+   exactly as irreversible as deleting it, so it never applies directly. Both directions' confirm()
+   dialogs follow the same established DAU-lens rule: the human's own direct Save asks for
+   confirmation (it overwrites real content); the safe direction (Cancel, or Reject on a pending
+   proposal) does not.
+
+   Live E2E-verified against run `verify-panel-edit`: edited a panel directly via the human path
+   (real `id`/`created_at` preserved, content genuinely changed), then asked the real assistant via
+   the real `/api/runs/{id}/assistant` proxy to propose editing the same panel, confirmed a real
+   "proposed:" response (never "done"), confirmed the panel stayed genuinely unchanged with a
+   correctly snapshotted `old_title` -> `new_title` pending proposal, approved it, confirmed the
+   panel was genuinely overwritten. GUI verified live via Playwright against run
+   `verify-panel-edit-gui`: the Custom Panels manager renders the pending edit proposal (old -> new
+   title, new HTML preview, working Approve & overwrite / Reject buttons) and the live panel's own
+   inline Edit form, correctly pre-filled with its real current title/HTML. Hermetic tests: web crate
+   146/146, `devsystem_assistant` bin 37/37, pipeline lib 86/86 unaffected.
+
+   Gap #4 is now genuinely closed: every real panel-management action a human has (add, remove,
+   edit) has a matching, correctly-gated assistant-proposable mirror.
 5. ~~**An agents/tokens/costs overview**~~ — **done** (`CADS-devsystem@19c03ef` backend,
    `705b30e` GUI): `RunState.assistant_usage` persists real running totals (call count,
    input/output/cache tokens, `total_cost_usd`) on every real `/ask` call, and a real Assistant
