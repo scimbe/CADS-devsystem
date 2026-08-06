@@ -2771,4 +2771,28 @@ the first fix covered. Includes the real generated `.plan.md` proof from actuall
 input on any of the three open `#382` checkpoints; GitHub's incident still `major_outage` per the
 status page; the live docs site itself continues serving correctly (spot-checked again).
 
+**Goal-driven-loop firing, 2026-08-06 (aaa) -- a systematic grep sweep found two sites firing (yy)
+missed, genuinely closing the markdown-forgery class this time**: no new operator input on any of
+the three open `#382` checkpoints. CI update: a run for `b626741` is `queued` (not yet completed) --
+progress over the total silence of the last few firings, still not confirmable green yet.
+
+Rather than trust firing (yy)'s fix as complete, grepped the whole codebase for the exact vulnerable
+pattern (`` `{}` `` /backtick-wrapped raw interpolation of role-filler text) one more time and found
+two real, still-open sites: (1) `checkin.rs`'s `pending_stage_proposals` loop in the "Also awaiting
+your review" section -- every sibling line right there already used `inline_code_escape`, this one
+didn't; (2) `runner.rs`'s `render_requirements_markdown` -- the very function that pioneered this
+escaping discipline (stress-test check #9) still had `proposed_by` unescaped, right next to
+`statement`/criteria which already were. Both role-filler-controlled, no character restriction at
+their real entry points, confirmed directly against the handlers.
+
+Fixed both (`CADS-devsystem@a24e432`) with reproduced-first failing tests, then end-to-end live
+verification against the real, currently-deployed system for each: a real malicious `proposed_by`
+through `POST .../requirements`, inspected the real `GET .../requirements/export` output; a real
+malicious `stage_id` through `POST .../stages/propose`, built and ran the real fixed
+`devsystem_checkin` binary, inspected the actual generated `.plan.md`. Both now correctly widen to a
+double-backtick delimiter. Redeployed `devsystem-web`. 2 new regression tests, 117/117 pipeline-lib
+tests (was 115), 187/187 web tests unchanged, hermetic clippy clean on both crates. A final grep
+sweep after these fixes found no further unescaped sites -- this class is now genuinely closed, not
+just reported closed.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
