@@ -701,6 +701,22 @@ deployed key file too (`chmod 600`) -- the code fix alone only protects a newly-
 exact file already existed at mode `664` before today. Twenty real stress-test investigations,
 twenty real gaps found and closed.
 
+**The stress test's twenty-first real run, 2026-08-06**: a real, live-confirmed gap in
+`update_criteria` -- already rejected `0` for `max_iterations`/`max_consecutive_failures`, but had
+no upper bound at all on any of the three `AbortCriteria` fields. Live-verified before this fix:
+`{"max_iterations": 4294967295, "max_consecutive_failures": 4294967295, "checkin_every":
+4294967295}` (`u32::MAX`) got a real `200` -- turning a run's "bounded super loop" -- #382's own
+stated, central architectural principle, present verbatim in this project's own recurring dev-loop
+prompt every single firing -- into one that's unbounded for any practical purpose. A DAU-lens gap,
+not a role-filler one this time: a human fat-fingering or copy-pasting a wrong value into this
+endpoint would silently defeat their own intended safety net with zero warning. Fixed with a real,
+generous-but-finite ceiling (`MAX_ABORT_CRITERIA_VALUE = 10,000`) on all three fields -- real runs
+in this project use single- or low-double-digit values, nowhere close to this limit
+(`CADS-devsystem@e7e27fa`). Re-verified live against the exact same submission that previously got a
+`200`: now a real `400` naming the real reason; a genuine, generous value (100/5/10) submitted right
+after still works cleanly. Twenty-one real stress-test investigations, twenty-one real gaps found and
+closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
