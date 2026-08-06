@@ -1404,7 +1404,11 @@ function openNewProjectDialog() {
         <label>Project id<input id="np-run-id" placeholder="e.g. my-other-project" pattern="[A-Za-z0-9_\\-]+" required autofocus></label>
         <label>GitHub repo URL <span style="opacity:.7">(optional -- powers the Pipeline panel and Docs Search sync)</span>
           <input id="np-repo-url" type="url" placeholder="https://github.com/owner/repo"></label>
-        <div id="new-project-status" class="status-line"></div>
+        <!-- Real gap found live 2026-08-06, deliberately deferred out of the modal's own
+             role="dialog"/aria-modal fix to keep that increment bounded: "Creating…" and any
+             real error here only ever updated visually -- role="status"/aria-live="polite"
+             makes a screen reader actually announce the real outcome, not just the sighted UI. -->
+        <div id="new-project-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></div>
         <div class="modal-actions">
           <button type="button" class="secondary" id="np-cancel">Cancel</button>
           <button type="submit">Create</button>
