@@ -3098,4 +3098,43 @@ Hermetically built clean. No new operator input on any of the three open `#382` 
 GitHub's incident still `major_outage`; live docs site continues serving correctly. No scimbe-
 authored PRs on either repo to review; issue #14 unchanged.
 
+**Goal-driven-loop firing, 2026-08-06 (ttt) -- a second real gap of the identical shape, found by
+re-applying the same methodology one more time**: no new operator input on any of the three open
+`#382` checkpoints; CI still not confirmable green (GitHub's incident still `major_outage`); issue
+#14 unchanged. Per the plan set out at the end of (rrr), re-enumerated every check `iterate_run`
+(`web/src/main.rs`) performs -- `valid_run_id`, `owner_authorized`, the `paused` 409, then the three
+already-shared validators, then the byte-identical-submission idempotency guard -- and cross-checked
+each against `run_local` (`devsystem_iterate.rs`'s local, non-`--remote` CLI path) one at a time.
+`owner_authorized` is inherently HTTP-only (multi-tenant account isolation has no meaning for a
+caller with direct filesystem access to `runs/<run_id>/`) and correctly has no local equivalent --
+not a gap. The `paused` check, though, had exactly zero equivalent on the local path.
+
+`RunState::paused` is the one mechanism a human has to stop a run cold at a milestone or an
+abort-bound and force a real review before anything else lands -- the flagship
+`webconference-android` run's own still-open M1 checkpoint depends on it. `iterate_run` enforces it
+with a real `409`; `run_local` never checked it at all. Live-confirmed before fixing (scratch run,
+hermetic Docker binary, deliberately built and run with a correct `cwd` after an initial test-setup
+mistake ran against the wrong path and silently proved nothing -- caught by checking the actual
+persisted file, not trusting the printed "success"): a run with `paused: true` accepted a real
+iteration via `devsystem_iterate`, appended it to `history`, left `paused` untouched, and reported
+`iteration_outcome=Continue` -- the pause was only ever displayed, never enforced, on this path.
+
+Fixed with a direct `if state.paused { ... FAILURE }` check in `run_local`
+(`pipeline/src/bin/devsystem_iterate.rs`, `CADS-devsystem@<pending>`) placed before any write, same
+position as the three validators beneath it -- no new shared function was needed since
+`RunState::paused` is already a public field read directly by both real entry points. Re-ran the
+exact same scratch reproduction after the fix: real `rejected: run is paused ...`, exit code 1, and
+confirmed via the persisted `state.json`/`memory.jsonl` that no partial write occurred. Full
+`pipeline` crate hermetic suite green (unchanged pass count -- this fix needed no new unit test
+beyond the live reproduction, matching the precedent set by the `validate_proposals`/
+`validate_feedback` checks in this same function, which are likewise proven live rather than
+re-tested in this binary), hermetic clippy clean, 0 warnings.
+
+Newly discovered, deliberately deferred rather than bundled into this same bounded increment: the
+idempotency guard (`iterate_run`'s byte-identical-to-last-history-entry `409`, protecting against a
+retried or overlapping-instance duplicate submission) is *also* absent from `run_local`. Left open
+for a future firing -- it protects a different, less severe failure mode (a harmless-if-rare
+duplicate row, not a bypassed human review gate) and this firing's own increment was already real
+and bounded.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
