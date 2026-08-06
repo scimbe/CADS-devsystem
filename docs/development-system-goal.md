@@ -790,6 +790,21 @@ real stress-test investigations, twenty-two real gaps found and closed.
    session's own governing principle, applied to itself) -- the remaining §7.1 ask is closer to "make
    every panel's empty state actively useful," which Backlog/Milestones/Requirements now share; RAG
    and custom panels remain the two panels without an equivalent treatment.
+   **Fifth slice done, 2026-08-06** (`CADS-devsystem@14aa90d`): extended the same treatment to RAG --
+   two separate honest-but-passive empty messages existed already (the sync-status line, "No uploaded
+   documents yet.") but no single active nudge, and its "Uploaded documents" section defaulted
+   collapsed even on a genuinely empty run, hiding the one form a first-time user actually needs.
+   Unlike Requirements/Backlog/Milestones there's no one obvious field to auto-focus here -- search
+   is useless against an empty index, and the real next action (set `repo_url`, or upload) lives in
+   two different places -- so this is a banner plus auto-expanding the uploads section, not a focus
+   steal; named as a deliberate, honest difference from the prior three slices' pattern, not an
+   oversight. Verified live via a real Playwright browser: banner and auto-open both fire on a
+   genuinely empty run, both correctly go away the moment a real document is uploaded. Custom panels
+   remains the one panel without an equivalent treatment, and on reflection probably shouldn't get
+   one uncritically -- it's an opt-in, power-user feature (writing raw HTML), not a core per-run
+   workflow item like the other four, so its existing lighter nudge ("No custom panels yet -- write
+   one below.") may already be the right amount of encouragement rather than a gap. Flagging that
+   judgment call here rather than forcing a fifth banner just to complete the set.
 4. ~~**Assistant-editable panel values generally**~~ (§7.2) — beyond the current fixed `Action` enum.
    **First slice done** (`CADS-devsystem@920f66e`): a human could already toggle one acceptance
    criterion independently of the whole requirement (`toggle_acceptance_criterion_handler`, the
