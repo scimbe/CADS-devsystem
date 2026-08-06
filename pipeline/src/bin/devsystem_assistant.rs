@@ -185,7 +185,7 @@ fn build_system_prompt(context: &str) -> String {
          you are actually taking action; omit it entirely otherwise -- never emit an \
          empty or placeholder block):\n\
          {ACTIONS_FENCE_OPEN}\n\
-         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"...\"}},{{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"...\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}},{{\"type\":\"propose_next_step\",\"text\":\"...\"}}]\n\
+         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"...\"}},{{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"...\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}},{{\"type\":\"propose_next_step\",\"text\":\"...\"}},{{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"...\"}}]\n\
          {ACTIONS_FENCE_CLOSE}\n\
          Indices refer to the real state.milestones/state.backlog/state.requirements \
          arrays already shown to you below -- never guess an index you can't see \
@@ -267,7 +267,7 @@ fn build_system_prompt(context: &str) -> String {
          real bidder sees, and a vague/speculative issue wastes a human reviewer's \
          time. If a request is ambiguous, or you're not confident it's safe to act on, \
          say so in prose and ask instead of emitting an action. You have NO other tool \
-         or system access in this version -- only these sixteen action types against \
+         or system access in this version -- only these seventeen action types against \
          these nine kinds of data (milestones, backlog items, requirements, repo_url, \
          runs, custom panels, stages, issues, next-step drafts); for anything else \
          (e.g. an actual code change, or \
@@ -374,6 +374,28 @@ enum Action {
     /// to surface 2-3 real options rather than silently picking one in its
     /// own reply text.
     ProposeNextStep { text: String },
+    /// Real gap closed (#382 goal doc §7.2, gap #4, 2026-08-06) -- the second of
+    /// two remaining instances found alongside `ToggleRequirementAutoJudge`: a
+    /// human can already switch a role between `Auction` and `Dedicated`
+    /// (`set_role_fill_mode`, the Roles panel's own fill-mode menu); the
+    /// assistant had no matching action at all until now. Deliberately scoped
+    /// to just `mode`/`label` -- the real HTTP endpoint's `accepted_bid` field
+    /// (accepting one *specific* live auction bid by its exact price/
+    /// holder_label snapshot) is a materially different, more consequential
+    /// action the LLM has no legitimate way to construct on its own (it would
+    /// have to already know a real, currently-valid bid's exact details) --
+    /// that one stays a human-only, GUI-only action in the live auction view.
+    /// `label` is required and validated by the real endpoint itself when
+    /// `mode` is `"dedicated"` (non-empty, no bidi control character), same as
+    /// every other real free-text field here -- not re-validated in this
+    /// binary, matching every other action's own "call the real endpoint,
+    /// let it be the one source of truth" convention.
+    SetRoleFillMode {
+        tag: String,
+        mode: String,
+        #[serde(default)]
+        label: Option<String>,
+    },
 }
 
 fn default_stage_units() -> u64 {
@@ -555,6 +577,16 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
             format!("{base}/api/runs/{run_id}/next-steps/propose"),
             serde_json::json!({"text": text}),
             "proposed",
+        ),
+        Action::SetRoleFillMode { tag, mode, label } => (
+            if mode == "dedicated" {
+                format!("set role \"{tag}\"'s fill mode to dedicated (label: \"{}\")", label.clone().unwrap_or_default())
+            } else {
+                format!("set role \"{tag}\"'s fill mode to auction")
+            },
+            format!("{base}/api/runs/{run_id}/roles/{tag}/fill-mode"),
+            if mode == "dedicated" { serde_json::json!({"mode": "dedicated", "label": label.clone().unwrap_or_default()}) } else { serde_json::json!({"mode": "auction"}) },
+            "done",
         ),
     };
     // Real gap #10 (#382 goal doc §8, fourteenth stress-test run, 2026-08-06):
@@ -986,8 +1018,9 @@ mod tests {
                 && prompt.contains("propose_edit_custom_panel")
                 && prompt.contains("propose_stage")
                 && prompt.contains("propose_issue")
-                && prompt.contains("propose_next_step"),
-            "all sixteen real action types must be documented"
+                && prompt.contains("propose_next_step")
+                && prompt.contains("set_role_fill_mode"),
+            "all seventeen real action types must be documented"
         );
         assert!(
             prompt.contains("state.paused is true") && prompt.contains("2-3 SEPARATE"),
@@ -999,8 +1032,8 @@ mod tests {
         );
         assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these nine data kinds");
         assert!(
-            prompt.contains("sixteen action types") && prompt.contains("these nine kinds of data"),
-            "real gap found live 2026-08-06: propose_next_step's own addition (fifteenth action type, ninth kind of data -- next-step drafts) updated the action-type count but left the kinds-of-data count at the stale pre-next-step value of eight, so the live assistant's own self-description contradicted itself (\"Eight kinds of data\" followed by a table that itself summed to nine) -- must state nine, matching the real count. Same class of bug found again live 2026-08-06 (docs-loop firing): ToggleRequirementAutoJudge's own addition (sixteenth action type, still the same nine kinds of data -- no new kind, just a new action on the existing requirements kind) left this count stale at fifteen; the live assistant's own self-report ('15 total action types') was checked and found wrong before this fix, not assumed"
+            prompt.contains("seventeen action types") && prompt.contains("these nine kinds of data"),
+            "real gap found live 2026-08-06: propose_next_step's own addition (fifteenth action type, ninth kind of data -- next-step drafts) updated the action-type count but left the kinds-of-data count at the stale pre-next-step value of eight, so the live assistant's own self-description contradicted itself (\"Eight kinds of data\" followed by a table that itself summed to nine) -- must state nine, matching the real count. Same class of bug found again live 2026-08-06 (docs-loop firing): ToggleRequirementAutoJudge's own addition (sixteenth action type, still the same nine kinds of data -- no new kind, just a new action on the existing requirements kind) left this count stale at fifteen; the live assistant's own self-report ('15 total action types') was checked and found wrong before this fix, not assumed. SetRoleFillMode (seventeenth action type, still nine kinds of data -- roles aren't a new kind, this session already treats role/auction state as covered by the existing surface) grew the count again in the same firing this comment was written, updated together this time rather than in a later separate fix"
         );
         assert!(prompt.contains("none takes effect by itself"), "the panel/panel-removal/panel-edit/stage/issue-proposal approval gate must be explicit, not implied");
         assert!(prompt.contains("BE TERSE") && prompt.contains("mehr tun, weniger reden"), "the operator's own terseness instruction must be explicit, not just implied by 'be concise'");
@@ -1074,8 +1107,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_actions_parses_all_sixteen_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"}]\n```";
+    fn extract_actions_parses_all_seventeen_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"},{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"alice\"}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -1111,6 +1144,7 @@ mod tests {
                     body: "Observed 3 consecutive timeouts.".to_string(),
                 },
                 Action::ProposeNextStep { text: "Resume and expand M1 with group chat support.".to_string() },
+                Action::SetRoleFillMode { tag: "plan".to_string(), mode: "dedicated".to_string(), label: Some("alice".to_string()) },
             ]
         );
     }
@@ -1428,6 +1462,37 @@ mod tests {
         assert_eq!(url, "/api/runs/my-run/next-steps/propose");
         let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
         assert_eq!(parsed["text"], "Resume and expand M1 with group chat support.");
+    }
+
+    #[test]
+    /// Real gap closed (#382 goal doc §7.2, gap #4): a human could already switch a
+    /// role's fill mode directly in the Roles panel; the assistant had no matching
+    /// action until now. Deliberately excludes accepted_bid -- see the Action
+    /// variant's own doc comment for why that stays human/GUI-only.
+    fn apply_action_posts_the_real_set_role_fill_mode_request_for_both_modes() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+
+        let dedicated = Action::SetRoleFillMode { tag: "plan".to_string(), mode: "dedicated".to_string(), label: Some("alice".to_string()) };
+        let result = apply_action(&client, &addr, "my-run", &dedicated);
+        assert!(result.starts_with("done:"));
+        let (method, url, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/roles/plan/fill-mode");
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
+        assert_eq!(parsed["mode"], "dedicated");
+        assert_eq!(parsed["label"], "alice");
+        assert!(parsed.get("accepted_bid").is_none(), "the assistant must never construct accepted_bid itself");
+
+        let auction = Action::SetRoleFillMode { tag: "implement".to_string(), mode: "auction".to_string(), label: None };
+        let result = apply_action(&client, &addr, "my-run", &auction);
+        assert!(result.starts_with("done:"));
+        let (method, url, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/roles/implement/fill-mode");
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
+        assert_eq!(parsed["mode"], "auction");
+        assert!(parsed.get("label").is_none(), "auction mode must not send a stray label field");
     }
 
     #[test]
