@@ -1629,13 +1629,23 @@ new dated entry in `_explanation/self-optimizing-pipeline.md`.
        correctly, clicked Approve for real, confirmed the queue genuinely emptied afterward. Zero
        console errors. Deliberately kept out of `DEFAULT_VISIBLE_PANELS`, matching the existing
        first-time-user precedent.
-    3. **Assistant-drafted next-iteration-plan options** -- not yet built. When a run hits a real
-       paused checkpoint, ask `devsystem.assistant` to draft 2-3 concrete next-step options as
-       plain, editable text (not silently picking one) -- the exact same "surface, don't guess"
-       shape this loop itself already uses live on `webconference-android`'s own real M1 checkpoint
-       (CADS-Tunnel#382, 2026-08-05T23:34:42Z). Needs a real audit trail (who/what proposed each
-       draft, when) so a human is never surprised by an assistant-authored change they didn't
-       notice -- the operator's own explicit ask ("I must be guided what is changed").
+    3. ~~**Assistant-drafted next-iteration-plan options**~~ -- **done** (`CADS-devsystem@82b0808`):
+       a new `Action::ProposeNextStep` (fifteenth action type) lets `devsystem.assistant` draft a
+       real, plain-text next-step option into `RunState::pending_next_step_drafts` -- the system
+       prompt requires 2-3 SEPARATE actions, only at a genuinely paused checkpoint (`state.paused`),
+       explicitly forbidding silently picking one for the operator, the exact same "surface, don't
+       guess" shape this loop itself already uses live on `webconference-android`'s own real M1
+       checkpoint (CADS-Tunnel#382, 2026-08-05T23:34:42Z). No approve/apply gate -- a draft is
+       advisory text, not a live-state mutation, so the operator's own explicit ask ("delete, change
+       and manipulate") is the whole interaction model: three new endpoints (propose/update/remove),
+       shown inline on the Open Points panel's paused-checkpoint card as editable textareas. The
+       audit trail this needs (per "I must be guided what is changed") is the mechanism itself,
+       already in place: a draft never applies anything on its own, and every one of `apply_action`'s
+       real HTTP calls already carries `X-Actor: devsystem.assistant`. 4 new `devsystem_assistant`
+       tests, 4 new `devsystem-web` tests, full pipeline+web suites green. Live-verified end to end
+       via a real Playwright run: seeded two real drafts, confirmed both rendered, edited one and
+       confirmed the edit persisted server-side, deleted the other and confirmed it was genuinely
+       gone -- not just a unit test. All three "stack mode" slices are now real and shipped.
 
 **Docs-loop firing, 2026-08-06**: validating the docs site's own "PDF/DOCX only" claim for the
 `devsystem.document_extraction` channel path against the actual current code (post-PR #17) surfaced
