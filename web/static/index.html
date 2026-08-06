@@ -2140,6 +2140,27 @@ function renderRequirementsPanel(id, data) {
   const startHere = requirements.length ? '' : `
     <div class="start-here-banner">👋 Start here: this run has no requirements yet.
     Add your first one below -- it's what gives the pipeline something concrete to build toward.</div>`;
+  // Real second slice of gap #6's own "chat/docs" half (#382 goal doc §4.2,
+  // CADS-devsystem@b124cd9 built the persistence, this surfaces it): a
+  // ChatExchange has no field linking it to a specific requirement -- forcing
+  // one via a text-match heuristic would risk showing a WRONG decision basis,
+  // worse than not attributing one at all. Honest scope instead: real recent
+  // conversation, panel-level rather than faked per-requirement, most recent
+  // first (this is the actual order a human reviewing "what did I just ask
+  // the assistant" wants).
+  const chatHistory = data.state.chat_history || [];
+  const chatHistorySection = chatHistory.length ? `
+    <details style="margin-top:.7rem">
+      <summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Recent assistant conversation (${chatHistory.length})</summary>
+      <div style="display:flex;flex-direction:column;gap:.45rem;margin-top:.4rem">
+        ${chatHistory.slice().reverse().map(e => `
+          <div style="border-left:2px solid var(--border);padding-left:.5rem">
+            <div class="lede" style="font-size:.68rem">${new Date(e.at * 1000).toLocaleString()}</div>
+            <div style="font-size:.75rem;margin-top:.1rem"><strong>asked:</strong> ${escapeHtml(truncate(e.instruction, 200))}</div>
+            <div style="font-size:.75rem;margin-top:.15rem"><strong>replied:</strong> ${escapeHtml(truncate(e.response, 200))}</div>
+          </div>`).join('')}
+      </div>
+    </details>` : '';
   body.innerHTML = `
     ${startHere}
     <div class="backlog-list">${items}</div>
@@ -2151,6 +2172,7 @@ function renderRequirementsPanel(id, data) {
     </form>
     <div id="requirement-status" class="status-line"></div>
     ${requirements.length ? `<a class="btn secondary" style="margin-top:.6rem" href="${API}/runs/${encodeURIComponent(id)}/requirements/export" download="requirements.md">⬇ Download as Markdown</a>` : ''}
+    ${chatHistorySection}
   `;
   // Only steal focus into a visible panel the user can actually see -- this
   // panel is in the sensible default-visible set, but a user may have hidden
