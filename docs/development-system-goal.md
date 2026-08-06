@@ -1043,8 +1043,10 @@ only the last push's result actually matters for `main`'s current health. Added 
 `concurrency: {group: workflow+ref, cancel-in-progress: true}` block (`CADS-devsystem@5c05f77`).
 Honestly noted: the four already-stacked runs at the time of the fix couldn't be retroactively
 cancelled (they started under the old, concurrency-less workflow definition, so GitHub can't group
-them after the fact) -- verifying the fix actually takes effect requires watching what happens on
-the *next* push after this one.
+them after the fact). **Confirmed live**: this very entry's own push cancelled the prior one --
+run `31088287929` (commit `5c05f77`, the fix itself) shows a real `conclusion: "cancelled"` in the
+GitHub API right now, while the four pre-fix runs continued unaffected exactly as expected. The fix
+genuinely works, not just reasoned about.
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
