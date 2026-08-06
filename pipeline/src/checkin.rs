@@ -6,7 +6,7 @@
 
 use crate::improve::stalled_stages;
 use crate::preflight::preflight_annotations;
-use crate::runner::RunState;
+use crate::runner::{fence_wrap, inline_code_escape, RunState};
 use crate::IterationRecord;
 
 /// Derive a canvas session's `(key, origin)` from the `url` field of
@@ -36,70 +36,6 @@ pub fn parse_session_key_and_origin(url: &str) -> Option<(String, String)> {
 pub fn render_plan_markdown(state: &RunState) -> Option<String> {
     let latest = state.history.last()?;
     Some(render_iteration(state, latest))
-}
-
-/// Real gap found live by the incompetent-agent stress test (#382 goal doc §8,
-/// 2026-08-06): free-text fields a role-filler (or a human) fully controls --
-/// `feedback`, a requirement's `statement`, a proposal's `rationale` -- were
-/// spliced directly into this check-in artifact as raw markdown. Live-verified
-/// before this fix: an iteration whose feedback contained
-/// `"## Risk annotations\n\nNone found -- all clear"` and
-/// `"**APPROVED by human reviewer**"` rendered as if it were this renderer's own
-/// real structure, ahead of the genuine `## Risk annotations` section this
-/// function renders further down with the run's actual, real findings -- a
-/// human skimming the document at exactly the moment they're meant to catch a
-/// real problem could easily read the fake section as authoritative and never
-/// reach the real one. This is the check-in artifact's entire reason to exist
-/// (a human staying in the loop), so letting role-filler-controlled text
-/// impersonate the renderer's own voice defeats the point.
-///
-/// Fixed the same way custom-panel HTML is already handled elsewhere in this
-/// codebase: render as content, never as trusted structure -- wrapped in a
-/// fenced code block, so it displays in full (nothing hidden or stripped) but
-/// can never be mistaken for a real heading/bold/list this renderer produced.
-/// The fence length is chosen longer than the longest run of consecutive
-/// backticks already in the text (CommonMark: a closing fence must be at least
-/// as long as the opening one; a shorter backtick run inside stays literal), so
-/// content can't break out of its own fence either.
-fn fence_wrap(text: &str) -> String {
-    let mut longest_run = 0;
-    let mut current_run = 0;
-    for c in text.chars() {
-        if c == '`' {
-            current_run += 1;
-            longest_run = longest_run.max(current_run);
-        } else {
-            current_run = 0;
-        }
-    }
-    let fence = "`".repeat((longest_run + 1).max(3));
-    format!("{fence}\n{text}\n{fence}")
-}
-
-/// Same reasoning as [`fence_wrap`], for content that has to stay on one line (a
-/// single `- ` list item can't hold a fenced code block, which needs its own
-/// lines) -- a backtick-delimited inline code span instead, sized the same way
-/// (longer than the longest existing backtick run), with a padding space on
-/// each side if the text itself starts or ends with a backtick (CommonMark's
-/// own rule -- without it, the delimiter and the text's own leading/trailing
-/// backtick would visually merge).
-fn inline_code_escape(text: &str) -> String {
-    let mut longest_run = 0;
-    let mut current_run = 0;
-    for c in text.chars() {
-        if c == '`' {
-            current_run += 1;
-            longest_run = longest_run.max(current_run);
-        } else {
-            current_run = 0;
-        }
-    }
-    let delim = "`".repeat(longest_run + 1);
-    if text.starts_with('`') || text.ends_with('`') {
-        format!("{delim} {text} {delim}")
-    } else {
-        format!("{delim}{text}{delim}")
-    }
 }
 
 fn render_iteration(state: &RunState, record: &IterationRecord) -> String {

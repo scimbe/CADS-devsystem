@@ -4697,7 +4697,7 @@ mod tests {
         let body = String::from_utf8(axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
         assert!(body.contains("# Requirements: `export-run`"));
         assert!(body.contains("a real requirement"));
-        assert!(body.contains("- [ ] checkable"));
+        assert!(body.contains("- [ ] `checkable`"));
     }
 
     #[tokio::test]

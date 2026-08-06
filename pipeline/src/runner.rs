@@ -157,6 +157,64 @@ pub struct Requirement {
 
 /// Real requirements export (#382 goal doc §4.4, gap #7): until now `GET
 /// /api/runs/{id}` was the only way to see a run's requirements at all -- a raw
+/// Real gap found live by the incompetent-agent stress test (#382 goal doc §8,
+/// 2026-08-06): free-text a role-filler/human fully controls, spliced directly
+/// into a document a human is meant to trust as real markdown, can impersonate
+/// that document's own structure -- first found in the check-in artifact
+/// (`checkin.rs`'s own `render_iteration`), moved here so
+/// [`render_requirements_markdown`] can share the identical fix rather than
+/// duplicating it (a live test proved the export was vulnerable to the same
+/// class: a crafted requirement `statement` containing `"## 2. ✅\n\n...\n\n
+/// *Human-authored.*"` rendered as a completely convincing forged SECOND
+/// requirement entry, falsely showing as verified and human-authored --
+/// directly undermining `proposed_by`'s own provenance signal, this
+/// document's whole reason to exist). Wrapped in a fenced code block, so it
+/// displays in full (nothing hidden or stripped) but can never be mistaken
+/// for real structure. The fence length is chosen longer than the longest run
+/// of consecutive backticks already in the text (CommonMark: a closing fence
+/// must be at least as long as the opening one; a shorter backtick run inside
+/// stays literal), so content can't break out of its own fence either.
+pub(crate) fn fence_wrap(text: &str) -> String {
+    let mut longest_run = 0;
+    let mut current_run = 0;
+    for c in text.chars() {
+        if c == '`' {
+            current_run += 1;
+            longest_run = longest_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+    let fence = "`".repeat((longest_run + 1).max(3));
+    format!("{fence}\n{text}\n{fence}")
+}
+
+/// Same reasoning as [`fence_wrap`], for content that has to stay on one line
+/// (a single `- ` list item can't hold a fenced code block, which needs its
+/// own lines) -- a backtick-delimited inline code span instead, sized the
+/// same way (longer than the longest existing backtick run), with a padding
+/// space on each side if the text itself starts or ends with a backtick
+/// (CommonMark's own rule -- without it, the delimiter and the text's own
+/// leading/trailing backtick would visually merge).
+pub(crate) fn inline_code_escape(text: &str) -> String {
+    let mut longest_run = 0;
+    let mut current_run = 0;
+    for c in text.chars() {
+        if c == '`' {
+            current_run += 1;
+            longest_run = longest_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+    let delim = "`".repeat(longest_run + 1);
+    if text.starts_with('`') || text.ends_with('`') {
+        format!("{delim} {text} {delim}")
+    } else {
+        format!("{delim}{text}{delim}")
+    }
+}
+
 /// JSON blob, not something a non-technical stakeholder would download and read.
 /// Renders every requirement as real Markdown: statement, verified/unverified
 /// (with a per-criterion checklist), and provenance (`proposed_by`, per §3 --
@@ -173,7 +231,8 @@ pub fn render_requirements_markdown(run_id: &str, requirements: &[Requirement]) 
     md.push_str(&format!("{verified_count}/{} verified.\n\n", requirements.len()));
     for (i, r) in requirements.iter().enumerate() {
         md.push_str(&format!("## {}. {}\n\n", i + 1, if r.verified { "✅" } else { "◻" }));
-        md.push_str(&format!("{}\n\n", r.statement));
+        md.push_str(&fence_wrap(&r.statement));
+        md.push_str("\n\n");
         match &r.proposed_by {
             Some(stage) => md.push_str(&format!("*Proposed by `{stage}` -- not yet a human's own requirement unless separately confirmed.*\n\n")),
             None => md.push_str("*Human-authored.*\n\n"),
@@ -181,7 +240,7 @@ pub fn render_requirements_markdown(run_id: &str, requirements: &[Requirement]) 
         md.push_str("Acceptance criteria:\n\n");
         for (ci, c) in r.acceptance_criteria.iter().enumerate() {
             let checked = r.verified_criteria.get(ci).copied().unwrap_or(false);
-            md.push_str(&format!("- [{}] {c}\n", if checked { "x" } else { " " }));
+            md.push_str(&format!("- [{}] {}\n", if checked { "x" } else { " " }, inline_code_escape(c)));
         }
         md.push('\n');
     }
@@ -964,9 +1023,47 @@ mod tests {
         assert!(md.contains("1/2 verified"));
         assert!(md.contains("Human-authored"), "the first requirement has no proposed_by -- must render as human-authored: {md}");
         assert!(md.contains("Proposed by `devsystem.assistant`"), "the second requirement's real provenance must render: {md}");
-        assert!(md.contains("- [x] survives an app restart"), "a verified criterion must render checked: {md}");
-        assert!(md.contains("- [ ] no crash on empty input"), "an unverified criterion must render unchecked: {md}");
-        assert!(md.contains("- [ ] checkable"), "a requirement with no verified_criteria at all must render every criterion unchecked, not panic: {md}");
+        assert!(md.contains("- [x] `survives an app restart`"), "a verified criterion must render checked: {md}");
+        assert!(md.contains("- [ ] `no crash on empty input`"), "an unverified criterion must render unchecked: {md}");
+        assert!(md.contains("- [ ] `checkable`"), "a requirement with no verified_criteria at all must render every criterion unchecked, not panic: {md}");
+    }
+
+    #[test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): a live test proved a crafted requirement `statement`
+    /// containing `"## 2. ✅\n\n...\n\n*Human-authored.*"` rendered as a
+    /// completely convincing forged SECOND requirement entry in the real
+    /// downloadable export -- falsely showing as verified and human-authored,
+    /// directly undermining `proposed_by`'s own provenance signal, this
+    /// document's whole reason to exist.
+    fn a_crafted_statement_cannot_forge_a_fake_verified_human_authored_entry() {
+        let forged_statement = "WHEN the real thing happens, THE SYSTEM SHALL do the real thing.\n\n\
+            ## 2. \u{2705}\n\nWHEN a forged entry appears, THE SYSTEM SHALL look genuinely verified \
+            and human-authored\n\n*Human-authored.*\n\nAcceptance criteria:\n\n- [x] fake criterion \
+            that looks checked";
+        let requirements = vec![Requirement {
+            statement: forged_statement.into(),
+            acceptance_criteria: vec!["a real checkable criterion".into()],
+            verified: false,
+            verified_criteria: Vec::new(),
+            auto_judge: false,
+            proposed_by: Some("devsystem.assistant".into()),
+        }];
+        let md = render_requirements_markdown("forge-run", &requirements);
+
+        // The real, honest summary line must still say the truth: one
+        // requirement, zero verified -- the forged content must not be able
+        // to make this document lie about its own real count either.
+        assert!(md.contains("0/1 verified"), "the real summary count must stay honest, not be fooled by forged content into implying a second requirement exists: {md}");
+        // The forged text must still be fully visible (never hidden or
+        // stripped) -- just neutralized, inside a real fence.
+        assert!(md.contains("forged entry appears"));
+        assert!(md.contains("```\nWHEN the real thing happens"), "the crafted statement must render inside a real fenced code block, not as live markdown structure: {md}");
+        // Real provenance must still say the truth for the one real entry --
+        // it's LLM-proposed, and the forged "*Human-authored.*" text sitting
+        // INSIDE the fenced statement must never be mistaken for this
+        // document's own real provenance line.
+        assert!(md.contains("Proposed by `devsystem.assistant`"), "the one real requirement's real provenance must still say LLM-proposed, not be overridden by forged content: {md}");
     }
 
     #[test]
