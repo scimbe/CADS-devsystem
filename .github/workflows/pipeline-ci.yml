@@ -27,6 +27,23 @@ on:
     branches: [main]
 
 jobs:
+  # Real gap found live 2026-08-06, investigating §5's own quality-bar table
+  # ("Anerkannte Regeln der Technik" row): it claimed partial coverage via
+  # "check-no-secrets.sh, the hermetic gate" -- but no such script, hook, or CI
+  # job had ever actually existed in THIS repo (that was a different project's
+  # convention, referenced but never built here). A real public repo with real
+  # credential-shaped env vars (DEVSYSTEM_GITHUB_TOKEN, CT_CHANNEL_NOISE_KEY/
+  # HOLDER_KEY, RAG_EMBEDDING_API_KEY, ...) had nothing scanning for one
+  # accidentally landing in a commit. Its own dedicated job, not folded into
+  # `test` below: no Rust toolchain needed, so it's fast and fails independently
+  # of a real compile/test problem.
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: check for committed secrets (scripts/check-no-secrets.sh)
+        run: sh scripts/check-no-secrets.sh
+
   test:
     runs-on: ubuntu-latest
     env:
