@@ -1661,4 +1661,18 @@ harness re-run clean against the fresh deployment (no regression). Docs site upd
 (`CADS-devsystem-docs@34571a1`): `_how-to/manage-rag-documents.md`, `_reference/rest-api.md`, and a
 new dated entry in `_explanation/self-optimizing-pipeline.md`.
 
+**Docs-loop firing, 2026-08-06 (b)**: writing up `devsystem.assistant`'s own real capability
+boundary for `_how-to/ask-the-assistant.md` -- stale since it predated stack-mode slice 3 -- the
+page's own established practice of re-running its real example transcripts live, not trusting an
+old one, caught a genuine gap: asking the assistant the exact same "list your own categories"
+question the page already documented got a one-sentence answer covering only two of the three real
+categories, silently dropping `propose_next_step`. Not a functional bug (the action itself always
+worked) -- a self-summarization gap, traced to the system prompt introducing that action as a
+separate "different again" aside rather than a stated peer of the other two categories. Fixed by
+adding an explicit "state all THREE real categories" instruction
+(`CADS-devsystem@aa491d6`), redeployed via `deploy-devsystem-assistant.sh`, re-verified live with
+the identical question -- the real reply now names all three. Docs updated to match
+(`CADS-devsystem-docs@4781d6a`) with both the honest before/after and the real fixed transcript, not
+a cleaned-up hypothetical one.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
