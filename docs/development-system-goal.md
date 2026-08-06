@@ -2514,4 +2514,35 @@ still not live on the real deployed site (`CADS-devsystem-docs@80f5150`, re-chec
 to treat the local hermetic build + generated-HTML link check as the trustworthy signal per this
 session's own standing discipline; will re-verify the real deployed site once the incident clears.
 
+**Main-dev-loop firing, 2026-08-06 (nn) -- the stress test's tenth real run, a security-adjacent DAU
+finding: Trojan Source-class bidi spoofing in requirement text**: no new operator input on any of
+the three open `#382` checkpoints (still all this loop's own comments); GitHub's Actions/Pages
+incident still `major_outage`, unresolved since `15:22:49Z` (~3h in now). Issue #13 closed,
+unchanged; issue #14 still open and blocked on the operator-only OIDC credential, unchanged; no
+scimbe-authored PRs open on either repo (only dependabot).
+
+Extended the zero-width-space finding (firing 2026-08-05, §8's second run) to a much more
+consequential member of the same Unicode category (Cf/Format): bidi control characters, the
+CVE-2021-42574 "Trojan Source" attack class. Live-confirmed with a real headless-browser render
+before fixing, not assumed from reading the Unicode spec: a criterion with plenty of real
+alphanumeric content on both sides of a single U+202E (RIGHT-TO-LEFT OVERRIDE) cleared every
+existing check (length, alnum-count) untouched, but *visually rendered* with scrambled text order
+in this app's own GUI, which has no `unicode-bidi` isolation anywhere --
+`"approved‮ for production tset ton si sihT"` displayed as `"approvedThis is not test noitcudorp
+rof"`. A human reviewer relies on reading a criterion correctly to decide whether to mark it
+verified; text whose on-screen order doesn't match its real content leads a good-faith reviewer to
+the wrong result through no fault of their own judgment -- squarely the governing principle.
+
+Fixed (`CADS-devsystem@ed58299`): a shared `contains_bidi_control_char()` helper (the 9
+canonical Trojan Source code points, U+202A-E and U+2066-9), wired into `add_requirement`'s
+statement and each acceptance criterion -- the two fields a human actually reads and trusts to
+decide `toggle_requirement`/`toggle_acceptance_criterion`. Deliberately scoped to just these two,
+not a blanket sweep of every free-text field in one firing -- milestones, backlog items, panel
+titles, and stage-proposal rationale are all plausible candidates for the same class and worth a
+follow-up firing, but weren't the field this run's own live proof touched. 1 new regression test (3
+assertions), 184/184 web tests (was 183), hermetic clippy clean. Deployed and live-verified against
+the real redeployed container: the exact bidi-laced criterion that visually lied in the browser now
+gets a real `400`; a clean criterion still gets `200`. Ten real stress-test runs, ten real gaps
+found and closed.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
