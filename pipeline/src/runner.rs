@@ -833,6 +833,27 @@ pub fn run_iteration(
     }
 }
 
+/// Real gap found live by the incompetent-agent stress test (#382 goal doc §8,
+/// 2026-08-06): `devsystem-web`'s own `valid_run_id` (originally `web/src/main.rs`-
+/// private, moved here so every real entry point can share it) was born from a
+/// real, live-confirmed path-traversal bug -- `GET /api/runs/..` used to return a
+/// real `200` with a `state.json` planted outside `runs_dir` entirely, before that
+/// fix. The local `devsystem_iterate`/`devsystem_checkin` binaries -- genuinely
+/// separate real entry points that build filesystem paths from a raw `run_id`
+/// straight off `env::args()`, with no HTTP layer or its validation anywhere in
+/// between -- never got the same check. Live-confirmed before this fix, exactly
+/// the same bug class stress-test run twelve already named once for a different
+/// check ("a fix proven at one call site isn't the same as closing the bug
+/// class"): `devsystem_iterate ../traversal-poc-marker record.json` wrote a real
+/// `spec.json`/`state.json` pair directly into the repo root, completely outside
+/// `runs/`; a deeper `../../tmp/...`-style `run_id` escaped even further, into an
+/// arbitrary sibling directory. `devsystem_checkin` has the identical shape twice
+/// over -- both the `state.json` it reads and the `.plan.md` artifact it writes
+/// build their paths from the same unvalidated `run_id`.
+pub fn valid_run_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 /// Load a run's persisted `spec.json`/`state.json` from `run_dir`, or start fresh
 /// (a new `plan_only_spec` + empty `RunState`) if this is the run's first iteration.
 /// The actual load-or-init logic behind `devsystem_iterate` -- pulled out here so
@@ -941,6 +962,26 @@ mod tests {
             11,
             "a real review's genuinely varied vocabulary must count each distinct word once"
         );
+    }
+
+    #[test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): confirmed directly, `devsystem_iterate ../traversal-poc
+    /// record.json` wrote a real spec.json/state.json pair outside runs/
+    /// entirely -- the local CLI binaries never validated run_id the way
+    /// devsystem-web's own handlers already do. This is that same real check,
+    /// moved here so every real entry point (HTTP and both local CLI binaries)
+    /// shares the identical, already-proven logic.
+    fn valid_run_id_rejects_path_traversal_and_empty_ids() {
+        assert!(valid_run_id("webconference-android"));
+        assert!(valid_run_id("run_123"));
+        assert!(valid_run_id("a-b_c-123"));
+        assert!(!valid_run_id(""), "an empty id must never resolve to runs/ itself");
+        assert!(!valid_run_id(".."), "the exact traversal payload that was live-confirmed to escape runs/ entirely");
+        assert!(!valid_run_id("../traversal-poc-marker"), "a real, live-confirmed escape into a run's parent directory");
+        assert!(!valid_run_id("../../etc/cron.d/evil"), "a deeper real escape attempt must be rejected the same way");
+        assert!(!valid_run_id("a/b"), "a literal path separator must never be allowed through, even without '..'");
+        assert!(!valid_run_id("run id"), "whitespace is not in the allowed charset either");
     }
 
     #[test]

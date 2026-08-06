@@ -15,7 +15,7 @@
 
 use devsystem_pipeline::checkin::{parse_session_key_and_origin, render_plan_markdown};
 use devsystem_pipeline::preflight::preflight_annotations;
-use devsystem_pipeline::runner::RunState;
+use devsystem_pipeline::runner::{valid_run_id, RunState};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -23,6 +23,17 @@ use std::process::Command;
 
 fn main() {
     let run_id = env::args().nth(1).expect("usage: devsystem_checkin <run_id>");
+
+    // Real gap found live by the incompetent-agent stress test (#382 goal doc
+    // §8, 2026-08-06): this binary builds TWO real filesystem paths straight
+    // from a raw CLI argument -- the state.json it reads, and the .plan.md
+    // artifact it writes -- with no equivalent of devsystem-web's own
+    // path-traversal guard anywhere in between. Checked once, before either
+    // path is built, since both share the same unvalidated run_id.
+    if !valid_run_id(&run_id) {
+        eprintln!("rejected: run_id {run_id:?} must be non-empty alphanumeric/-/_ only");
+        std::process::exit(1);
+    }
 
     let state_path = PathBuf::from("runs").join(&run_id).join("state.json");
     let state: RunState = serde_json::from_str(&fs::read_to_string(&state_path).unwrap_or_else(|e| {

@@ -20,7 +20,7 @@ use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::{preflight_annotations, process_annotations};
 use devsystem_pipeline::runner::{
     load_or_init_run, persist_run, push_chat_exchange, qualifying_review_evidence, render_requirements_markdown, run_iteration, toggle_acceptance_criterion,
-    toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, BacklogItem, CustomPanel,
+    toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, valid_run_id, BacklogItem, CustomPanel,
     Milestone, PendingIssueProposal, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal, Requirement, RoleFillMode,
     RunOutcome,
 };
@@ -380,19 +380,6 @@ async fn main() {
 /// human workflow hits it, small enough that a runaway script can't grow a run's
 /// state.json without bound (matches the host's real, limited disk headroom).
 const MAX_LIST_ITEMS: usize = 500;
-
-/// Real path-traversal guard: `create_run` was the only handler that ever validated
-/// `id`'s charset. Every other handler (`get_run`, `iterate_run`, `checkin_run`,
-/// `memory_run`, `govern_memory`, `update_criteria`) took `id` straight from the URL
-/// path and fed it into `runs_dir.join(id)` unvalidated -- `PathBuf::join` honors
-/// `..` components, and axum's `{id}` path segment happily captures a literal `..`
-/// (proven directly: `GET /api/runs/..` returned 200 with a `state.json` planted
-/// outside `runs_dir`, in its parent directory, before this fix). Every handler that
-/// touches the filesystem now calls this first, and `run_dir`/`run_exists` assert on
-/// it too as a defense-in-depth backstop against a future call site that forgets.
-fn valid_run_id(id: &str) -> bool {
-    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
 
 fn run_dir(state: &AppState, id: &str) -> PathBuf {
     assert!(valid_run_id(id), "run_dir called with an unvalidated id -- every handler must check valid_run_id(id) first");

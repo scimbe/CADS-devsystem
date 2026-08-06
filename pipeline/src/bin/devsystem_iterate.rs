@@ -28,13 +28,24 @@
 //! an ungated deployment.
 
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration};
-use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, RunOutcome};
+use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, valid_run_id, RunOutcome};
 use devsystem_pipeline::{validate_proposals, IterationRecord};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 
 fn run_local(run_id: &str, record_path: &str) -> std::process::ExitCode {
+    // Real gap found live by the incompetent-agent stress test (#382 goal doc
+    // §8, 2026-08-06): this binary builds runs/<run_id>/ straight from a raw
+    // CLI argument, with no HTTP layer -- and no equivalent of devsystem-web's
+    // own path-traversal guard -- anywhere in between. Confirmed live before
+    // this fix: `devsystem_iterate ../traversal-poc-marker record.json` wrote
+    // a real spec.json/state.json pair directly into this repo's own root,
+    // completely outside runs/. Checked before any filesystem access at all.
+    if !valid_run_id(run_id) {
+        eprintln!("rejected: run_id {run_id:?} must be non-empty alphanumeric/-/_ only");
+        return std::process::ExitCode::FAILURE;
+    }
     let run_dir = PathBuf::from("runs").join(run_id);
     let (mut spec, mut state) = load_or_init_run(&run_dir, run_id).expect("load or initialize run");
 
