@@ -1620,9 +1620,15 @@ new dated entry in `_explanation/self-optimizing-pipeline.md`.
        (honestly falling back to "paused, no reason recorded" for this specific run, since its pause
        predates the `pause_reason` field existing at all -- not a bug, a historical data gap with a
        graceful fallback already in place).
-    2. **A guided-queue frontend** -- not yet built. Steps through the open-points list one entry at
-       a time (Next/Skip), each with its own approve/reject/resume action already wired to its
-       existing endpoint, no new mutation surface needed.
+    2. ~~**A guided-queue frontend**~~ -- **done** (`CADS-devsystem@3e48c3b`): the new Open Points
+       panel, one entry at a time (Prev/Next), each with its own real Approve/Reject (a proposal) or
+       Resume (a paused checkpoint) action wired to the exact endpoint every other panel already uses
+       for it -- no new mutation surface invented. Live-verified end to end via a real headless
+       Playwright run against the actual deployed GUI (this project's own `simulated-user.sh`
+       pattern), not just a unit test: created a real stage proposal, confirmed it rendered
+       correctly, clicked Approve for real, confirmed the queue genuinely emptied afterward. Zero
+       console errors. Deliberately kept out of `DEFAULT_VISIBLE_PANELS`, matching the existing
+       first-time-user precedent.
     3. **Assistant-drafted next-iteration-plan options** -- not yet built. When a run hits a real
        paused checkpoint, ask `devsystem.assistant` to draft 2-3 concrete next-step options as
        plain, editable text (not silently picking one) -- the exact same "surface, don't guess"
