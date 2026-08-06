@@ -3065,4 +3065,29 @@ source" (`CADS-devsystem-docs@44927a1`). Hermetically built clean. No new operat
 the three open `#382` checkpoints; GitHub's incident still `major_outage`; live docs site continues
 serving correctly.
 
+**Goal-driven-loop firing, 2026-08-06 (rrr) -- pivoted to a real fix as planned: a genuine gap in
+`requirement_indices` bounds-checking on the local CLI path**: no new operator input on any of the
+three open `#382` checkpoints; CI still not confirmable green; issue #14 unchanged. Per firing
+(ppp)'s own explicit note, deliberately looked for a fix rather than a fifth clean audit.
+
+Found it by checking whether `requirement_indices`' HTTP-only bounds-check (fixed earlier this
+session) had the exact same "two real entry points, one bug class" shape already found and fixed for
+`validate_proposals`/`validate_feedback` -- it did, and had never been checked. `run_iteration`
+itself does nothing with `requirement_indices` except silently store it; the bounds-check lived only
+in `web/src/main.rs`'s HTTP handler, which `devsystem_iterate`'s local, non-`--remote` CLI path never
+goes through (it calls `run_iteration` directly, no HTTP layer in between at all -- the identical
+shape `validate_feedback`'s own doc comment already named as the reason it had to become a shared
+function). Live-confirmed before fixing: a real run with zero requirements accepted
+`requirement_indices: [999, 1000]` via the local CLI with a real `iteration_outcome=Continue`,
+persisted permanently.
+
+Fixed with a new shared `validate_requirement_indices` (`pipeline/src/runner.rs`,
+`CADS-devsystem@eb7f146`) -- `web/src/main.rs`'s own inline check now calls it instead of keeping a
+second, separately-maintained copy; `devsystem_iterate.rs`'s local path gets the check for the first
+time. 1 new regression test, 118/118 pipeline-lib tests (was 117), 190/190 web tests unchanged,
+hermetic clippy clean on both crates. Rebuilt the real `devsystem_iterate` binary hermetically and
+re-ran the exact malicious record that sailed through before -- now a real `rejected: ...`, exit
+code 1. Redeployed `devsystem-web` and confirmed the HTTP path produces the identical error message
+via the refactored shared function, not a regression from the refactor.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
