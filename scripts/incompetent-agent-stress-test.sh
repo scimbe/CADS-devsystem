@@ -381,10 +381,23 @@ check "a genuine, non-empty panel still works" "200" "$status"
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$blankpanel_run"
 
 echo
+echo "[28] an absurdly long backlog item text or milestone description must be rejected, not persisted unbounded"
+longtext_run="${RUN}-long-text-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$longtext_run\"}"
+huge_text=$(python3 -c 'print("x" * 2001)')
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$longtext_run/backlog" -H 'content-type: application/json' -d "{\"text\":\"$huge_text\"}")
+check "an absurdly long backlog item text is rejected" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$longtext_run/milestones" -H 'content-type: application/json' -d "{\"description\":\"$huge_text\"}")
+check "an absurdly long milestone description is rejected" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$longtext_run/backlog" -H 'content-type: application/json' -d '{"text":"a real, short backlog item"}')
+check "a genuine, reasonably-sized backlog item still works" "200" "$status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$longtext_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the thirty-eight gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the thirty-nine gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
