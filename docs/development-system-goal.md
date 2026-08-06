@@ -857,6 +857,22 @@ Docker run standing in for real CI. Twenty-nine real stress-test investigations,
 gaps found and closed -- and one real row of §5's own quality-bar table moved from "not checked" to
 mechanically gated.
 
+**The stress test's thirtieth real run, 2026-08-06**: a DAU-lens gap in the Milestones panel.
+Toggling a milestone's checkbox to achieved fires the real toggle immediately, with zero warning --
+but that specific transition auto-pauses the ENTIRE run server-side (`toggle_milestone`'s own doc
+comment in `pipeline/src/runner.rs` names this as deliberate), blocking every further iteration
+submission until a human explicitly resumes it. A careless click on what looks like a plain
+checkbox had no indication of that real, run-wide consequence -- exactly the class of gap this
+project's own established `confirm()` convention (reject-proposal, remove-RAG-doc, mark-memory-
+reviewed, un-verify-requirement) already exists to close, just not yet applied here. Fixed
+(`CADS-devsystem@e087a18`) with a confirm() guarding only the achieve direction, mirroring the
+existing requirement-toggle pattern -- the un-achieve direction has no such side effect (it never
+auto-resumes), so it stays unconditional, matching precedent exactly. Live-verified against the
+actual deployed GUI via a real Playwright browser, both branches: dismissing the confirm reverts
+the checkbox and leaves the run genuinely unpaused; accepting it still pauses the run and marks the
+milestone achieved, same real behavior as before the fix. Thirty real stress-test investigations,
+thirty real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
