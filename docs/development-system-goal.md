@@ -785,6 +785,24 @@ after the fix: propose+approve a stage with `price_ceiling: 0` through the real 
 path now correctly shows the real risk. Twenty-five real stress-test investigations, twenty-five
 real gaps found and closed.
 
+**The stress test's twenty-sixth real run, 2026-08-06**: a real regression in run 25's own fix,
+found the same day by a routine read-only health check against the actual deployed
+`webconference-android` run -- not a synthetic scratch scenario this time, the real flagship run's
+own real risk. `no_price_ceiling` (`CADS-devsystem@fd11c30`) switched to scanning only the new
+`approved_stage_proposals` field, complete *going forward* but empty for any `state.json` persisted
+before that field existed -- `webconference-android`'s own real `devsystem.document_extraction`
+risk, live and correctly flagged all session (proposed via a real iteration back at iteration 1),
+silently vanished the moment the fix deployed. Fixed by scanning the union of both real sources
+(`approved_stage_proposals` chained with `history.proposals`) instead of one replacing the other --
+a proposal is unbounded either way, regardless of which record it happens to live in
+(`CADS-devsystem@f53c002`). Hermetic: pipeline lib 98/98 (a new regression test proving a role
+recorded only in `history`, with an empty `approved_stage_proposals` -- the exact real shape
+`webconference-android`'s own `state.json` had -- still gets flagged), web crate 157/157. Live-
+reverified against the actual flagship run: the real risk is back. Worth naming plainly: fixing a
+real gap can itself introduce a real regression if the fix narrows a check's data source instead of
+widening it -- the same discipline this session applies to every other finding applies to its own
+fixes too. Twenty-six real stress-test investigations, twenty-six real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
