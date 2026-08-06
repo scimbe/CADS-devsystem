@@ -36,7 +36,12 @@ fn signing_key_from_file(path: &str) -> SigningKey {
     }
     let mut csprng = rand::rngs::OsRng;
     let key = SigningKey::generate(&mut csprng);
-    if let Err(e) = fs::write(path, key.to_bytes()) {
+    // Real gap found live (#382 goal doc §8, 2026-08-06): a plain fs::write here
+    // used to leave this real private key at whatever the process umask allows
+    // -- confirmed world-readable on the actual deployed key file for the
+    // sibling devsystem_assistant binary. See write_signing_key_restricted's
+    // own doc comment for the full real-impact reasoning.
+    if let Err(e) = devsystem_pipeline::write_signing_key_restricted(path, &key.to_bytes()) {
         eprintln!("warning: could not persist key to {path}: {e} -- this identity will not survive the next run");
     }
     key

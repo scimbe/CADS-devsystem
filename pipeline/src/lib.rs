@@ -20,6 +20,32 @@ pub mod improve;
 pub mod preflight;
 pub mod runner;
 
+/// Real gap found live by the incompetent-agent stress test (#382 goal doc §8,
+/// 2026-08-06): both real CLI binaries that persist a real ed25519 signing key
+/// to disk (`devsystem_offer`'s `signing_key_from_file`, `devsystem_assistant`'s
+/// `assistant_signing_key`) wrote it with a plain `fs::write`, which on Unix
+/// lands at whatever the process's own umask allows -- confirmed live against
+/// the actual deployed `devsystem_assistant` key file: real mode `664`,
+/// world-readable. Private key material world-readable on a host that could
+/// ever run another process under a different user (or, longer term, a
+/// compromised unrelated process reading arbitrary files) lets that reader
+/// impersonate this identity in the real crew-auction -- sign fraudulent
+/// offers as if from the legitimate role-filler. Shared here so both real key-
+/// writing call sites use the identical, correct fix instead of one getting it
+/// and the other not (the same "two entry points, one bug class" lesson
+/// already learned once this session for path validation). Restricts to
+/// owner-only read/write (`0600`) immediately after writing -- the key's own
+/// bytes are unchanged, only the file's permissions.
+pub fn write_signing_key_restricted(path: &str, key_bytes: &[u8; 32]) -> std::io::Result<()> {
+    std::fs::write(path, key_bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 /// The seven pipeline-stage service names (#382 §3), each a `ServiceType::Custom` --
 /// a pipeline-designer-level decision, not a CADS-Tunnel core one.
 pub const STAGE_PLAN: &str = "devsystem.plan";
@@ -263,6 +289,33 @@ mod tests {
 
     fn holder(seed: u8) -> [u8; 32] {
         SigningKey::from_bytes(&[seed; 32]).verifying_key().to_bytes()
+    }
+
+    #[test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): confirmed directly against the actual deployed
+    /// devsystem_assistant key file (real mode 664, world-readable) before this
+    /// fix existed.
+    fn write_signing_key_restricted_writes_the_real_bytes_and_locks_permissions_to_owner_only() {
+        let dir = std::env::temp_dir().join(format!("devsystem-key-perm-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.key");
+        let path_str = path.to_str().unwrap();
+        let key_bytes = [7u8; 32];
+
+        write_signing_key_restricted(path_str, &key_bytes).expect("write must succeed");
+
+        let read_back = std::fs::read(&path).unwrap();
+        assert_eq!(read_back, key_bytes, "the real key bytes must round-trip unchanged -- only permissions change");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "the real on-disk file must be owner-read/write only, not world-readable");
+        }
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
