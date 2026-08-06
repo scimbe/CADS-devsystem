@@ -1220,6 +1220,26 @@ afterward confirmed no regressions elsewhere.
 harness now covers twenty-two real checks, 30/30 individual assertions passing locally against the
 real deployment. Fifty-four real stress-test investigations, forty-two real gaps found and closed.
 
+**The stress test's fifty-fifth real run, 2026-08-06**: `units` (how many real bidders a role
+needs) was checked for `== 0` at `propose_stage` and `quick_submit_offer`, but had no upper bound
+anywhere -- and `validate_proposals`, the shared gate an EMBEDDED iteration proposal reaches, had
+neither check at all. Since an embedded proposal applies immediately with no human review gate,
+this was the more consequential of the three real entry points, not less. Live-confirmed before
+touching anything: `propose_stage` accepted `units: 18446744073709551615` (`u64::MAX`) with a real
+`200`, and an embedded proposal with `units: 0` got a real `200` and was genuinely added to the
+live spec. `MAX_ROLE_UNITS` now lives in the pipeline crate as the single source of truth for all
+three real entry points, not three separately-maintained copies (`CADS-devsystem@ef0af5b`).
+Hermetic: pipeline lib 103/103, web crate 168/168 (extended the existing zero-units tests at all
+three real call sites with the upper-bound case), clippy clean on both crates. Deployed and
+live-verified all four cases against the actual deployment. Full stress-test harness re-run
+afterward confirmed no regressions elsewhere.
+
+**The stress test's fifty-sixth real run, 2026-08-06**: added run 55's fix to the harness as check
+[17] (`CADS-devsystem@52fd227`), covering all three real entry points -- live-confirmed against the
+deployed change before writing it. The harness now covers twenty-three real checks, 33/33
+individual assertions passing locally against the real deployment. Fifty-six real stress-test
+investigations, forty-three real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
