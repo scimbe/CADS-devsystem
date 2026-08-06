@@ -3090,4 +3090,12 @@ re-ran the exact malicious record that sailed through before -- now a real `reje
 code 1. Redeployed `devsystem-web` and confirmed the HTTP path produces the identical error message
 via the refactored shared function, not a regression from the refactor.
 
+**Docs-loop firing, 2026-08-06 (sss) -- documented firing (rrr)'s local-CLI validation fix**:
+`CADS-devsystem-docs` extended `submit-an-iteration.md` right where its own example already used
+`devsystem_iterate`'s local mode -- an honest correction that the exact shown command never actually
+enforced the documented rejection until this session's fix (`CADS-devsystem-docs@4803272`).
+Hermetically built clean. No new operator input on any of the three open `#382` checkpoints;
+GitHub's incident still `major_outage`; live docs site continues serving correctly. No scimbe-
+authored PRs on either repo to review; issue #14 unchanged.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
