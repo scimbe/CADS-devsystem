@@ -1032,7 +1032,21 @@ own `scimbe/CADS-webconference-demo`, a real abuse/spam vector the allowlist exi
 close. Live-confirmed before writing the check: proposing against an arbitrary repo gets a real
 `400`; the real allowed repo still works. Added as check [10] (`CADS-devsystem@82ae701`); the
 harness now covers sixteen real checks, 18/18 individual assertions passing locally against the
-real deployment. Forty real stress-test investigations, thirty-four real gaps found and closed. — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
+real deployment. Forty real stress-test investigations, thirty-four real gaps found and closed.
+
+**The stress test's forty-first real run, 2026-08-06**: a real CI hygiene gap, found by observing
+the actual live state of GitHub Actions rather than a single simulated click -- this project's own
+goal-driven loop pushes to `main` every few minutes, and the real CI run (~7 minutes, the `web`
+job's build+test+docker-build+live stress-harness) had no `concurrency` group. Checked live and
+found four separate runs genuinely stacked in-progress at once, none of them cancelled, even though
+only the last push's result actually matters for `main`'s current health. Added a standard
+`concurrency: {group: workflow+ref, cancel-in-progress: true}` block (`CADS-devsystem@5c05f77`).
+Honestly noted: the four already-stacked runs at the time of the fix couldn't be retroactively
+cancelled (they started under the old, concurrency-less workflow definition, so GitHub can't group
+them after the fact) -- verifying the fix actually takes effect requires watching what happens on
+the *next* push after this one.
+
+1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
    a run that declares
