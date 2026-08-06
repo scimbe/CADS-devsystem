@@ -930,8 +930,20 @@ async fn iterate_run(
     if run_state.paused {
         return (StatusCode::CONFLICT, "run is paused -- resume it first (POST /api/runs/{id}/resume)").into_response();
     }
-    if let Some(&bad) = body.requirement_indices.iter().find(|&&i| i >= run_state.requirements.len()) {
-        return (StatusCode::BAD_REQUEST, format!("requirement_indices references index {bad}, but state.requirements only has {} entries", run_state.requirements.len()))
+    // DAU-lens gap found live 2026-08-06 (#382 goal doc §8), same lens and shape as the
+    // add_requirement/validate_proposals fixes: this used to `find` and reject on the
+    // FIRST out-of-range index in the batch only. `requirement_indices` is a real batch
+    // (a role-filler can claim several requirements addressed in one iteration), so a
+    // submission with more than one bad index needed one resubmit per additional
+    // mistake to discover them all. Live-confirmed before fixing: `[99, 150]` against a
+    // run with zero requirements only ever named 99.
+    let bad_indices: Vec<usize> = body.requirement_indices.iter().copied().filter(|&i| i >= run_state.requirements.len()).collect();
+    if !bad_indices.is_empty() {
+        let bad_list = bad_indices.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(", ");
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("requirement_indices references out-of-range index(es) [{bad_list}], but state.requirements only has {} entries", run_state.requirements.len()),
+        )
             .into_response();
     }
     // Real gap found live 2026-08-06 (stress-test run 45): confirmed live a real
@@ -6928,6 +6940,29 @@ exit 1"#);
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST, "no requirements exist yet, so index 0 must be rejected, not silently accepted");
+    }
+
+    #[tokio::test]
+    /// DAU-lens gap found live 2026-08-06 (#382 goal doc §8): this check used to
+    /// `find` and reject on the FIRST out-of-range requirement index only. Must now
+    /// name every bad index from the one batch that has them, not just the first.
+    async fn iterate_run_reports_every_out_of_range_requirement_index_not_just_the_first() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "trace-multi-oob-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/trace-multi-oob-run/iterate",
+                serde_json::json!({"stage": "implement", "feedback": "x", "succeeded": true, "requirement_indices": [99, 150]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+        let body = String::from_utf8(axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+        assert!(body.contains("99"), "the first bad index must be named: {body}");
+        assert!(body.contains("150"), "the second bad index must ALSO be named, not require a separate retry: {body}");
     }
 
     #[tokio::test]
