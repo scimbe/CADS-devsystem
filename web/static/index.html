@@ -1396,7 +1396,7 @@ async function refreshRunsList() {
       // health-threshold needs_attention, which outranks a stalled stage, which
       // outranks a mechanical preflight risk finding.
       let badge = '';
-      if (r.paused) badge = `<span class="paused-badge">⏸ ${r.pause_reason ? escapeHtml(r.pause_reason) : 'paused'}</span>`;
+      if (r.paused) badge = `<span class="paused-badge">⏸ ${r.pause_reason ? escapeHtml(r.pause_reason) : 'paused (no reason recorded)'}</span>`;
       else if (r.pending_reviews) badge = `<span class="attention-badge">⚠ ${r.pending_reviews} pending review${r.pending_reviews === 1 ? '' : 's'}</span>`;
       else if (r.needs_attention) badge = `<span class="attention-badge">⚠ needs attention</span>`;
       else if (r.stalled_stages && r.stalled_stages.length) badge = `<span class="stalled-badge">${r.stalled_stages.length} stalled</span>`;
@@ -2145,7 +2145,7 @@ function renderProcessPanel(id, data) {
   const stalled = data.stalled_stages || [];
   const risks = data.risks || [];
 
-  const pausedBanner = paused ? `<div class="paused-banner">⏸ paused${data.state.pause_reason ? ` -- ${escapeHtml(data.state.pause_reason)}` : ''} -- no new iterations until resumed</div>` : '';
+  const pausedBanner = paused ? `<div class="paused-banner">⏸ paused -- ${data.state.pause_reason ? escapeHtml(data.state.pause_reason) : 'no reason recorded'} -- no new iterations until resumed</div>` : '';
 
   const headline = `
     <div class="health" style="margin-bottom:.6rem">
@@ -2189,9 +2189,14 @@ function renderHealthCriteriaPanel(id, data) {
   // click are three genuinely different situations that used to render an
   // identical banner -- data.state.pause_reason (set at every real site that sets
   // paused=true, see RunState::pause_reason's own doc comment) is now shown
-  // honestly instead of a guess.
+  // honestly instead of a guess. Real gap found live 2026-08-06 against the actual
+  // flagship run: paused=true with pause_reason=null (data older than the field, or
+  // any future gap in setting it) rendered as a bare "paused" with zero indication
+  // anything was missing -- the same silent-gap shape this methodology exists to
+  // catch, now matching open_points()'s own already-honest "no reason recorded"
+  // fallback instead of omitting the clause.
   const pauseBanner = paused
-    ? `<div class="paused-banner">⏸ paused${data.state.pause_reason ? ` -- ${escapeHtml(data.state.pause_reason)}` : ''} -- no new iterations are accepted until resumed</div>`
+    ? `<div class="paused-banner">⏸ paused -- ${data.state.pause_reason ? escapeHtml(data.state.pause_reason) : 'no reason recorded'} -- no new iterations are accepted until resumed</div>`
     : '';
   body.innerHTML = `
     ${pauseBanner}
