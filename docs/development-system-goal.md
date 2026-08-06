@@ -2856,4 +2856,24 @@ after clicking Save edit -- plus a short cross-reference in `rest-api.md`'s issu
 operator input on any of the three open `#382` checkpoints; GitHub's incident still `major_outage`
 per the status page; live docs site continues serving correctly (spot-checked again).
 
+**Main-dev-loop firing, 2026-08-06 (fff) -- closing a real gap in the stress-test infrastructure
+itself, not the pipeline it tests**: no new operator input on any of the three open `#382`
+checkpoints. A new `failure` conclusion appeared for `20ffa3b` -- checked directly rather than
+assumed: all three jobs (`secrets`/`test`/`web`) failed with "the job was not acquired by Runner of
+type hosted even after multiple attempts" -- the same outage symptom, now affecting even the `test`
+job that had succeeded on an earlier run. Still no code-level failure.
+
+Noticed `scripts/incompetent-agent-stress-test.sh` (the durable, re-runnable regression harness for
+every gap this session finds) hadn't grown since check [29], while eleven real bidi-control-
+character fields were found and closed across six later firings with zero coverage in this suite --
+a real gap in the harness itself, exactly the kind this whole methodology exists to prevent from
+going unnoticed. Added checks [30]-[35] (`CADS-devsystem@7c76dba`): one representative check per
+real handler/file the class was found in (requirement criteria, milestone, panel title, stage
+rationale, fill-mode label, next-step draft) -- deliberately not all eleven individual fields, to
+keep the script itself maintainable. The markdown-forgery class (checkin.rs/runner.rs) deliberately
+left out of this harness -- verifying it needs checking response *content*, not just an HTTP status
+code, a different shape than everything else here; already covered by hermetic Rust tests and live
+binary/Playwright verification at the firings that found it. Ran the full harness against the real
+live deployment: 68/68 passed (was 62).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
