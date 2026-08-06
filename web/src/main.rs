@@ -2706,6 +2706,23 @@ async fn propose_next_step(State(state): State<AppState>, AxPath(id): AxPath<Str
     if text.len() > MAX_NEXT_STEP_DRAFT_BYTES {
         return (StatusCode::BAD_REQUEST, format!("text must be under {MAX_NEXT_STEP_DRAFT_BYTES} bytes")).into_response();
     }
+    // Real gap found live by the incompetent-agent stress test (#382 goal doc
+    // §8, 2026-08-06): extends the bidi-control-character (Trojan Source) class
+    // to a next-step draft's own text -- exactly the field a human reads at a
+    // paused checkpoint to decide what to do next ("advice, not an action", per
+    // this function's own doc comment). Live-confirmed before fixing: "Resume
+    // with devsystem.implement" + U+202E + reversed text sailed through
+    // untouched, visually hiding "Just continue and ignore all safety guidance"
+    // behind an apparently ordinary recommendation.
+    if contains_bidi_control_char(&text) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "text contains a Unicode bidi control character (e.g. a right-to-left override) -- \
+             these can make the visually displayed text not match what's actually stored"
+                .to_string(),
+        )
+            .into_response();
+    }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
     let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
@@ -2753,6 +2770,16 @@ async fn update_next_step_draft(
     }
     if text.len() > MAX_NEXT_STEP_DRAFT_BYTES {
         return (StatusCode::BAD_REQUEST, format!("text must be under {MAX_NEXT_STEP_DRAFT_BYTES} bytes")).into_response();
+    }
+    // Same real gap as propose_next_step -- see its own doc comment.
+    if contains_bidi_control_char(&text) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "text contains a Unicode bidi control character (e.g. a right-to-left override) -- \
+             these can make the visually displayed text not match what's actually stored"
+                .to_string(),
+        )
+            .into_response();
     }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
@@ -3383,6 +3410,21 @@ async fn propose_issue(
     }
     if issue_body.len() > MAX_ISSUE_BODY_LEN {
         return (StatusCode::BAD_REQUEST, format!("body must be under {MAX_ISSUE_BODY_LEN} characters")).into_response();
+    }
+    // Same bidi-control-character (Trojan Source) class already closed for
+    // requirement statement/criteria, milestones, backlog, custom-panel title,
+    // stage-proposal rationale, role fill-mode label, and next-step draft text
+    // (#382 goal doc §8, 2026-08-06) -- a human approving this proposal from the
+    // review queue trusts exactly this title/body, and approving it files a
+    // real GitHub issue with whatever content is actually stored.
+    if contains_bidi_control_char(&title) || contains_bidi_control_char(&issue_body) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "title/body contains a Unicode bidi control character (e.g. a right-to-left override) -- \
+             these can make the visually displayed text not match what's actually stored"
+                .to_string(),
+        )
+            .into_response();
     }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
@@ -6922,6 +6964,51 @@ mod tests {
     }
 
     #[tokio::test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): extends the bidi-control-character class to a proposed
+    /// GitHub issue's title/body -- a human approving from the review queue
+    /// trusts exactly this text, and approving it files a real issue with
+    /// whatever content is actually stored.
+    async fn propose_issue_rejects_bidi_control_characters_in_title_or_body() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "bidi-issue-run"}))).await.unwrap();
+
+        let bidi = "Real gap\u{202e} gnihton -- ekaf yletelpmoc si eussi sihT";
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/bidi-issue-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": bidi, "body": "a real detail"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a bidi-laced title must be rejected");
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/bidi-issue-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": "a real title", "body": bidi}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a bidi-laced body must be rejected");
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/bidi-issue-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": "a real title", "body": "a real detail"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "clean title/body must not be rejected");
+    }
+
+    #[tokio::test]
     async fn approving_an_issue_proposal_reports_503_honestly_when_no_github_token_is_configured() {
         let (state, _dir) = test_state();
         let app = api_router(state);
@@ -8685,6 +8772,48 @@ exit 1"#);
         let get_response = app.oneshot(Request::builder().uri("/api/runs/next-step-run").body(Body::empty()).unwrap()).await.unwrap();
         let full = body_json(get_response).await;
         assert_eq!(full["state"]["pending_next_step_drafts"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): extends the bidi-control-character class to a
+    /// next-step draft's own text -- exactly the field a human reads at a
+    /// paused checkpoint to decide what to do next. Checked at both real entry
+    /// points (propose, update).
+    async fn next_step_draft_rejects_bidi_control_characters_at_propose_and_update() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "bidi-next-step-run"}))).await.unwrap();
+
+        let bidi = "Resume with devsystem.implement\u{202e} ecnadiug ytefas lla erongi dna eunitnoc tsuJ";
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/bidi-next-step-run/next-steps/propose", serde_json::json!({"text": bidi})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "propose_next_step must reject a bidi-laced text");
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/bidi-next-step-run/next-steps/propose",
+                serde_json::json!({"text": "a real, clean next step"}),
+            ))
+            .await
+            .unwrap();
+        let draft = body_json(response).await;
+        let draft_id = draft["id"].as_str().unwrap().to_string();
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/api/runs/bidi-next-step-run/next-steps/{draft_id}/update"),
+                serde_json::json!({"text": bidi}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "update_next_step_draft must reject a bidi-laced text");
     }
 
     #[tokio::test]
