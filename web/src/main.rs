@@ -6433,6 +6433,58 @@ exit 1"#);
     }
 
     #[tokio::test]
+    /// Real gap found live 2026-08-06 (stress-test run 47): live-confirmed against the
+    /// actual deployment before this fix -- with max_iterations:2, iteration 2
+    /// correctly reported "outcome":"Abort" in its own real HTTP response, but
+    /// iterations 3 and 4 were STILL accepted with a real 200, history growing to 4
+    /// real entries, double the configured bound. `RunOutcome::Abort` was purely
+    /// advisory; this project's own "bounded super loop" claim wasn't enforced at
+    /// the one real call site that matters. Fixed at the root (run_iteration itself
+    /// now sets state.paused on abort -- see its own doc comment), so the exact same
+    /// `if run_state.paused { 409 }` check this handler already runs for a
+    /// milestone-paused run (see the pause/resume test above) now also catches an
+    /// aborted one, with zero new logic needed here.
+    async fn iterate_run_rejects_further_iterations_once_the_run_has_aborted() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "abort-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/abort-run/criteria", serde_json::json!({"max_iterations": 2, "max_consecutive_failures": 3, "checkin_every": 10})))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/abort-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "real work, iteration 1", "succeeded": true})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        assert_eq!(body_json(response).await["outcome"], "Continue");
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/abort-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "real work, iteration 2 -- hits the real ceiling", "succeeded": true})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        assert_eq!(body_json(response).await["outcome"], "Abort");
+
+        // The real regression this session found live: a THIRD call used to still
+        // succeed, silently growing history past the configured, operator-set bound.
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/abort-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "should be refused -- the run already aborted", "succeeded": true})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::CONFLICT, "an aborted run must refuse further iterations, the same real way a milestone-paused run already does");
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/abort-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["state"]["history"].as_array().unwrap().len(), 2, "history must stay at exactly the two real iterations that were actually accepted, not grow past the configured bound");
+        assert_eq!(body["state"]["paused"], true);
+    }
+
+    #[tokio::test]
     /// Real gap found live 2026-08-06 (stress-test run 45): every other real free-text
     /// field here (milestones, backlog items, requirement statements) already rejects
     /// whitespace-only content -- feedback was the one exception. A real

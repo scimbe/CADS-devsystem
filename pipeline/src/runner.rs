@@ -893,6 +893,23 @@ pub fn run_iteration(
     state.history.push(record);
 
     if should_abort(state.consecutive_failures, iteration, criteria) {
+        // Real gap found live 2026-08-06 (stress-test run 47): `RunOutcome::Abort` used
+        // to be purely advisory -- a string in the HTTP response, nothing more.
+        // Live-confirmed the real severity before this fix: with `max_iterations: 2`,
+        // iteration 2 correctly reported `"outcome":"Abort"`, but iterations 3 and 4
+        // were STILL accepted -- `state.history` grew to 4 real entries, double the
+        // configured bound, `paused` never flipped. This project's own central
+        // architectural claim ("a bounded super loop," repeated throughout this
+        // codebase's own doc comments) was genuinely NOT enforced at the one place
+        // that matters. Reuses the exact same `paused` mechanism `toggle_milestone`
+        // already established (real GUI banner, disabled New Iteration form, the
+        // existing `if run_state.paused { 409 }` check `iterate_run` already runs at
+        // the top) -- the next real iterate call is blocked by code that already
+        // existed, not new enforcement logic. Distinguishing *why* a run is paused
+        // (milestone vs. abort ceiling) in the GUI is a real, separate, honestly
+        // still-open refinement, not solved here -- this fix closes the actual
+        // enforcement gap, not the UX polish on top of it.
+        state.paused = true;
         RunOutcome::Abort
     } else if checkin_check {
         RunOutcome::CheckinDue
@@ -1506,6 +1523,33 @@ mod tests {
         assert_eq!(run_iteration(&mut spec, &mut state, record(1, false, vec![]), &criteria), RunOutcome::Continue);
         assert_eq!(run_iteration(&mut spec, &mut state, record(2, false, vec![]), &criteria), RunOutcome::Abort);
         assert_eq!(state.consecutive_failures, 2);
+        assert!(state.paused, "a real Abort must actually pause the run, not just report the outcome string");
+    }
+
+    #[test]
+    /// Real gap found live 2026-08-06 (stress-test run 47): `RunOutcome::Abort` used
+    /// to be purely advisory. Live-confirmed before this fix, against the actual
+    /// deployment, not just this hermetic test: with max_iterations:2, iteration 2
+    /// correctly reported "outcome":"Abort", but iterations 3 and 4 were STILL
+    /// accepted, growing history to 4 real entries -- double the configured bound,
+    /// with `paused` never flipping. This project's own central architectural claim
+    /// ("a bounded super loop") was genuinely not enforced at the one place that
+    /// matters. Proves both real halves: the run pauses on abort, AND (by reusing
+    /// the exact same `paused` flag `iterate_run`'s own existing `if
+    /// run_state.paused { 409 }` check already gates on) a further iteration on an
+    /// already-aborted run must be rejected the identical way a milestone-paused run
+    /// already is -- this exact real-world call-site check is exercised by
+    /// `iterate_run_rejects_further_iterations_once_the_run_has_aborted` in
+    /// web/src/main.rs, not duplicated here.
+    fn hitting_max_iterations_pauses_the_run_for_real() {
+        let mut spec = plan_only_spec("run-x", None);
+        let mut state = RunState::new("run-x");
+        let criteria = AbortCriteria { max_iterations: 2, max_consecutive_failures: 3, checkin_every: 10 };
+
+        assert_eq!(run_iteration(&mut spec, &mut state, record(1, true, vec![]), &criteria), RunOutcome::Continue);
+        assert!(!state.paused, "must not pause before the real bound is actually reached");
+        assert_eq!(run_iteration(&mut spec, &mut state, record(2, true, vec![]), &criteria), RunOutcome::Abort);
+        assert!(state.paused, "reaching max_iterations must actually pause the run, not just report Abort");
     }
 
     #[test]
