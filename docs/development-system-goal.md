@@ -110,7 +110,7 @@ not just referenced:
 | Term | Working definition for this project | Where it's checked today |
 |---|---|---|
 | **Anerkannte Regeln der Technik** (recognized rules of engineering) | Follows this ecosystem's own established, load-bearing patterns (hermetic gates, no secrets in git, real tests over mocks) | Partially — `check-no-secrets.sh`, the hermetic gate; no single explicit gate role |
-| **Stand der Technik** (state of the art) | Current, non-deprecated dependencies and idioms at time of delivery | Not checked — no dependency-freshness/deprecation gate exists |
+| **Stand der Technik** (state of the art) | Current, non-deprecated dependencies and idioms at time of delivery | **Partially checked** — this row's own "no gate exists" claim was stale: `.github/dependabot.yml` (`CADS-devsystem@9c97211`/`8949cbf`) already runs a real weekly `cargo` freshness check against both crates plus GitHub Actions versions, confirmed live 2026-08-06 — three real, currently-open PRs exist right now (`rand` 0.8.7→0.10.2 in both crates, `ed25519-dalek` 2.2.0→3.0.0 in `web`). What's still genuinely open: those PRs are opened, not enforced — nothing blocks a merge to `main` while one sits open, and reviewing/merging them is the operator's own call (out of scope here — they're not scimbe-authored, and a major-version bump like `ed25519-dalek` 2→3 needs a real compatibility read, not a rubber-stamp merge) |
 | **Vertragsgemäße / Sachmangelfreie Leistung** (contract-conforming, defect-free delivery) | Satisfies every declared acceptance criterion, zero known open defects at delivery | Requirements/acceptance-criteria machinery exists; **partially checked as of `CADS-devsystem@9f9f5d2`** -- a `succeeded: true` iteration whose own feedback admits a known defect (`DEFECT_ADMISSION_PHRASES`) is now flagged as a real risk. Advisory, not a hard block, and beatable by phrasing a real defect without those exact words -- not the whole gap closed |
 | **Fachgerecht / Fachmännisch** (professionally correct) | Passes the same review bar a competent human reviewer would apply | The `review` stage exists as a role; not mandatory for every change today |
 | **Kunstgerecht** (in accordance with the craft) | Idiomatic to the language/framework, not just "works" | **Checked as of `CADS-devsystem@9861abe`** (stress-test run 29) -- `cargo clippy --all-targets -- -D warnings` runs in real CI for both real crates, same hermetic-gate discipline as the existing `RUSTFLAGS=-D warnings` compiler-warnings gate. Rust-specific and this project's own two crates only -- a role-filler's target repo in a different language, or a future crate this pipeline builds, isn't covered by this gate automatically |
@@ -887,8 +887,14 @@ thirty real gaps found and closed.
    Still open for a later increment: this is one concrete slice of §5's quality bar (review actually
    happened), not the whole table. **Update, 2026-08-06**: Kunstgerecht (idiomatic code) is now
    real, mechanically gated too -- `cargo clippy --all-targets -- -D warnings` in real CI
-   (`CADS-devsystem@9861abe`, stress-test run 29). Stand der Technik (dependency freshness) remains
-   the one row still fully unenforced.
+   (`CADS-devsystem@9861abe`, stress-test run 29). **Correction, 2026-08-06**: the previous update
+   here calling Stand der Technik "fully unenforced" was itself stale -- `.github/dependabot.yml`
+   already existed (`CADS-devsystem@9c97211`/`8949cbf`, predating this doc's own gap-list tracking)
+   and is a real, live, weekly-running gate: three genuine open PRs against `main` right now prove
+   it's actually firing, not just configured. What's still open is enforcement, not existence --
+   nothing blocks a merge while a freshness PR sits open, and reviewing one (especially the
+   `ed25519-dalek` major-version bump) is a real judgment call for the operator, not a rubber stamp
+   this session should make unasked.
 3. ~~**Context-relevant panels**~~ (§7.1) — **done**, five slices — show what this run's actual state needs, not a fixed set.
    **First slice done** (`CADS-devsystem@de56d33`): the Pipeline chip on the panel toggle bar now
    carries a real badge with the run's actual pending-proposal count (stage + panel + issue
