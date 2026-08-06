@@ -357,10 +357,22 @@ check "the zero-units proposal is ALSO named in the same response, not a separat
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$multibadprop_run"
 
 echo
+echo "[26] an iteration with multiple out-of-range requirement_indices must report ALL of them in one response, not just the first"
+multioob_run="${RUN}-multi-oob-indices-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$multioob_run\"}"
+multioob_body=$(curl -s -X POST "$BASE/api/runs/$multioob_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"a real, substantive feedback string","succeeded":true,"requirement_indices":[99,150]}')
+has_first_bad=$(echo "$multioob_body" | grep -c '99')
+has_second_bad=$(echo "$multioob_body" | grep -c '150')
+check "the first out-of-range index is named in the one response" "1" "$has_first_bad"
+check "the second out-of-range index is ALSO named in the same response, not a separate retry" "1" "$has_second_bad"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$multioob_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the thirty-six gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the thirty-seven gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
