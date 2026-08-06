@@ -75,6 +75,17 @@ fn run_local(run_id: &str, record_path: &str) -> std::process::ExitCode {
         eprintln!("rejected: {e}");
         return std::process::ExitCode::FAILURE;
     }
+    // Real gap found live 2026-08-06 (#382 goal doc §8): same "two real entry
+    // points, one bug class" shape as validate_proposals/validate_feedback above --
+    // see validate_requirement_indices's own doc comment (pipeline crate) for why
+    // this matters. Confirmed live before this fix: on a real run with zero
+    // requirements, this local path accepted requirement_indices: [999, 1000] with
+    // a real iteration_outcome=Continue and persisted it permanently. Checked
+    // before any write happens, same as the two checks above.
+    if let Err(e) = devsystem_pipeline::runner::validate_requirement_indices(&state, &record.requirement_indices) {
+        eprintln!("rejected: {e}");
+        return std::process::ExitCode::FAILURE;
+    }
 
     // devsystem.remember, made real: every iteration's zylos envelope is appended to
     // the run's durable memory log before anything else happens to `record`.

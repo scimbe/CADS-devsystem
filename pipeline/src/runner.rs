@@ -902,6 +902,40 @@ pub fn toggle_acceptance_criterion(state: &mut RunState, req_index: usize, crite
     Ok(())
 }
 
+/// Real gap found live by the incompetent-agent stress test (#382 goal doc §8,
+/// 2026-08-06): the exact same "two real entry points, one bug class" shape
+/// already found and fixed this session for `validate_proposals`/
+/// `validate_feedback` -- `web/src/main.rs`'s `iterate_run` HTTP handler
+/// checks `requirement_indices` against `state.requirements.len()` before
+/// ever calling [`run_iteration`], but `run_iteration` itself does nothing
+/// with the field except silently store it, and `devsystem_iterate`'s local,
+/// non-`--remote` CLI path calls `run_iteration` directly with no HTTP layer
+/// in between at all. Live-confirmed before this fix: on a real run with
+/// zero requirements, the local CLI accepted `requirement_indices: [999,
+/// 1000]` with a real `iteration_outcome=Continue` and persisted it
+/// permanently -- pure garbage traceability data with no bound checking it
+/// whatsoever, the one real validation this session had (until now) only
+/// ever wired into the HTTP path. A shared, standalone function (not folded
+/// into `run_iteration` itself, matching `validate_feedback`'s own
+/// precedent of validating BEFORE constructing/applying the real
+/// `IterationRecord`) so every real entry point calls the identical gate --
+/// `web/src/main.rs`'s own inline check now calls this instead of keeping a
+/// second, separately-maintained copy of the same logic. Reports every
+/// out-of-range index in one pass, not just the first, same convention
+/// `iterate_run`'s own fix already established.
+pub fn validate_requirement_indices(state: &RunState, indices: &[usize]) -> Result<(), String> {
+    let bad: Vec<usize> = indices.iter().copied().filter(|&i| i >= state.requirements.len()).collect();
+    if bad.is_empty() {
+        Ok(())
+    } else {
+        let bad_list = bad.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(", ");
+        Err(format!(
+            "requirement_indices references out-of-range index(es) [{bad_list}], but state.requirements only has {} entries",
+            state.requirements.len()
+        ))
+    }
+}
+
 /// What the runner decided after folding in one [`IterationRecord`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunOutcome {
@@ -1575,6 +1609,36 @@ mod tests {
         });
         assert!(toggle_acceptance_criterion(&mut state, 0, 1).is_err());
         assert!(toggle_acceptance_criterion(&mut state, 5, 0).is_err(), "an out-of-range requirement index must also fail loudly");
+    }
+
+    #[test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): `web/src/main.rs`'s HTTP handler already checked
+    /// `requirement_indices` against `state.requirements.len()`, but
+    /// `run_iteration` itself never did, and `devsystem_iterate`'s local,
+    /// non-`--remote` CLI path calls `run_iteration` directly with no HTTP
+    /// layer to share the HTTP handler's own check through. Live-confirmed
+    /// before this fix: a real run with zero requirements accepted
+    /// `requirement_indices: [999, 1000]` via the local CLI path and
+    /// persisted it permanently. This is the shared function both real entry
+    /// points now call before ever touching `run_iteration`.
+    fn validate_requirement_indices_rejects_every_out_of_range_index_not_just_the_first() {
+        let mut state = RunState::new("run-req-indices");
+        state.requirements.push(Requirement {
+            statement: "WHEN x, THE SYSTEM SHALL y".into(),
+            acceptance_criteria: vec!["a real criterion".into()],
+            verified: false,
+            verified_criteria: Vec::new(),
+            auto_judge: false,
+            proposed_by: None,
+        });
+
+        assert!(validate_requirement_indices(&state, &[0]).is_ok(), "a genuinely in-range index must pass");
+        assert!(validate_requirement_indices(&state, &[]).is_ok(), "no claimed indices must pass");
+
+        let err = validate_requirement_indices(&state, &[0, 5, 12]).expect_err("out-of-range indices must be rejected");
+        assert!(err.contains('5') && err.contains("12"), "every real out-of-range index must be named, not just the first: {err}");
+        assert!(!err.contains(", 0]") && !err.contains("[0,"), "the one genuinely in-range index must not be named as bad: {err}");
     }
 
     #[test]

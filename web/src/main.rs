@@ -20,7 +20,7 @@ use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::{preflight_annotations, process_annotations};
 use devsystem_pipeline::runner::{
     load_or_init_run, persist_run, push_chat_exchange, qualifying_review_evidence, render_requirements_markdown, run_iteration, toggle_acceptance_criterion,
-    toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, valid_run_id, BacklogItem, CustomPanel,
+    toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, valid_run_id, validate_requirement_indices, BacklogItem, CustomPanel,
     Milestone, PendingIssueProposal, PendingNextStepDraft, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal, Requirement,
     RoleFillMode, RunOutcome, RunState,
 };
@@ -950,14 +950,14 @@ async fn iterate_run(
     // submission with more than one bad index needed one resubmit per additional
     // mistake to discover them all. Live-confirmed before fixing: `[99, 150]` against a
     // run with zero requirements only ever named 99.
-    let bad_indices: Vec<usize> = body.requirement_indices.iter().copied().filter(|&i| i >= run_state.requirements.len()).collect();
-    if !bad_indices.is_empty() {
-        let bad_list = bad_indices.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(", ");
-        return (
-            StatusCode::BAD_REQUEST,
-            format!("requirement_indices references out-of-range index(es) [{bad_list}], but state.requirements only has {} entries", run_state.requirements.len()),
-        )
-            .into_response();
+    //
+    // Now calls the shared `validate_requirement_indices` (pipeline crate) instead of
+    // keeping this logic duplicated inline -- see its own doc comment: the local,
+    // non-`--remote` `devsystem_iterate` CLI path calls `run_iteration` directly with no
+    // HTTP layer to share this check through any other way, and had zero protection
+    // until that shared function existed.
+    if let Err(e) = validate_requirement_indices(&run_state, &body.requirement_indices) {
+        return (StatusCode::BAD_REQUEST, e).into_response();
     }
     // Real gap found live 2026-08-06 (stress-test run 45): confirmed live a real
     // `succeeded: true` iteration with `""` or `"   "` as its feedback got a real
