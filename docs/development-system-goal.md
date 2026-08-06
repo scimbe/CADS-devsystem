@@ -2848,4 +2848,12 @@ make a real decision) doesn't apply the same way to a passive chat log a human i
 approving or deciding from. Deliberately not adding the check there this firing -- a genuinely
 different severity tier, not a same-class miss like the two fixed above.
 
+**Docs-loop firing, 2026-08-06 (eee) -- documented firing (ddd)'s next-step-draft and issue-proposal
+bidi fixes**: `CADS-devsystem-docs` extended `work-through-open-points.md` with two real screenshots
+-- a draft's textarea showing the scrambled recommendation as typed/edited, and the real rejection
+after clicking Save edit -- plus a short cross-reference in `rest-api.md`'s issue-proposal row
+(`CADS-devsystem-docs@2acb4f2`). Hermetically built clean; verified both cross-links resolve. No new
+operator input on any of the three open `#382` checkpoints; GitHub's incident still `major_outage`
+per the status page; live docs site continues serving correctly (spot-checked again).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
