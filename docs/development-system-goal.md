@@ -2587,4 +2587,23 @@ commits**, no typo'd or stale hashes. No new gap found; reported honestly as a c
 rather than manufacturing a change to fill the slot. The `baseurl` fix (firing jj) still hasn't gone
 live on the real deployed site -- will re-verify once the incident clears.
 
+**Goal-driven-loop firing, 2026-08-06 (qq) -- the stress test's eleventh real run, closing out
+firing (nn)'s own noted follow-up**: no new operator input on any of the three open `#382`
+checkpoints; GitHub's incident still `major_outage`, unresolved since `15:22:49Z` (~4h in now).
+
+Firing (nn) fixed bidi-control-character (Trojan Source) spoofing for requirement
+statement/acceptance criteria, deliberately scoped narrow, and explicitly named milestones and
+backlog items as the next candidates. Picked that up directly: live-confirmed before fixing that a
+milestone description with a real U+202E sailed through untouched (a real `200`) -- worth noting
+milestones are arguably the highest-stakes of the remaining candidates, since a milestone's
+`achieved: true` transition auto-pauses the run as a real checkpoint a human trusts at face value,
+exactly the kind of decision this whole methodology cares about protecting. Fixed both milestones
+and backlog items (`CADS-devsystem@b644207`) with the same shared `contains_bidi_control_char()`
+helper. 1 new regression test (4 assertions), 185/185 web tests (was 184), hermetic clippy clean.
+Deployed and live-verified against the real redeployed container: the exact bidi-laced milestone
+that sailed through before now gets a real `400`, clean text still gets `200`. Eleven real
+stress-test runs, eleven real gaps found and closed. Panel titles and stage-proposal rationale
+remain the last open candidates for this specific class, noted in the code comment for whichever
+firing picks them up next.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
