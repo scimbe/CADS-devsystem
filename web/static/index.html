@@ -477,6 +477,32 @@
  .orb-overlay.open .orb-product-link{opacity:1}
  .orb-product-link:hover{color:var(--accent2)}
  .orb-product-link img{height:20px;width:36px;object-fit:cover;border-radius:3px;border:1px solid var(--border)}
+ /* Real operator ask, live: clicking a specific bubble in the launcher felt
+    worse than the Process Prompt's own text-command path ("die
+    Positionierung ist doof, da war reinschreiben schon besser") -- rather
+    than dropping the visual/importance-sized overview just built and
+    iterated on, this adds a real, fast typed path INTO the same launcher: a
+    live filter, reusing resolvePanelName's own matching rules (the exact
+    logic the ./show command already trusts), narrowing which bubbles are
+    reachable as you type, Enter opens the one real remaining match. */
+ .orb-filter{
+   position:absolute;left:16px;bottom:130px;width:240px;
+   background:rgba(13,17,23,.85);backdrop-filter:blur(14px) saturate(180%);-webkit-backdrop-filter:blur(14px) saturate(180%);
+   border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:.5rem .7rem;
+   color:var(--text);font-family:-apple-system,BlinkMacSystemFont,var(--serif);font-size:.85rem;
+   opacity:0;transform:translateY(6px);transition:opacity .3s ease .1s,transform .3s ease .1s;
+   box-shadow:0 8px 24px rgba(0,0,0,.35);
+ }
+ .orb-overlay.open .orb-filter{opacity:1;transform:translateY(0)}
+ .orb-filter:focus{outline:none;border-color:var(--accent2)}
+ .orb-filter::placeholder{color:var(--muted)}
+ /* Matches .orb-overlay.open .orb-bubble's own specificity (two ancestor
+    classes + the element) rather than reaching for !important -- the same
+    CSS-specificity care this codebase already learned the hard way once
+    (.panel-toggles[hidden] silently losing to a same-specificity author
+    rule earlier this session). */
+ .orb-overlay.open .orb-bubble.orb-filtered-out{opacity:.14;pointer-events:none}
+ .orb-bubble.orb-filtered-match .orb-puck{border-color:var(--accent2)}
 </style>
 </head>
 <body>
@@ -502,6 +528,7 @@
 <button type="button" id="orb-launcher" aria-haspopup="true" aria-expanded="false" aria-label="Open panel launcher" title="Panels"></button>
 <div id="orb-overlay" class="orb-overlay">
  <a id="orb-product-link" class="orb-product-link" href="#" target="_blank" rel="noopener" hidden></a>
+ <input id="orb-filter" class="orb-filter" type="text" placeholder="Type to jump to a panel…" autocomplete="off" spellcheck="false">
  <div id="orb-bubbles" class="orb-bubbles"></div>
 </div>
 <div id="main-row">
@@ -1490,12 +1517,44 @@ function renderOrbBubbles() {
   }
 }
 
+// Real operator ask, live feedback on the launcher itself: hunting for a
+// specific bubble by eye/click felt worse than the Process Prompt's own
+// typed panel commands. Reuses resolvePanelName's exact matching rule (id
+// or title substring) so "does this text match this panel" is answered the
+// identical way the real ./show/./hide/./toggle commands already do --
+// one real rule, not a second guess at what counts as a match.
+function applyOrbFilter(query) {
+  const q = query.trim().toLowerCase();
+  const bubbles = Array.from(document.querySelectorAll('#orb-bubbles .orb-bubble'));
+  const matches = [];
+  for (const btn of bubbles) {
+    const id = btn.dataset.panel;
+    const title = PANEL_DEFAULTS[id].title.toLowerCase();
+    const isMatch = !q || id.toLowerCase().includes(q) || title.includes(q);
+    btn.classList.toggle('orb-filtered-out', !isMatch);
+    btn.classList.toggle('orb-filtered-match', isMatch && q.length > 0);
+    if (isMatch) matches.push(btn);
+  }
+  return matches;
+}
+
 function openOrbLauncher() {
   renderOrbBubbles();
   updateCurrentProjectName();
   const overlay = document.getElementById('orb-overlay');
   overlay.classList.add('open');
   document.getElementById('orb-launcher').setAttribute('aria-expanded', 'true');
+  const filter = document.getElementById('orb-filter');
+  filter.value = '';
+  applyOrbFilter('');
+  // Deferred one tick -- the same real fix already learned this session for
+  // the Keyboard Shortcuts dialog's own Close button: focusing synchronously
+  // during the same click/Enter that opened this can interact with that
+  // event's own trailing native handling. An <input> has no "Enter
+  // activates me" native behavior the way a <button> does, but the defer
+  // costs nothing and keeps the same safe pattern everywhere focus is
+  // grabbed right as an overlay opens.
+  setTimeout(() => filter.focus(), 0);
 }
 
 function closeOrbLauncher() {
@@ -1507,10 +1566,24 @@ function closeOrbLauncher() {
 function initOrbLauncher() {
   const btn = document.getElementById('orb-launcher');
   const overlay = document.getElementById('orb-overlay');
+  const filter = document.getElementById('orb-filter');
   btn.addEventListener('click', () => {
     if (overlay.classList.contains('open')) closeOrbLauncher(); else openOrbLauncher();
   });
   overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeOrbLauncher(); });
+  filter.addEventListener('input', () => applyOrbFilter(filter.value));
+  filter.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    // Real "don't guess" discipline, same as resolvePanelName's own ambiguous
+    // case: opens only when the typed text has narrowed things to exactly
+    // one real panel. Zero or several real matches do nothing rather than
+    // picking one for you.
+    const matches = applyOrbFilter(filter.value);
+    if (matches.length === 1) {
+      showPanel(matches[0].dataset.panel);
+      closeOrbLauncher();
+    }
+  });
 }
 
 // When the main window is resized (larger or smaller), any visible panel that
@@ -4480,12 +4553,26 @@ function initProcessPrompt() {
   // Real operator ask: Ctrl+C also closes the orb launcher ("um den Punkt zu
   // entspannen"). Deliberately scoped to ONLY fire while the launcher is
   // actually open -- Ctrl+C's own native browser meaning (copy selected
-  // text) must never be intercepted anywhere else in the app. Safe even
-  // then: the launcher's own overlay already captures all pointer events
-  // while open (see .orb-overlay.open{pointer-events:auto}), so there's no
-  // real "copy text from the page behind it" case this could break.
+  // text) must never be intercepted anywhere else in the app. Originally
+  // safe on that reasoning alone (the overlay used to have no real text
+  // input and already captures all pointer events while open) -- the
+  // launcher's own real filter input (added the same day, autofocused the
+  // instant the launcher opens) changed that: most real opens now land
+  // focus straight in a text field. A blanket "never fire while any input
+  // has focus" guard would make Ctrl+C effectively dead for its own stated
+  // purpose, since that's now the common case, not the exception -- so this
+  // checks for a real, actual text SELECTION in the focused field instead
+  // of just "is a field focused." An empty/no-selection field (the normal
+  // case right after opening) still closes on Ctrl+C; genuinely selected
+  // text (the one case where Ctrl+C means "copy this") is left alone.
   document.addEventListener('keydown', (e) => {
     if (!(e.ctrlKey && e.key.toLowerCase() === 'c')) return;
+    const active = document.activeElement;
+    const hasRealSelection =
+      active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')
+        ? active.selectionStart !== active.selectionEnd
+        : !!(window.getSelection && String(window.getSelection()));
+    if (hasRealSelection) return;
     const orb = document.getElementById('orb-overlay');
     if (orb && orb.classList.contains('open')) {
       e.preventDefault();
