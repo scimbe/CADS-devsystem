@@ -2068,4 +2068,19 @@ four sites with three genuinely-blank variants plus a real-content control. Herm
 running container (empty rejected, real content still accepted). Stress-harness check [27] added
 (`CADS-devsystem@82c53f4`), 57/57 assertions passing locally.
 
+**Main-dev-loop firing, 2026-08-06 (s) -- closing out the "empty free-text content" sweep, not just
+fixing custom panels and stopping**: same discipline as the earlier `.find()` sweep closures -- after
+finding one real instance (custom panels), checked every other real "submit free text" entry point
+in the codebase individually rather than assuming custom panels was the only one:
+- `propose_issue` -- already correctly checks `title.is_empty() || issue_body.is_empty()`.
+- `add_rag_document` -- already correctly checks `body.text.trim().is_empty()`.
+- `ask_assistant` -- already correctly checks `body.instruction.trim().is_empty()`.
+- `set_repo_url` -- already validated (rejects non-`https` values, per its own existing test).
+- `add_backlog_item` / `add_milestone` -- both already reject empty text, per their own existing
+  tests.
+No new external signal either (issues #13/#14 unchanged, no reply yet on any of the three open
+`CADS-Tunnel#382` checkpoints, `webconference-android` still correctly untouched). Confirmed the
+sweep is genuinely complete rather than assuming it was after the one fix -- no new gap found,
+reported honestly.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
