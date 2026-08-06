@@ -625,9 +625,23 @@ pub fn qualifying_review_evidence(state: &RunState, index: usize) -> Result<(), 
              Submit one first."
         ));
     }
+    // The stress test's fifteenth real run (#382 goal doc §8, 2026-08-06): a
+    // single review iteration can name an arbitrary number of requirements at
+    // once via requirement_indices, but the length/distinct-word bars were
+    // fixed constants regardless -- live-verified before this fix, one
+    // generic "reviewed all of these, everything looks correct" iteration
+    // (21 distinct words, comfortably clearing the flat 8-word bar) named
+    // five completely unrelated requirements at once and satisfied the gate
+    // for every one of them. The bar now scales with how many requirements a
+    // single review claims to cover -- the same real per-requirement bar
+    // applies that many times over, not once for the whole batch. A
+    // genuinely thorough multi-requirement review naturally clears this (real
+    // per-requirement observations accumulate real distinct content); a
+    // shotgun "LGTM, checked everything" does not.
     let long_enough = |r: &&IterationRecord| {
         let trimmed = r.feedback.trim();
-        trimmed.chars().count() >= MIN_REVIEW_FEEDBACK_LEN && distinct_word_count(trimmed) >= MIN_REVIEW_DISTINCT_WORDS
+        let claimed = r.requirement_indices.len().max(1);
+        trimmed.chars().count() >= MIN_REVIEW_FEEDBACK_LEN * claimed && distinct_word_count(trimmed) >= MIN_REVIEW_DISTINCT_WORDS * claimed
     };
     let reused_verbatim_elsewhere = |r: &&IterationRecord| {
         let trimmed = r.feedback.trim();
@@ -649,15 +663,27 @@ pub fn qualifying_review_evidence(state: &RunState, index: usize) -> Result<(), 
             ));
         }
         let best = reviews.iter().max_by_key(|r| (r.feedback.trim().chars().count(), distinct_word_count(r.feedback.trim()))).unwrap();
+        let claimed = best.requirement_indices.len().max(1);
+        let scale_note = if claimed > 1 {
+            format!(
+                " (this iteration names {claimed} requirements at once via requirement_indices, so the \
+                 real bar for it is {claimed}x the usual minimum -- the same real per-requirement bar \
+                 applies that many times over, not once for the whole batch)"
+            )
+        } else {
+            String::new()
+        };
         return Err(format!(
             "requirement {index} cannot be marked verified yet -- every devsystem.review iteration \
              addressing it is too short or too repetitive to plausibly be real scrutiny (best is \
-             iteration {}, {} character(s) and {} distinct word(s); minimum {MIN_REVIEW_FEEDBACK_LEN} \
-             characters AND {MIN_REVIEW_DISTINCT_WORDS} distinct words). A rubber-stamp or padded \
-             filler review doesn't satisfy this gate.",
+             iteration {}, {} character(s) and {} distinct word(s); minimum {} characters AND {} \
+             distinct words{scale_note}). A rubber-stamp, padded filler, or generic shotgun review \
+             doesn't satisfy this gate.",
             best.iteration,
             best.feedback.trim().chars().count(),
             distinct_word_count(best.feedback.trim()),
+            MIN_REVIEW_FEEDBACK_LEN * claimed,
+            MIN_REVIEW_DISTINCT_WORDS * claimed,
         ));
     }
     Ok(())
@@ -1124,6 +1150,59 @@ mod tests {
         });
         toggle_requirement(&spec, &mut state, 1).unwrap();
         assert!(state.requirements[1].verified);
+    }
+
+    #[test]
+    /// The stress test's fifteenth real run (#382 goal doc §8, 2026-08-06): a
+    /// single review naming many requirements at once used to clear the same
+    /// flat length/distinct-word bar as a review naming just one -- live-
+    /// verified before this fix, one generic "reviewed all of these" iteration
+    /// (21 distinct words, comfortably past the flat 8-word bar) named five
+    /// unrelated requirements at once and satisfied the gate for all five.
+    fn a_shotgun_review_naming_many_requirements_needs_proportionally_more_substance() {
+        let spec = full_spec("run-shotgun", None);
+        let mut state = RunState::new("run-shotgun");
+        for i in 0..5 {
+            state.requirements.push(Requirement {
+                statement: format!("WHEN a user does action {i}, THE SYSTEM SHALL handle it correctly"),
+                acceptance_criteria: vec![format!("a real checkable criterion for case {i}")],
+                verified: false,
+                verified_criteria: Vec::new(),
+                auto_judge: false,
+                proposed_by: None,
+            });
+        }
+
+        // The exact real generic text the stress test's live round trip used --
+        // 21 distinct words, clears the OLD flat 8-word bar easily, but must
+        // not clear the new bar scaled by 5 requirements claimed at once.
+        state.history.push(IterationRecord {
+            run_id: "run-shotgun".into(),
+            stage: "devsystem.review".into(),
+            iteration: 1,
+            feedback: "Reviewed all of these carefully, checked the real implementation against each one, everything looks correct and matches expectations on device testing today.".into(),
+            succeeded: true,
+            proposals: vec![],
+            requirement_indices: vec![0, 1, 2, 3, 4],
+        });
+        let err = toggle_requirement(&spec, &mut state, 4).expect_err("a generic shotgun review of five requirements must not satisfy the gate for any of them");
+        assert!(err.contains("5 requirements at once"), "the error must explain the real reason: {err}");
+        assert!(!state.requirements[4].verified);
+
+        // The identical requirement_indices set, but with real, genuinely
+        // substantive per-requirement observations -- naturally clears the
+        // scaled bar, and must satisfy the gate.
+        state.history.push(IterationRecord {
+            run_id: "run-shotgun".into(),
+            stage: "devsystem.review".into(),
+            iteration: 2,
+            feedback: "Checked action 0: handles a null input gracefully, confirmed via a real unit test. Checked action 1: retries with real exponential backoff, confirmed in the logs. Checked action 2: persists correctly across a real app restart. Checked action 3: the real UI updates within one frame. Checked action 4: cancels the real in-flight request cleanly with no leak.".into(),
+            succeeded: true,
+            proposals: vec![],
+            requirement_indices: vec![0, 1, 2, 3, 4],
+        });
+        toggle_requirement(&spec, &mut state, 4).unwrap();
+        assert!(state.requirements[4].verified);
     }
 
     #[test]
