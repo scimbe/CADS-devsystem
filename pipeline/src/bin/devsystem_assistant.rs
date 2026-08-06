@@ -568,10 +568,26 @@ fn ask_llm(instruction: &str, system_prompt: &str) -> Result<LlmReply, String> {
 /// risk exactly the "attribute the wrong requirement" outcome this was built
 /// to avoid. Sorted + deduped since a single exchange can legitimately touch
 /// the same requirement twice (e.g. toggling two of its acceptance criteria).
-fn requirement_indices_touched(actions: &[Action]) -> Vec<usize> {
+///
+/// Real stress-test finding (#382 goal doc §8, twenty-third run, 2026-08-06):
+/// this originally ran on `actions` alone, before `apply_actions` resolved
+/// success/failure -- so an LLM that *emitted* `ToggleRequirement{index: 5}`
+/// for a requirement that doesn't exist got that index attributed here
+/// regardless of whether the real server call behind it actually succeeded.
+/// Live-confirmed: asked the real assistant to toggle acceptance criterion #7
+/// of requirement #0 (real requirement, real out-of-range criterion) -- a
+/// real `404`, and the exchange still got attributed to requirement #0's
+/// decision basis, exactly the "wrong decision basis" outcome this whole
+/// feature exists to avoid. `results` (parallel to `actions`, same order --
+/// `apply_actions` is a straight `.map()`) is now threaded through so only
+/// an action whose own real result did NOT start with `apply_action`'s own
+/// `"FAILED to "` prefix contributes its index.
+fn requirement_indices_touched(actions: &[Action], results: &[String]) -> Vec<usize> {
     let mut indices: Vec<usize> = actions
         .iter()
-        .filter_map(|a| match a {
+        .zip(results)
+        .filter(|(_, result)| !result.starts_with("FAILED to "))
+        .filter_map(|(a, _)| match a {
             Action::ToggleRequirement { index } => Some(*index),
             Action::ToggleAcceptanceCriterion { requirement_index, .. } => Some(*requirement_index),
             _ => None,
@@ -586,8 +602,8 @@ fn ask(api_base: &str, run_id: &str, instruction: &str) -> Result<(LlmReply, Vec
     let context = fetch_context(api_base, run_id)?;
     let mut reply = ask_llm(instruction, &build_system_prompt(&context))?;
     let (display_text, actions, parse_error) = extract_actions(&reply.text);
-    let requirement_indices = requirement_indices_touched(&actions);
     let results = apply_actions(api_base, run_id, &actions);
+    let requirement_indices = requirement_indices_touched(&actions, &results);
     reply.text = render_reply_with_action_results(&display_text, &results, parse_error.as_deref());
     Ok((reply, requirement_indices))
 }
@@ -1240,8 +1256,9 @@ mod tests {
             Action::ToggleAcceptanceCriterion { requirement_index: 2, criterion_index: 1 },
             Action::AddRequirement { statement: "WHEN x, THE SYSTEM SHALL y".to_string(), acceptance_criteria: vec!["z".to_string()] },
         ];
+        let results = vec!["done: x".to_string(), "done: x".to_string(), "done: x".to_string(), "done: x".to_string(), "done: x".to_string()];
         assert_eq!(
-            requirement_indices_touched(&actions),
+            requirement_indices_touched(&actions, &results),
             vec![0, 2],
             "must include only ToggleRequirement/ToggleAcceptanceCriterion's real indices, deduped and sorted -- never a guessed index for AddRequirement's brand-new one"
         );
@@ -1249,8 +1266,35 @@ mod tests {
 
     #[test]
     fn requirement_indices_touched_is_empty_for_a_purely_advisory_or_non_requirement_reply() {
-        assert!(requirement_indices_touched(&[]).is_empty());
-        assert!(requirement_indices_touched(&[Action::AddMilestone { description: "x".to_string() }]).is_empty());
+        assert!(requirement_indices_touched(&[], &[]).is_empty());
+        assert!(requirement_indices_touched(&[Action::AddMilestone { description: "x".to_string() }], &["done: x".to_string()]).is_empty());
+    }
+
+    #[test]
+    /// Real stress-test finding, twenty-third run, 2026-08-06: a real, live
+    /// exchange asked the assistant to toggle acceptance criterion #7 of a
+    /// requirement whose real acceptance-criteria list only has one entry --
+    /// the real server call FAILED (404), but before this fix the index still
+    /// got attributed, showing a wrong decision basis on a requirement
+    /// nothing actually happened to.
+    fn requirement_indices_touched_excludes_an_index_whose_real_action_failed() {
+        let actions = vec![Action::ToggleAcceptanceCriterion { requirement_index: 0, criterion_index: 7 }];
+        let results = vec!["FAILED to toggle requirement #0's acceptance criterion #7: HTTP 404 Not Found: requirement 0 has no acceptance criterion at index 7".to_string()];
+        assert!(
+            requirement_indices_touched(&actions, &results).is_empty(),
+            "a real 404 must never attribute the chat exchange to a requirement nothing actually happened to"
+        );
+    }
+
+    #[test]
+    fn requirement_indices_touched_still_includes_indices_from_actions_that_succeeded_alongside_a_failed_one() {
+        let actions = vec![Action::ToggleRequirement { index: 0 }, Action::ToggleRequirement { index: 9 }];
+        let results = vec!["done: toggle requirement #0".to_string(), "FAILED to toggle requirement #9: HTTP 404 Not Found: no such requirement".to_string()];
+        assert_eq!(
+            requirement_indices_touched(&actions, &results),
+            vec![0],
+            "a real failure on one action must not discard attribution for a different action that genuinely succeeded"
+        );
     }
 
     #[test]
