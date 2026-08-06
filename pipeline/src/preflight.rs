@@ -63,7 +63,53 @@ pub fn preflight_annotations(state: &RunState) -> Vec<RiskAnnotation> {
     if let Some(a) = checkin_cadence_effectively_disabled(state) {
         findings.push(a);
     }
+    if let Some(a) = vague_acceptance_criteria(state) {
+        findings.push(a);
+    }
     findings
+}
+
+/// A criterion at or above this many distinct words is treated as specific
+/// enough to leave a real, checkable constraint -- deliberately much lower
+/// than `MIN_REVIEW_DISTINCT_WORDS` (a whole review's worth of prose, not one
+/// short EARS-style clause). Crude, honestly-scoped proxy, same convention as
+/// every other mechanical check here: a genuinely specific-but-terse criterion
+/// ("file exists") can still false-positive, and a genuinely vague-but-wordy
+/// one ("the feature behaves as expected across all reasonable cases") can
+/// still slip through -- not claimed comprehensive, same as
+/// `DEFECT_ADMISSION_PHRASES`/`SECURITY_KEYWORDS` above.
+const MIN_ACCEPTANCE_CRITERION_DISTINCT_WORDS: usize = 3;
+
+/// Real gap named directly in the goal doc's own §4.3 -- the *second* explicit
+/// worked example of what a real `devsystem.process_improve` check should
+/// catch: "this role's acceptance criteria are too vague to be deterministic"
+/// (§1's own commitment: "acceptance criteria specific enough to leave no real
+/// decision to the LLM"). `add_requirement`'s own `MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS`
+/// gate (`web/src/main.rs`) already rejects the worst cases at add-time
+/// ("ok", ".", an invisible character) -- but a criterion like "works" or "is
+/// fast" clears that 5-alphanumeric-character bar while still leaving a real
+/// decision to the LLM, exactly what §1 says this project is trying to avoid.
+/// This is the complementary, existing-requirement-scanning half: not a hard
+/// block (some real criteria are legitimately short), an advisory risk a
+/// human reviewing this run's own Risks panel would want to see.
+fn vague_acceptance_criteria(state: &RunState) -> Option<RiskAnnotation> {
+    for (i, r) in state.requirements.iter().enumerate() {
+        for (ci, c) in r.acceptance_criteria.iter().enumerate() {
+            if distinct_word_count(c) < MIN_ACCEPTANCE_CRITERION_DISTINCT_WORDS {
+                return Some(RiskAnnotation {
+                    label: "acceptance criteria too vague to be deterministic".into(),
+                    evidence: format!(
+                        "requirement #{i}'s acceptance criterion #{ci} (\"{c}\") has fewer than \
+                         {MIN_ACCEPTANCE_CRITERION_DISTINCT_WORDS} distinct words -- goal doc §1's own \
+                         commitment (\"acceptance criteria specific enough to leave no real decision to \
+                         the LLM\") needs more than a short label to actually constrain what a \
+                         role-filler builds"
+                    ),
+                });
+            }
+        }
+    }
+    None
 }
 
 /// Real gap named directly in the goal doc's own §4.3 -- an explicit worked
@@ -605,5 +651,49 @@ mod tests {
             state.history.push(iteration("devsystem.android_native_bridge", i, "real work", vec![]));
         }
         assert!(process_annotations(&spec, &state).is_empty(), "full_spec declares review -- must not flag a run that already has it");
+    }
+
+    fn requirement(statement: &str, criteria: Vec<&str>) -> crate::runner::Requirement {
+        crate::runner::Requirement {
+            statement: statement.into(),
+            acceptance_criteria: criteria.into_iter().map(String::from).collect(),
+            verified: false,
+            verified_criteria: Vec::new(),
+            auto_judge: false,
+            proposed_by: None,
+        }
+    }
+
+    #[test]
+    /// Real gap named directly in the goal doc's own §4.3 -- the second
+    /// worked example, "this role's acceptance criteria are too vague to be
+    /// deterministic". "works" clears add_requirement's own
+    /// MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS gate (5 alphanumeric characters)
+    /// but leaves the actual behavior entirely to the LLM's own judgment.
+    fn flags_a_requirement_with_a_too_vague_acceptance_criterion() {
+        let mut state = RunState::new("run-preflight");
+        state.requirements.push(requirement("WHEN a user sends a message, THE SYSTEM SHALL deliver it", vec!["works"]));
+        let findings = preflight_annotations(&state);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].label, "acceptance criteria too vague to be deterministic");
+        assert!(findings[0].evidence.contains("requirement #0"));
+        assert!(findings[0].evidence.contains("criterion #0"));
+    }
+
+    #[test]
+    fn does_not_flag_a_genuinely_specific_acceptance_criterion() {
+        let mut state = RunState::new("run-preflight");
+        state.requirements.push(requirement("WHEN a user sends a message, THE SYSTEM SHALL deliver it", vec!["message arrives at the peer"]));
+        assert!(preflight_annotations(&state).is_empty());
+    }
+
+    #[test]
+    fn flags_the_first_vague_criterion_even_when_a_later_one_in_a_different_requirement_is_fine() {
+        let mut state = RunState::new("run-preflight");
+        state.requirements.push(requirement("WHEN x, THE SYSTEM SHALL y", vec!["message arrives at the peer"]));
+        state.requirements.push(requirement("WHEN a, THE SYSTEM SHALL b", vec!["is fast"]));
+        let findings = preflight_annotations(&state);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].evidence.contains("requirement #1"), "must name the real requirement that's actually vague, not the first one checked");
     }
 }
