@@ -2344,4 +2344,29 @@ harness check [29] added (`CADS-devsystem@fc99582`), 62/62 assertions passing lo
 Actions/Pages incident checked again -- still `major_outage` -- continuing to rely on local
 hermetic + live verification.
 
+**Main-dev-loop firing, 2026-08-06 (hh) -- a thorough sweep of the remaining unaudited panels,
+honestly reported clean**: no new operator input on any of the three open `CADS-Tunnel#382`
+checkpoints; issues #13/#14 and `webconference-android` unchanged; GitHub's incident still
+`major_outage` on Actions/Pages (its `API Requests` component, notably, is `operational` --
+relevant since it's the one this project's own Code panel calls directly from the browser).
+DAU-audited three areas not yet individually checked this session:
+- **The Code panel's own `parseGithubRepo`/`loadCommits`** -- already correctly handles trailing
+  slashes and extra path segments, a `.git` suffix, non-`github.com` hostnames, malformed URLs
+  (try/catch), HTTP failures (`res.ok` check with a specific 403-rate-limit note), and network
+  failures (a real `catch` surfacing `e.message`) -- all commit fields correctly `escapeHtml`'d.
+  Deliberately on-demand rather than auto-fetched, respecting GitHub's real unauthenticated rate
+  limit, per its own existing doc comment.
+- **The Assistant Usage panel's zero-calls state** -- already correct: a clean "No
+  devsystem.assistant calls yet" message, every numeric field defensively defaulted, real
+  `toLocaleString()`/`toFixed(4)` formatting.
+- **The real flagship run's own current live state** -- re-checked fresh: still exactly 5 known
+  risks, still correctly paused with no reason recorded (matches the historical-data explanation
+  already documented), still the same 3 stalled stages -- no drift, nothing new.
+No new gap found in any of the three; reported honestly as a thorough, clean investigation rather
+than manufacturing a change to fill the slot. This may be a reasonable point to note that the
+"missing validation/silent-bad-outcome" class of gap this session has been finding all day appears
+to be genuinely exhausted across the areas checked -- future firings may need to look toward a
+different kind of increment (the still-open hard-block decision on #382, or real progress on the
+Android build once the M1 checkpoint is answered) rather than continuing the same sweep pattern.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
