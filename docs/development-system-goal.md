@@ -2812,4 +2812,12 @@ trustworthy label a human relies on to decide who to trust with a role. Fixed bo
 regression test, 188/188 web tests (was 187), hermetic clippy clean. Deployed and live-verified
 against the real redeployed container.
 
+**Docs-loop firing, 2026-08-06 (ccc) -- documented firing (bbb)'s fill-mode bidi fix**:
+`CADS-devsystem-docs` extended `set-auto-refresh-and-fill-mode.md` with two real screenshots -- the
+scrambled label as typed (visual deception before submission), and the real rejection message after
+(`CADS-devsystem-docs@032540f`). Hermetically built clean; verified the cross-link to
+`requirements-and-automode` resolves. No new operator input on any of the three open `#382`
+checkpoints; GitHub's incident still `major_outage` per the status page; live docs site continues
+serving correctly (spot-checked again).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
