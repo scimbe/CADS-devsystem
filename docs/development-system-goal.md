@@ -555,6 +555,39 @@ pre-existing false-positive from before this fix -- it has zero requirements def
 to find; reported that honestly rather than fabricating a finding. Thirteen real stress-test runs,
 thirteen real gaps found and closed.
 
+**The stress test's fourteenth real run, 2026-08-06, a DAU-lens finding on the assistant itself**:
+went after `auto_judge` (§4.3's automode flag) directly, rather than a role-filler proposal or a
+requirement's content. Three live tests against the real deployment, same requirement/evidence
+shape each time, only the flag's value and the chat instruction wording varied: (1) `auto_judge:
+true`, asked to "judge and verify if it passes" -- the assistant genuinely verified the requirement
+and both acceptance criteria, based entirely on the implementer's own unverified feedback text (no
+independent `devsystem.test` iteration, no real device evidence beyond prose); (2) the same shape but
+with a `devsystem.review` role declared (still no real review iteration) -- the assistant correctly
+declined, citing the missing independent evidence; (3) `auto_judge` left at its default `false`,
+automode never mentioned, the same plain "please judge and verify" -- the assistant declined again,
+identical reasoning to (2). The flag's true/false value did not predict the outcome; the LLM's own
+read of the instruction framing and available evidence did -- confirmed directly against
+`pipeline/src/bin/devsystem_assistant.rs`, which never reads `auto_judge` anywhere at all. That means
+the GUI's own checkbox, labeled "let the assistant judge this one," was claiming a capability
+distinction that has never existed: the assistant can already be asked, in a plain chat message, to
+verify any requirement's criteria on any run, whether or not the box is checked. Fixed the honest,
+bounded piece this firing: the checkbox and its tooltip no longer claim the flag changes anything
+(`CADS-devsystem@2159a9b`) -- matches this codebase's `requirements-and-automode.md` own longstanding
+claim ("setting it only authorizes future judgment... doesn't perform any judgment itself yet"),
+except that claim itself needs its own correction, since live test (1) proves the assistant already
+*can* perform real judgment and real verification writes today, just not gated by this flag at all.
+
+**Deliberately NOT fixed this firing, named honestly rather than half-solved**: on a run that never
+declares `review` (gap #2's own mandatory gate only applies once a run opts in -- most runs, by
+default), there is currently no mechanical bar at all against the assistant being talked into
+verifying a requirement from nothing but the implementer's own prose, in a plain chat request --
+exactly the "soft, ignorable, no real review" pattern the mandatory review gate itself was built to
+close for the human-click path. Distinguishing an assistant-driven verification from a human's own
+direct click, and holding the former to the same real evidentiary bar (independent test/review
+iteration, not self-report) the review gate already enforces, is real, separate, still-open work --
+not attempted here, and not safe to claim solved by a label change alone. Fourteen real stress-test
+runs, fourteen real gaps found (thirteen closed, one honestly still open).
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
@@ -732,5 +765,23 @@ thirteen real gaps found and closed.
    (report the real ceiling distance), not just papered over with the new risk annotation. Re-
    verified live against the exact run used to prove both bugs: three correct verdicts where there
    were none or wrong ones before, no resubmission needed.
+10. **A real evidentiary gate on assistant-driven requirement verification** (§4.3/§8, found by the
+    stress test's fourteenth run, 2026-08-06) — today, `devsystem.assistant` can be asked in a plain
+    chat message to verify any requirement's acceptance criteria on any run, and will sometimes
+    genuinely do so (a real `ToggleRequirement`/`ToggleAcceptanceCriterion` write, not just talk)
+    based purely on the implementer's own self-reported feedback text, with zero independent
+    evidence and zero mechanical bar -- the exact "soft, ignorable, no real review" pattern gap #2's
+    mandatory review gate exists to close for the human-click path, left completely open for the
+    chat path on any run that hasn't declared `review` (most runs, by default). `auto_judge` itself
+    is not the fix -- confirmed live it's never read anywhere in `devsystem_assistant.rs`, so it
+    can't be the gate either; its GUI label was corrected to stop implying otherwise
+    (`CADS-devsystem@2159a9b`), but that's an honesty fix, not a functional one. The real fix needs
+    two real pieces neither of which exists yet: (a) a way to actually distinguish an
+    assistant-relayed verification from a human's own direct click at the point `ToggleRequirement`/
+    `ToggleAcceptanceCriterion` is called (today both paths hit the identical endpoint,
+    indistinguishable server-side), and (b) holding the assistant-driven path to the same real
+    evidentiary bar the review gate already enforces for a human's (an independent `devsystem.test`/
+    `devsystem.review` iteration, not the implementer's own prose). Sized as its own increment, not
+    assumed away or half-solved by relabeling a checkbox.
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).
