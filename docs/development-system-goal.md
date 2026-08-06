@@ -1922,4 +1922,25 @@ problems named in the single `400` body). Stress-harness check [24] added
 (`CADS-devsystem@acb324b`), 50/50 assertions passing locally and confirmed green in the real GitHub
 Actions run against the deployed Docker image (`docker build`, containerized stress test, both green).
 
+**Goal-driven-loop firing, 2026-08-06 (l) -- extending firing (k)'s sweep past `web/main.rs` into
+`pipeline/src/lib.rs` itself**: the same "does this hide multiple real, distinct, independently-
+actionable instances" lens, applied once more after (k) closed out its own file. Found one real
+instance: `validate_proposals(proposals: &[StageProposal])` -- the shared gate for a role-filler's
+own embedded stage proposals, called from every real entry point (`web/src/main.rs`,
+`devsystem_iterate.rs`) with a genuine batch, not a single-element convenience wrapper -- ran the
+identical `.find()`-stops-at-first shape for its two checks (empty stage_id/tag/rationale; units out
+of bounds). Live-confirmed before fixing: a real iteration with one proposal missing all three text
+fields AND a second with `units: 0` only ever named the first; the second stayed invisible until a
+resubmit. Same severity class as (k) -- this path applies immediately with no human review gate at
+all, so the retry-friction cost falls on nobody but the careless role-filler itself, but it's still a
+real, avoidable round-trip. Fixed (`CADS-devsystem@48812ad`) the identical way: both `.find()` blocks
+replaced with one `.filter_map()` pass collecting every bad proposal's description into one `Err`.
+No test depended on the old message text. New regression test
+(`validate_proposals_reports_every_bad_proposal_in_one_batch_not_just_the_first`); hermetic pipeline
+suite 111/111 (was 110, no regressions), hermetic web suite (depends on this function) 178/178
+unaffected, hermetic clippy clean. Deployed, live-verified against the real running container (both
+the empty-field proposal and the zero-units proposal named in the one `400` body). Stress-harness
+check [25] added (`CADS-devsystem@0335802`), 52/52 assertions passing locally; real GitHub Actions
+CI confirmed green for both commits.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
