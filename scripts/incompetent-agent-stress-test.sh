@@ -172,6 +172,20 @@ check "a succeeded iteration's own defect-admission language is flagged as a rea
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$defect_run"
 
 echo
+echo "[12] a later, bounded re-proposal for the same stage must clear an earlier unbounded one's risk"
+lw_run="${RUN}-latest-wins-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$lw_run\"}"
+prop1_id=$(curl -s -X POST "$BASE/api/runs/$lw_run/stages/propose" -H 'content-type: application/json' -d '{"stage_id":"devsystem.latest_wins_probe","tag":"lw_probe","rationale":"probe","use_existing_service":null,"units":1,"price_ceiling":null}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' 2>/dev/null)
+curl -s -o /dev/null -X POST "$BASE/api/runs/$lw_run/stages/proposals/$prop1_id/approve"
+risk_before=$(curl -s "$BASE/api/runs/$lw_run" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if any(r["label"]=="no price ceiling set" for r in d["risks"]) else "no")' 2>/dev/null)
+check "the unbounded proposal is flagged before any fix attempt" "yes" "$risk_before"
+prop2_id=$(curl -s -X POST "$BASE/api/runs/$lw_run/stages/propose" -H 'content-type: application/json' -d '{"stage_id":"devsystem.latest_wins_probe","tag":"lw_probe","rationale":"a real fix, real ceiling this time","use_existing_service":null,"units":1,"price_ceiling":50}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' 2>/dev/null)
+curl -s -o /dev/null -X POST "$BASE/api/runs/$lw_run/stages/proposals/$prop2_id/approve"
+risk_after=$(curl -s "$BASE/api/runs/$lw_run" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if any(r["label"]=="no price ceiling set" for r in d["risks"]) else "no")' 2>/dev/null)
+check "re-proposing the SAME stage with a real price_ceiling clears the risk (regression guard for runs 25-27's own saga)" "no" "$risk_after"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$lw_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
