@@ -49,6 +49,22 @@ ENV CARGO_TARGET_DIR=/work/target
 # channel client: No such file or directory" the moment DOCUMENT_EXTRACTION_*
 # was ever fully configured, since the binary genuinely didn't exist in the
 # container. Same fix shape as github_issue_channel_client below.
+# Real gap found live (2026-08-06, mutation-testing the incompetent-agent
+# stress harness): the cache mounts below are keyed to THIS Dockerfile, not to
+# any one invocation of it -- shared by EVERY real `docker build -f
+# web/Dockerfile` on this host, including a throwaway scratch/mutation-test
+# build that has nothing to do with a real deploy. `scripts/deploy-devsystem-
+# web.sh`'s own `flock` only serializes concurrent invocations of *itself* --
+# it does nothing to protect this shared cache from an unrelated ad-hoc
+# `docker build` racing it. Live-confirmed the real failure mode directly: two
+# plain, sequential (not even concurrent) scratch `docker build`s for a
+# mutation test served a binary that `strings`-checking proved was missing
+# `duplicate_of_last_iteration` entirely -- a real feature already merged and
+# deployed days earlier -- silently stale, no error, no warning. Any ad-hoc
+# build of this Dockerfile for anything other than a real, intended deploy
+# MUST pass `--no-cache`, full stop -- the speed this cache buys is not worth
+# a silently-stale binary being mistaken for a true result, in a deploy or in
+# an investigation.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/work/target \
     cargo build --release --manifest-path web/Cargo.toml --jobs 1 \
