@@ -6,7 +6,7 @@
 //! do by hand.
 
 use crate::runner::{distinct_word_count, RunState};
-use crate::{STAGE_IMPLEMENT, STAGE_REVIEW, STAGE_TEST};
+use crate::{contains_bidi_control_char, STAGE_IMPLEMENT, STAGE_REVIEW, STAGE_TEST};
 use ct_common::pipeline::PipelineSpec;
 
 /// Same real, mechanical substance bars `runner.rs`'s review gate uses
@@ -63,6 +63,7 @@ pub fn preflight_annotations(state: &RunState) -> Vec<RiskAnnotation> {
         findings.push(a);
     }
     findings.extend(vague_acceptance_criteria(state));
+    findings.extend(historical_bidi_control_character(state));
     findings
 }
 
@@ -114,6 +115,65 @@ fn vague_acceptance_criteria(state: &RunState) -> Vec<RiskAnnotation> {
                 });
             }
         }
+    }
+    findings
+}
+
+/// Defense-in-depth for the bidi-control-character (Trojan Source,
+/// CVE-2021-42574) class closed at every real write-time entry point this
+/// session (#382 goal doc §8, 2026-08-06: requirement statement/criteria, milestones,
+/// backlog, custom-panel title, stage-proposal rationale). Those fixes only
+/// guard *new* writes -- they can't retroactively clean data already
+/// persisted before they shipped, and they'd say nothing about a future field
+/// that adds free text without remembering this check. A real, live audit of
+/// every production `state.json` this repo actually has (110 files) found
+/// zero contamination, but "audited once and found clean" isn't the same
+/// guarantee as "structurally can't happen again" -- this is the same
+/// mechanical-check discipline this whole file already applies to other
+/// process gaps, seeded into the canvas session so a human sees it without
+/// having to think to look. Deliberately scoped to the exact same fields the
+/// write-time fixes cover, not `feedback` or panel `html` (the latter is
+/// untrusted-by-design and sandboxed, same reasoning as the write-time fix).
+fn historical_bidi_control_character(state: &RunState) -> Vec<RiskAnnotation> {
+    let mut findings = Vec::new();
+    let mut flag = |field: String, text: &str| {
+        if contains_bidi_control_char(text) {
+            findings.push(RiskAnnotation {
+                label: "stored text contains a Unicode bidi control character".into(),
+                evidence: format!(
+                    "{field} contains a bidi control character (e.g. a right-to-left override) -- its \
+                     displayed text may not match what's actually stored; this predates the write-time \
+                     gate that now rejects new occurrences, or arrived before this specific field was covered"
+                ),
+            });
+        }
+    };
+    for (i, r) in state.requirements.iter().enumerate() {
+        flag(format!("requirement #{i}'s statement"), &r.statement);
+        for (ci, c) in r.acceptance_criteria.iter().enumerate() {
+            flag(format!("requirement #{i}'s acceptance criterion #{ci}"), c);
+        }
+    }
+    for (i, m) in state.milestones.iter().enumerate() {
+        flag(format!("milestone #{i}'s description"), &m.description);
+    }
+    for (i, b) in state.backlog.iter().enumerate() {
+        flag(format!("backlog item #{i}'s text"), &b.text);
+    }
+    for p in &state.custom_panels {
+        flag(format!("custom panel {:?}'s title", p.id), &p.title);
+    }
+    for p in &state.pending_panel_proposals {
+        flag(format!("pending panel proposal {:?}'s title", p.id), &p.title);
+    }
+    for p in &state.pending_panel_edit_proposals {
+        flag(format!("pending panel edit proposal {:?}'s new_title", p.id), &p.new_title);
+    }
+    for p in &state.pending_stage_proposals {
+        flag(format!("pending stage proposal {:?}'s rationale", p.id), &p.proposal.rationale);
+    }
+    for p in &state.approved_stage_proposals {
+        flag(format!("approved stage proposal for {:?}'s rationale", p.stage_id), &p.rationale);
     }
     findings
 }
@@ -1040,5 +1100,74 @@ mod tests {
         assert_eq!(vague.len(), 2, "both genuinely vague criteria must be flagged, not just the first: {findings:?}");
         assert!(vague.iter().any(|f| f.evidence.contains("requirement #0")));
         assert!(vague.iter().any(|f| f.evidence.contains("requirement #1")));
+    }
+
+    #[test]
+    /// Defense-in-depth for the bidi-control-character class (#382 goal doc §8,
+    /// 2026-08-06): every write-time gate this session added only guards new
+    /// writes, so this is the retroactive safety net -- a human should still see
+    /// it flagged even if the text predates the fix, or arrived through some
+    /// path that forgot the check. Covers every field the write-time fixes do:
+    /// requirement statement/criteria, milestones, backlog, custom-panel title,
+    /// and stage-proposal rationale (both pending and approved).
+    fn flags_a_stored_bidi_control_character_in_every_covered_field() {
+        let bidi = "approved\u{202e} for production tset ton si sihT";
+        let mut state = RunState::new("run-preflight");
+        state.requirements.push(requirement(&format!("WHEN x, THE SYSTEM SHALL {bidi}"), vec!["a real criterion"]));
+        state.requirements.push(requirement("WHEN y, THE SYSTEM SHALL z", vec![bidi]));
+        state.milestones.push(crate::runner::Milestone { description: bidi.to_string(), achieved: false });
+        state.backlog.push(crate::runner::BacklogItem { text: bidi.to_string(), done: false });
+        state.custom_panels.push(crate::runner::CustomPanel {
+            id: "panel-1".into(),
+            title: bidi.to_string(),
+            html: "<p>x</p>".into(),
+            source: None,
+            created_at: 0,
+        });
+        state.pending_stage_proposals.push(crate::runner::PendingStageProposal {
+            id: "prop-1".into(),
+            proposal: StageProposal {
+                proposed_by: "devsystem.assistant".into(),
+                stage_id: "devsystem.x".into(),
+                tag: "x".into(),
+                rationale: bidi.to_string(),
+                use_existing_service: None,
+                units: 1,
+                price_ceiling: None,
+            },
+            proposed_at: 0,
+        });
+        state.approved_stage_proposals.push(StageProposal {
+            proposed_by: "devsystem.plan".into(),
+            stage_id: "devsystem.y".into(),
+            tag: "y".into(),
+            rationale: bidi.to_string(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: None,
+        });
+
+        let findings = preflight_annotations(&state);
+        let bidi_findings: Vec<_> = findings.iter().filter(|f| f.label == "stored text contains a Unicode bidi control character").collect();
+        assert_eq!(bidi_findings.len(), 7, "every one of the seven bidi-laced fields must be flagged, not just some: {bidi_findings:?}");
+        assert!(bidi_findings.iter().any(|f| f.evidence.contains("statement")));
+        assert!(bidi_findings.iter().any(|f| f.evidence.contains("acceptance criterion")));
+        assert!(bidi_findings.iter().any(|f| f.evidence.contains("milestone")));
+        assert!(bidi_findings.iter().any(|f| f.evidence.contains("backlog item")));
+        assert!(bidi_findings.iter().any(|f| f.evidence.contains("custom panel")));
+        assert!(bidi_findings.iter().any(|f| f.evidence.contains("pending stage proposal")));
+        assert!(bidi_findings.iter().any(|f| f.evidence.contains("approved stage proposal")));
+    }
+
+    #[test]
+    fn a_run_with_no_bidi_control_characters_anywhere_gets_no_such_finding() {
+        let mut state = RunState::new("run-preflight");
+        state.requirements.push(requirement("WHEN x, THE SYSTEM SHALL y", vec!["a real, checkable criterion"]));
+        state.milestones.push(crate::runner::Milestone { description: "a real milestone".into(), achieved: false });
+        let findings = preflight_annotations(&state);
+        assert!(
+            !findings.iter().any(|f| f.label == "stored text contains a Unicode bidi control character"),
+            "clean text must never trigger this finding: {findings:?}"
+        );
     }
 }
