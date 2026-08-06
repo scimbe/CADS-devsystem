@@ -320,6 +320,25 @@ merged for real: `devsystem_document_extraction_handler` (PDF-only) is now in `m
 ([CADS-devsystem@0937992](https://github.com/scimbe/CADS-devsystem/commit/0937992)). DOCX/image/OCR
 remain open with them, per the standing hand-off.
 
+**Issue #14 (document extraction, labor-setup.com) second real increment merged, 2026-08-06**:
+their PR #17 added `text/plain`/`text/markdown` (pure UTF-8 decode, no subprocess) and legacy
+`.doc` support (reusing the existing libreoffice conversion path with a per-extension temp dir) to
+`devsystem_document_extraction_handler`. Reviewed the same way PR #9 was reviewed -- real
+verification, not a rubber stamp: built and tested it myself in an isolated git worktree (16/16
+hermetic tests green), then went a step further and actually ran the freshly built release binary
+by hand against three real crafted stdin requests (real plain text, real markdown, a
+whitespace-only-text error case) and confirmed all three real responses matched expected behavior
+exactly -- not just trusting the test suite's own injected effects. Confirmed a clean git-diff
+(single file, no conflicts with anything of mine) and all three real CI checks
+(`secrets`/`test`/`web`) green before merging. Merged for real:
+[CADS-devsystem@10a4650](https://github.com/scimbe/CADS-devsystem/commit/10a4650). Posted an honest
+review comment on the issue distinguishing what was independently hands-on verified from what still
+has to be trusted (the libreoffice-dependent DOCX/DOC path -- neither this environment nor
+labor-setup.com's own has libreoffice installed to independently exercise it). Still open, unchanged:
+image/OCR (no `tesseract` binary, no passwordless sudo on either side to install it) and the real
+OIDC bearer-token credential for `ct-agent channel register`, which remains mine to raise with the
+operator directly -- not something this loop can self-provision.
+
 **The stress test's third real run, 2026-08-05**: went after the exact gap the first run's own
 writeup had already named and left open -- "a longer-but-still-padded lazy review remains a real,
 known, undefended gap." Added a fresh requirement to `stress-incompetent-agent`, then submitted
