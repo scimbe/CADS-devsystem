@@ -1601,4 +1601,48 @@ harness re-run clean against the fresh deployment (no regression). Docs site upd
 (`CADS-devsystem-docs@34571a1`): `_how-to/manage-rag-documents.md`, `_reference/rest-api.md`, and a
 new dated entry in `_explanation/self-optimizing-pipeline.md`.
 
+11. **"Stack mode" -- a guided queue through a run's real open points** (operator ask, 2026-08-06,
+    clarified via two direct scoping questions rather than guessed at): the panels/GUI should
+    support a mode where every real open point on a run (a pending proposal, a paused checkpoint)
+    is addressed one at a time, guided by `devsystem.assistant`, which should also be able to draft
+    first-cut next-iteration-plan options the human can edit or discard -- with every change it
+    makes staying visible, not silent (matches this project's own existing DAU-lens discipline of
+    never letting the assistant act invisibly). Scoped as three real, separable slices, not one
+    speculative build:
+    1. ~~**The real open-points data source**~~ -- **done** (`CADS-devsystem@6a68223`): `GET
+       /api/runs/{id}/open-points`, a read-only, ordered projection over state that already exists
+       (the paused checkpoint first if paused, matching `attention_priority`'s own precedence, then
+       the same five real pending-proposal queues `pending_reviews` already sums, same order).
+       Deliberately excludes unverified requirements and stalled stages -- both are normal, common
+       run states, not a stalled decision nothing can proceed without; including them would drown
+       the real open points in noise. 4 new hermetic tests, live-verified against the actual
+       deployment: the real `webconference-android` run's own paused checkpoint shows up correctly
+       (honestly falling back to "paused, no reason recorded" for this specific run, since its pause
+       predates the `pause_reason` field existing at all -- not a bug, a historical data gap with a
+       graceful fallback already in place).
+    2. **A guided-queue frontend** -- not yet built. Steps through the open-points list one entry at
+       a time (Next/Skip), each with its own approve/reject/resume action already wired to its
+       existing endpoint, no new mutation surface needed.
+    3. **Assistant-drafted next-iteration-plan options** -- not yet built. When a run hits a real
+       paused checkpoint, ask `devsystem.assistant` to draft 2-3 concrete next-step options as
+       plain, editable text (not silently picking one) -- the exact same "surface, don't guess"
+       shape this loop itself already uses live on `webconference-android`'s own real M1 checkpoint
+       (CADS-Tunnel#382, 2026-08-05T23:34:42Z). Needs a real audit trail (who/what proposed each
+       draft, when) so a human is never surprised by an assistant-authored change they didn't
+       notice -- the operator's own explicit ask ("I must be guided what is changed").
+
+**Docs-loop firing, 2026-08-06**: validating the docs site's own "PDF/DOCX only" claim for the
+`devsystem.document_extraction` channel path against the actual current code (post-PR #17) surfaced
+a real, live bug beyond the docs gap itself: `devsystem_document_extraction_client`'s own
+`mime_type_for()` -- the function that decides what `mime_type` actually gets sent over the wire,
+based on a file's extension -- was never updated when the handler gained real `.doc` support. A
+real `.doc` file would have fallen through to `application/octet-stream` and been rejected by the
+handler as unsupported, despite the handler genuinely supporting it -- the same "fixed at one end,
+not the whole real path" bug class this project's stress-test methodology keeps finding elsewhere.
+Fixed (`CADS-devsystem@1712448`), plus a stale doc comment on `upload_rag_file` itself
+(`CADS-devsystem@8fcaff9`), redeployed to `devsystem-web`, and the full 33-assertion stress-test
+harness re-run clean against the fresh deployment (no regression). Docs site updated to match
+(`CADS-devsystem-docs@34571a1`): `_how-to/manage-rag-documents.md`, `_reference/rest-api.md`, and a
+new dated entry in `_explanation/self-optimizing-pipeline.md`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
