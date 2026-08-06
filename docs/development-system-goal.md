@@ -2916,4 +2916,25 @@ changed (`CADS-devsystem-docs@67afe2d`). Hermetically built clean. No new operat
 the three open `#382` checkpoints; GitHub's incident still `major_outage` per the status page; live
 docs site continues serving correctly (spot-checked again).
 
+**Goal-driven-loop firing, 2026-08-06 (jjj) -- a systematic Enter-to-submit sweep, one real candidate
+found and deliberately left unfixed rather than guessed at**: no new operator input on any of the
+three open `#382` checkpoints (still just this loop's own comment); issue #14 unchanged; no
+scimbe-authored PRs; CI still not triggering new runs.
+
+Extended firing (hhh)'s fill-mode fix into a systematic check: every plain `<input>` in the GUI not
+already inside a real `<form>` (which gets Enter-to-submit natively, free). Ruled out cleanly:
+`rag-search-input` (live-as-you-type, no separate submit action to wire), `backlog-text`/
+`milestone-text`/`requirement-statement`/`np-run-id`/`np-repo-url`/`repo-url-input` (all real
+`<form>`s, already correct), `quick-offer-price`/`-units` (real form). One real candidate found:
+the New Iteration panel's embedded-proposal fields (`pr-stage-id`/`pr-tag`/`pr-units`) are plain
+inputs with no Enter handling, same shape as the fill-mode gap just fixed -- but wiring Enter there
+to submit the *whole* multi-field iteration (stage, feedback, succeeded, the embedded proposal, and
+requirement traceability, several of them independently required) is a real UX judgment call, not a
+clear win the way the fill-mode popover's single self-contained action was: a user tabbing through
+`pr-tag` mid-fill-in and reflexively hitting Enter could prematurely submit an incomplete or wrong
+iteration, a new footgun rather than a fixed one. Deliberately left unfixed rather than guessed at --
+noted here as a real, scoped candidate for a future firing if it's worth a considered design (e.g.
+Enter advances focus to the next field instead of submitting, matching a multi-field form's usual
+convention) rather than a mechanical copy of the fill-mode fix.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
