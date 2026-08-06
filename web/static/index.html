@@ -3438,6 +3438,21 @@ async function askAssistant(instruction) {
     await selectRun(currentRun);
   } catch (e) {
     if (pending) pending.remove();
+    // Real gap found live 2026-08-06, stress-test run 34, same class refreshTick
+    // was fixed for in run 32: a run deleted from another tab while its chat is
+    // open used to leave the caller stuck on a dead run, retyping into a chat
+    // that would keep 404ing the same confusing way forever. A genuine 404 here
+    // gets the same real recovery -- clear currentRun, tell the operator plainly,
+    // fall back to the runs list -- instead of just dropping a raw error bubble
+    // into a transcript for a run that no longer exists to have a transcript on.
+    if (e.status === 404) {
+      const goneId = currentRun;
+      currentRun = null;
+      currentRunData = null;
+      alert(`This run ("${goneId}") no longer exists -- it may have been deleted. Returning to the runs list.`);
+      await refreshRunsList();
+      return;
+    }
     appendAssistantEntry('error', e.message);
     showPromptStatus({ ok: false, message: e.message });
   }

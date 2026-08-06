@@ -3264,14 +3264,28 @@ async fn ask_assistant(
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
     }
-    if run_exists(&state, &id) {
-        match load_or_init_run(&run_dir(&state, &id), &id) {
-            Ok((_spec, run_state)) if !owner_authorized(&headers, &run_state) => {
-                return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
-            }
-            Ok(_) => {}
-            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    // Real gap found live 2026-08-06, stress-test run 34: every OTHER per-run
+    // handler in this file returns a real 404 immediately for a run that
+    // doesn't exist -- this one used to be the one exception, silently falling
+    // through to a real network round-trip to the assistant bridge, which then
+    // made its OWN round-trip back to this exact `GET /api/runs/{id}` (also a
+    // 404), and only THEN surfaced a confusing wrapped `502`
+    // (`"could not fetch run context from ...: HTTP 404 Not Found"`) -- a real,
+    // reachable case now that a run can genuinely disappear mid-session (run 31's
+    // delete-run feature): a chat message sent to a run deleted from another tab
+    // got this exact confusing error, not a clean "no such run". Matching every
+    // other handler's own convention closes this for real, not just for this one
+    // symptom -- and saves a wasted round-trip to a process that was always going
+    // to fail the identical way.
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, run_state)) if !owner_authorized(&headers, &run_state) => {
+            return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
         }
+        Ok(_) => {}
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
     }
     if body.instruction.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "instruction is required"}))).into_response();
@@ -6936,6 +6950,22 @@ exit 1"#);
         assert_eq!(response.status(), SC::SERVICE_UNAVAILABLE);
         let body = body_json(response).await;
         assert!(body["error"].as_str().unwrap().contains("not configured"));
+    }
+
+    #[tokio::test]
+    async fn asking_the_assistant_about_a_run_that_does_not_exist_is_a_real_404_not_a_wrapped_502() {
+        // Real gap, stress-test run 34: this used to fall through to a real,
+        // wasted round-trip to the assistant bridge (never even reached here in
+        // this test, since none is configured) and surface a confusing wrapped
+        // error. Every other per-run handler 404s immediately; this one now does
+        // too, matching `get_run`/`delete_run`'s own precedent exactly.
+        let (state, _dir) = test_state_with_assistant(Some("http://127.0.0.1:1"));
+        let app = api_router(state);
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/never-created/assistant", serde_json::json!({"instruction": "what's the status?"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
     }
 
     #[tokio::test]
