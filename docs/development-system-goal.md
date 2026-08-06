@@ -2733,4 +2733,33 @@ resolves. No new operator input on any of the three open `#382` checkpoints; Git
 `major_outage` per the status page, though the real deployed docs site continues serving correctly
 (spot-checked again this firing).
 
+**Goal-driven-loop firing, 2026-08-06 (yy) -- a genuinely new class: role-filler text forging fake
+markdown structure in the check-in artifact a human reads to decide `approve`/`request-changes`**:
+no new operator input on any of the three open `#382` checkpoints. CI status re-checked: the run for
+`9241642` (firing ll) genuinely completed `success` -- CI is working again for at least that commit
+-- but every commit pushed since (six-plus) has triggered no new run at all, not even a queued one;
+GitHub's own incident update ("workflow runs are still failing, jobs may remain queued for an
+extended period") matches exactly. Confirmed no `.github/workflows` change on our side caused this.
+Not blocking on it; will keep noting the real state each firing.
+
+Investigating `devsystem_checkin`'s own `.plan.md` renderer (the second real check-in delivery
+channel this project has, alongside the GitHub comment path) found a genuinely new instance of the
+"role-filler-controlled free text must not forge markdown structure" class already closed for the
+Requirements Markdown export (stress-test check #9) -- never checked here. `stage_id`/`tag`/
+`proposed_by`/`added_stages`/`stalled_stages` entries, plus two risk-annotation evidence strings in
+`preflight.rs` that embed `stage_id` raw, were all interpolated inside single-backtick inline code
+spans with no escaping, unlike `rationale`/statement/title right next to them. Reproduced first with
+a failing test, then fixed every site with `inline_code_escape` (`CADS-devsystem@e2f5287`).
+
+**Verified as end-to-end as this session has gone for a `checkin.rs` fix**: submitted a real
+iteration with a backtick-laced `stage_id` through the real, live, currently-deployed
+`POST /api/runs/{id}/iterate` (confirmed the real API accepts it -- no character restriction),
+built the real, fixed `devsystem_checkin` binary hermetically, ran it against that real scratch run,
+and inspected the actual generated `.plan.md` artifact: all four vulnerable sites now correctly
+widen to a double-backtick delimiter instead of breaking out. Redeployed `devsystem-web` (the
+`preflight.rs` half of this fix changes its own `GET /api/runs/{id}` risk-evidence output too) and
+re-confirmed live against the redeployed container. Cleaned up every scratch run and generated
+artifact afterward. 1 new regression test, 115/115 pipeline-lib tests (was 114), 187/187 web tests
+unchanged, hermetic clippy clean on both crates.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
