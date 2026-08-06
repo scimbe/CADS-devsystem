@@ -186,6 +186,18 @@ check "re-proposing the SAME stage with a real price_ceiling clears the risk (re
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$lw_run"
 
 echo
+echo "[13] an iteration's own feedback must not be empty or whitespace-only"
+feedback_run="${RUN}-empty-feedback-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$feedback_run\"}"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$feedback_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.implement","feedback":"","succeeded":true}')
+check "an empty feedback string is rejected" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$feedback_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.implement","feedback":"   ","succeeded":true}')
+check "a whitespace-only feedback string is rejected" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$feedback_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.implement","feedback":"a real, non-empty account of what happened","succeeded":true}')
+check "real, non-empty feedback still works" "200" "$status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$feedback_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
