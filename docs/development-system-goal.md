@@ -2050,4 +2050,22 @@ are two genuinely orthogonal, correctly-named facts ("has a live bidder" vs. "ne
 iteration run"), not a bug. No new actionable gap found this firing -- reported honestly rather than
 manufacturing busywork to fill the slot.
 
+**Goal-driven-loop firing, 2026-08-06 (r) -- a real gap found by DAU-auditing a feature not yet
+individually checked this session**: after firing (q)'s Roles-panel audit came back clean, moved to
+Custom Panels -- a real, mutable-content feature never specifically checked before. Every other real
+free-text field in this codebase (milestones, backlog, requirement statements, stage proposal
+rationale/tag/stage_id, iteration feedback) already rejects whitespace-only content; `add_custom_panel`
+only checked an upper bound on `html`, never a lower one. Live-confirmed before fixing:
+`{"title":"x","html":""}` against the real deployment got a real `200`, creating a genuinely blank,
+useless panel with nothing telling the human anything went wrong. Checked the other three real
+entry points that accept panel `html` (`update_custom_panel`, `propose_custom_panel`,
+`propose_panel_edit`) -- all four had the identical gap; `propose_custom_panel`'s own doc comment
+already claimed its validation "mirrors `add_custom_panel` exactly," confirming this was an
+unintentional gap, not a deliberate omission. Fixed all four (`CADS-devsystem@84d26a4`) with the
+same `.trim().is_empty()` check every other field already uses. New regression test covering all
+four sites with three genuinely-blank variants plus a real-content control. Hermetic web suite
+181/181 (was 180, no regressions), hermetic clippy clean. Deployed, live-verified against the real
+running container (empty rejected, real content still accepted). Stress-harness check [27] added
+(`CADS-devsystem@82c53f4`), 57/57 assertions passing locally.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
