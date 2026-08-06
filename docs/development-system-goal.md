@@ -2433,4 +2433,38 @@ add a periodic live-link spot-check against the real deployed URL (not just loca
 output) as part of the loop's own discipline going forward, since a `baseurl` mismatch is exactly
 the kind of defect a build-only check structurally cannot catch.
 
+**Goal-driven-loop firing, 2026-08-06 (kk) -- the stress test's ninth real run, a fresh angle: the
+assistant's own action-parsing gate, not the API validation gates every prior run went after**: no
+new operator input on any of the three open `#382` checkpoints (re-checked the issue's comment
+history directly again -- still all this loop's own signature); GitHub's Actions/Pages incident
+still `major_outage` on both, unresolved since `15:22:49Z`.
+
+Went after §8's "malformed input" angle flagged as untried in the previous firing's own note, this
+time against `devsystem_assistant`'s own reply parser rather than a devsystem-web API endpoint.
+`extract_actions` deserialized the whole `devsystem-actions` JSON array straight into
+`Vec<Action>` -- classic all-or-nothing at the array level, the same bug shape already fixed
+several times this session for API validation (`validate_proposals`, `add_requirement`,
+`requirement_indices`), just never checked in the assistant's own reply-parsing path before.
+Reproduced first with a failing test, not assumed: a mixed batch of 2 genuinely valid actions plus
+1 hallucinated one (`"type":"delete_everything"`) discarded all three, silently. This is exactly
+the incompetent-agent failure mode this whole methodology exists to catch -- a real LLM reply that
+gets most of a multi-action turn right and one wrong currently loses the whole turn's real progress
+with no visible sign anything succeeded.
+
+Fixed (`CADS-devsystem@aee1fa1`): parse each array element independently
+(`serde_json::from_value::<Action>` per element, not `Vec<Action>` over the whole array). Valid
+actions are still applied; invalid ones are named individually and reported in the error message
+returned to the operator, never silently dropped. Batches where literally every action is
+unrecognized keep the pre-existing "leave the raw text untouched, take no action" behavior, since
+nothing real happened in that case -- this preserves the deliberate "nothing silently hidden"
+design intent for a total failure while fixing the partial-failure case that was the real gap.
+
+2 new regression tests (mixed batch applies the good + reports the bad; all-bad batch still takes
+no action and leaves text untouched), `devsystem_assistant`'s own suite 47/47 (was 45), pipeline-lib
+111/111 unchanged, hermetic clippy clean. Redeployed the real, already-running
+`devsystem_assistant --serve` process via the existing tracked deploy script
+(`scripts/deploy-devsystem-assistant.sh`) -- confirmed the new binary is actually serving (live
+`400` round trip against `172.17.0.1:8791/ask`, real process restarted under the new pid). Nine
+real stress-test runs, nine real gaps found and closed.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
