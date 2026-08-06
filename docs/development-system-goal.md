@@ -526,6 +526,15 @@ code-level gate holds regardless of how well any given LLM call behaves.
    with their real text. Still open: this is the persistence half only -- the decision-basis view
    itself doesn't pull `chat_history` in yet, so a requirement's expandable panel still shows only
    iteration history, not chat exchanges. GUI wiring is the real next slice, not claimed done here.
+   **Third slice done** (`CADS-devsystem@78521b2`): surfaced `chat_history` for real -- honestly
+   scoped, not forced into the per-requirement view above. A `ChatExchange` has no field linking it
+   to a specific requirement, and never will without either a fragile text-match heuristic or a real
+   schema change touching `Requirement` and the assistant's own action-dispatch code -- both risk
+   showing a WRONG decision basis, worse than none. Instead: a real "Recent assistant conversation"
+   section at the Requirements panel level, most-recent-first. Verified live via a real Playwright
+   browser against the exact run persistence was proven on last firing: the real section renders
+   both real exchanges with their real timestamps and text. Still open: true per-requirement
+   attribution -- the honest, harder version of this gap -- remains unbuilt, named as such.
 7. ~~**A real requirements export**~~ — **done** (`CADS-devsystem@950931a`): `GET
    /api/runs/{id}/requirements/export` renders a real Markdown document (statement, a real
    verified checklist per acceptance criterion, provenance from gap #1), real `Content-Disposition`
