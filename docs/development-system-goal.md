@@ -1069,6 +1069,17 @@ deployment can't do -- covered by the hermetic Rust test instead, a real but dif
 proof than the harness's own live-HTTP checks. Forty-two real stress-test investigations,
 thirty-five real gaps found and closed.
 
+**The stress test's forty-third real run, 2026-08-06**: extended the harness with another real,
+mechanical, deterministic gate it didn't cover -- the defect-admission risk flag
+(`DEFECT_ADMISSION_PHRASES` in `preflight.rs`). Catches the "ship it anyway and call it done"
+shortcut directly: a `succeeded: true` iteration whose own feedback admits a known defect (e.g.
+"known bug in the retry logic, will fix later, but shipping this now") gets flagged as a real risk.
+Live-confirmed before writing the check: a real `iterate` call with that exact feedback produces
+the real "succeeded iteration admits a known defect" risk on the run. Added as check [11]
+(`CADS-devsystem@d6fab45`); the harness now covers seventeen real checks, 19/19 individual
+assertions passing locally against the real deployment. Forty-three real stress-test
+investigations, thirty-five real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
