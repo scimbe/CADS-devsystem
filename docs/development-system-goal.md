@@ -1868,4 +1868,36 @@ begin with) but was directly affected by the price-ceiling fix last firing (thre
 not one) -- a concrete reminder that this exact bug class had already cost real, hidden visibility
 on the project's own flagship proof before it was caught.
 
+**Goal-driven-loop firing, 2026-08-06 (j) -- closing out the sweep, not just doing it twice**: the
+last two firings found the "stops at the first/latest match" bug three times
+(`no_price_ceiling`, `vague_acceptance_criteria`, `succeeded_iteration_admits_a_defect`) by applying
+the same lens repeatedly, but never confirmed the sweep was actually *complete* -- there are eight
+real risk-check functions across `preflight_annotations`/`process_annotations`, and only three had
+been checked against this specific bug class. This firing checked the remaining five, individually,
+against the real question that made the first three genuine bugs (does this check iterate over a
+real collection where multiple DIFFERENT, independently-actionable instances could exist
+simultaneously, each one silently discarded but the first/latest?):
+- `checkin_cadence_effectively_disabled` -- a single scalar fact (`AbortCriteria.checkin_every`) per
+  run. Structurally cannot have "multiple instances." Not a candidate.
+- `no_review_for_succeeded_work` -- a single boolean fact about the whole run ("has succeeded work
+  AND no real review anywhere"). Not a candidate.
+- `no_review_role_despite_real_progress` -- a single boolean fact about the run/spec ("was review
+  ever declared, given real progress"). Not a candidate.
+- `security_keyword_hit` -- deliberately latest-iteration-only **by design**, already named and
+  accepted as a real, documented limitation on this page's own docs-site explanation (no structural
+  "was this concern resolved" signal exists in free text) -- re-confirmed that reasoning still holds,
+  not re-litigated. Even within the latest iteration, multiple keyword hits collapse to the identical
+  `"touches auth/security"` label regardless of which specific word triggered it, so there's no
+  additional distinct actionable information a second finding would add here (unlike a second
+  *unbounded role* or a second *vague criterion*, which each name a genuinely different thing to go
+  fix).
+- `missing_test_before_implement` -- deliberately first-implement-only **by design**, already
+  covered by its own existing, passing regression test
+  (`does_not_flag_when_test_runs_after_implement_but_still_before_a_later_implement`) proving this is
+  intentional, not accidental: the check answers "was this project's own process ever violated at
+  all," a one-time historical fact, not "how many times."
+No new bugs found -- the sweep is now genuinely complete, not just three isolated fixes that happened
+to stop there. Reported honestly as a completed verification, not padded into a fabricated fourth
+fix.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
