@@ -567,8 +567,22 @@ async function refreshTick() {
       lastRefreshedAt[id] = now;
     }
   } catch (e) {
-    // A transient refresh failure isn't worth interrupting the operator with --
-    // the panel just keeps showing its last-known-good content until the next tick.
+    // Real DAU-lens gap found live 2026-08-06, stress-testing the delete-run
+    // feature's own edge cases: a run genuinely no longer existing (deleted from
+    // another tab, or by anyone else with access) is NOT a transient failure --
+    // every panel would otherwise keep silently showing stale, dead content
+    // forever, with zero indication the run is actually gone, and every further
+    // auto-refresh tick would 404 the exact same way indefinitely. Only this one
+    // real, distinguishable case (a genuine 404, not a network blip or a 5xx)
+    // interrupts the operator; anything else keeps the existing "just show
+    // last-known-good, try again next tick" behavior unchanged.
+    if (e.status === 404) {
+      const goneId = currentRun;
+      currentRun = null;
+      currentRunData = null;
+      alert(`This run ("${goneId}") no longer exists -- it may have been deleted. Returning to the runs list.`);
+      await refreshRunsList();
+    }
   }
 }
 
@@ -1253,7 +1267,14 @@ async function fetchJSON(url, opts) {
   // is genuinely empty.
   let body = null;
   try { body = JSON.parse(raw); } catch (e) { /* not JSON -- raw text is the real message below */ }
-  if (!res.ok) throw new Error((body && (body.error || JSON.stringify(body))) || raw.trim() || res.statusText);
+  if (!res.ok) {
+    const err = new Error((body && (body.error || JSON.stringify(body))) || raw.trim() || res.statusText);
+    // Real status code, not just its message -- callers that need to tell "this
+    // run genuinely no longer exists" (404) apart from a transient failure worth
+    // silently retrying need this (see refreshTick's own real use of it).
+    err.status = res.status;
+    throw err;
+  }
   return body;
 }
 
