@@ -11,12 +11,18 @@
 # Honestly scoped, not claimed exhaustive: only the MECHANICAL, deterministic
 # gates are covered here (server-side validation that returns the same real
 # HTTP status every time). The LLM-dependent findings (prompt-injection
-# resistance, the assistant's milestone-pause disclosure, the assistant's
-# requirement-verification evidentiary gate) are deliberately left out of this
-# v1 -- each real LLM call costs real money/time and the reply's exact wording
-# is non-deterministic, so "did it behave correctly" needs a human or a
+# resistance, the assistant's milestone-pause disclosure -- both of which need
+# a real LLM call whose reply's exact wording is non-deterministic) are
+# deliberately left out -- "did it behave correctly" there needs a human or a
 # separate, slower live-verification pass, not a fast boolean regression
-# check. A future firing can build a v2 harness for those specifically.
+# check. A future firing can build that v2 harness for those specifically.
+#
+# Correction, second real firing: the assistant's requirement-verification
+# evidentiary gate (gap #10) was originally excluded here too, on the wrong
+# assumption it needed a live LLM call -- it doesn't. `toggle_requirement`'s
+# real gate keys off a plain `X-Actor: devsystem.assistant` HTTP header, not
+# anything the LLM says; check [8] below proves it mechanically, no LLM
+# involved, same as every other check here.
 #
 # Usage: scripts/incompetent-agent-stress-test.sh [base-url]
 #   Runs against a REAL, already-running devsystem-web (default
@@ -118,6 +124,14 @@ status=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/runs/$scrat
 check "deleting an existing run returns 204" "204" "$status"
 status=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/runs/$scratch_delete")
 check "the deleted run genuinely 404s afterward, not just hidden from the list" "404" "$status"
+
+echo
+echo "[8] a requirement can only be marked verified by devsystem.assistant with real review evidence"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$RUN/requirements" -H 'content-type: application/json' -d '{"statement":"WHEN a message is sent, THE SYSTEM SHALL deliver it","acceptance_criteria":["message arrives at the peer device"]}'
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/requirements/0/toggle" -H 'X-Actor: devsystem.assistant')
+check "the assistant cannot mark a requirement verified with zero review evidence (gap #10's own real gate)" "409" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/requirements/0/toggle")
+check "a plain human click needs no such evidence -- same endpoint, no X-Actor header, existing precedent" "200" "$status"
 
 echo
 echo "======================================================================"
