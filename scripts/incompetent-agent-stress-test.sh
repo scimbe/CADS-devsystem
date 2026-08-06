@@ -163,6 +163,15 @@ status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/iss
 check "proposing against the real allowed repo still works" "200" "$status"
 
 echo
+echo "[11] a succeeded iteration that admits a known defect in its own feedback must be flagged"
+defect_run="${RUN}-defect-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$defect_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$defect_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.implement","feedback":"known bug in the retry logic, will fix later, but shipping this now","succeeded":true}'
+defect_risk=$(curl -s "$BASE/api/runs/$defect_run" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if any(r["label"]=="succeeded iteration admits a known defect" for r in d["risks"]) else "no")' 2>/dev/null)
+check "a succeeded iteration's own defect-admission language is flagged as a real risk" "yes" "$defect_risk"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$defect_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
