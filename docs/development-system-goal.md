@@ -669,6 +669,24 @@ defense deployed: the model still correctly resists and flags the same attempt. 
 stress-test investigations; this one closes with defense-in-depth hardening rather than a live
 exploit, honestly reported as such rather than inflated into a bug that wasn't there.
 
+**The stress test's nineteenth real run, 2026-08-06**: a real, live-confirmed path-traversal
+vulnerability in the local CLI binaries. `devsystem-web`'s own `valid_run_id` exists because of a
+real bug already found once (its own doc comment: `GET /api/runs/..` used to return a real `200`
+with a `state.json` planted outside `runs_dir`) -- but `devsystem_iterate` and `devsystem_checkin`,
+genuinely separate real entry points that build filesystem paths from a raw `run_id` straight off
+`env::args()` with no HTTP layer anywhere in between, never got the same check. Live-confirmed
+before this fix: `devsystem_iterate ../traversal-poc-marker record.json` wrote a real
+`spec.json`/`state.json` pair directly into this repo's own root, completely outside `runs/`; a
+deeper `../../...` payload escaped further still, into an arbitrary sibling directory.
+`devsystem_checkin` had the identical shape twice over -- both the `state.json` it reads and the
+`.plan.md` artifact it writes. Root-caused, not patched per call site: moved `valid_run_id` out of
+`web/src/main.rs` into `pipeline/src/runner.rs` as a real, shared `pub fn` every real entry point
+now calls -- `devsystem-web` imports it instead of keeping its own private copy, both CLI binaries
+validate `run_id` before any filesystem access at all (`CADS-devsystem@ed035b4`). Rebuilt both local
+binaries and re-verified live against the exact traversal payload that proved the bug: both now
+reject it outright with no files touched outside `runs/`, a genuine `run_id` still works completely
+normally. Nineteen real stress-test investigations, nineteen real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
