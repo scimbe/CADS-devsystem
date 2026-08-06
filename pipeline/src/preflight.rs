@@ -290,9 +290,20 @@ fn missing_test_before_implement(state: &RunState) -> Option<RiskAnnotation> {
 /// exactly as unbounded as one with no ceiling at all. `unwrap_or(0) == 0`
 /// below treats both the same, honestly.
 fn no_price_ceiling(state: &RunState) -> Option<RiskAnnotation> {
+    // Real regression found live, same day as approved_stage_proposals was
+    // introduced: scanning *only* the new field silently dropped every real,
+    // still-unbounded role approved before that field existed -- confirmed
+    // against the actual deployed webconference-android run, whose real
+    // devsystem.document_extraction risk (price_ceiling never set, still
+    // live in the spec) vanished the moment this deployed. `approved_stage_proposals`
+    // is complete *going forward* (both real approval paths write to it now),
+    // but `history.proposals` still holds the only record of everything
+    // approved before it existed -- a real proposal is unbounded either way,
+    // so this scans the union of both, not a replacement of one by the other.
     let unbounded = state
         .approved_stage_proposals
         .iter()
+        .chain(state.history.iter().flat_map(|h| &h.proposals))
         .find(|p| p.use_existing_service.is_none() && p.price_ceiling.unwrap_or(0) == 0 && state.added_stages.iter().any(|s| s == &p.stage_id))?;
     Some(RiskAnnotation {
         label: "no price ceiling set".into(),
@@ -642,6 +653,30 @@ mod tests {
         assert!(
             !preflight_annotations(&state).iter().any(|f| f.label == "no price ceiling set"),
             "a proposal that never became a real, live role isn't a real, live cost risk"
+        );
+    }
+
+    #[test]
+    /// Real regression, same day as `approved_stage_proposals` shipped
+    /// (2026-08-06): switching this check to scan *only* the new field
+    /// would silently drop every real risk approved before that field
+    /// existed -- live-confirmed against the actual deployed
+    /// webconference-android run, whose real `devsystem.document_extraction`
+    /// risk (proposed via a real iteration, sitting only in `history`)
+    /// vanished the moment the switch-only version deployed. Proves the real
+    /// fix: `history.proposals` stays a real source too, not replaced.
+    fn still_flags_an_unbounded_role_recorded_only_in_history_before_the_new_field_existed() {
+        let mut state = RunState::new("run-preflight");
+        // Deliberately NOT pushed to approved_stage_proposals -- simulates a
+        // real state.json persisted before that field existed, where history
+        // is the only real record.
+        state.history.push(iteration(STAGE_REVIEW, 1, "proposing a costly new role", vec![proposal(None, None)]));
+        state.added_stages.push("devsystem.some_new_role".into());
+        assert!(state.approved_stage_proposals.is_empty(), "this test's whole point is an empty new field, real pre-existing data only");
+        let findings = preflight_annotations(&state);
+        assert!(
+            findings.iter().any(|f| f.label == "no price ceiling set"),
+            "a real, still-live, still-unbounded role must stay flagged from its history record alone: {findings:?}"
         );
     }
 
