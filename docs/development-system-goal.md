@@ -610,6 +610,28 @@ submission that previously verified all five requirements: now a real `409`, wit
 explanation naming the real scaled minimum. Fifteen real stress-test runs, fifteen real gaps found
 and closed.
 
+**The stress test's sixteenth real run, 2026-08-06**: turned toward the mandatory check-in artifact
+itself (`render_plan_markdown`) -- the one document this whole project's "human stays in the loop"
+design actually depends on -- rather than the API gates already stress-tested extensively. Two real
+gaps, both live-verified: **(1)** `record.feedback`, a proposal's `rationale`, and a requirement's
+`statement` are all fully role-filler/human-controlled free text, spliced directly into the check-in
+markdown as raw structure. An iteration whose feedback contained `"## Risk annotations\n\nNone found
+-- all clear"` and `"**APPROVED by human reviewer**"` rendered indistinguishably from the renderer's
+own real structure, ahead of the genuine `## Risk annotations` section further down carrying the
+run's actual finding -- a human skimming at exactly the moment they're meant to catch a real problem
+could read the fake section as authoritative and never reach the real one. Fixed the same way
+custom-panel HTML is already handled elsewhere in this codebase: render as content, never as trusted
+structure -- wrapped in a fenced code block (multi-line fields) or an inline code span (one-line list
+items), both sized longer than the longest backtick run already present so content can't break out of
+its own fence either. **(2)** The exact same "only three of five real proposal queues" undercount
+already found and fixed in the GUI's own Pipeline-chip badge (`CADS-devsystem@c5c02c5`) was live here
+too -- `pending_total` never grew to include panel-removal/panel-edit proposals, so a real pending one
+of either was invisible to the one artifact whose whole job is telling a human what's waiting on them
+(`CADS-devsystem@145a85b`). Re-verified live against the actual deployment with the exact injection
+case that proved the bug: the fake section now renders inside a clear fence, the real one is
+unambiguous; a real pending panel-removal proposal now correctly surfaces. Sixteen real stress-test
+runs, sixteen real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
