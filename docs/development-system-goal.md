@@ -2371,4 +2371,39 @@ to be genuinely exhausted across the areas checked -- future firings may need to
 different kind of increment (the still-open hard-block decision on #382, or real progress on the
 Android build once the M1 checkpoint is answered) rather than continuing the same sweep pattern.
 
+**Main-dev-loop firing, 2026-08-06 (ii) -- cross-feature integration sweep completed, no gap
+found**: no new operator input on any of the three open `CADS-Tunnel#382` checkpoints (M1
+direction, the OIDC credential, the hard-block decision) -- re-checked the issue's own comment
+history directly rather than assuming continued silence; every recent comment carries this loop's
+own "-- CADS-devsystem loop" signature, none is a genuine reply. GitHub's Actions/Pages incident
+re-checked again -- still `major_outage` on both, `API Requests` still `operational`.
+
+Continued firing (hh)'s cross-feature integration thread (started but not finished before that
+firing's own compaction boundary): whether the Open Points panel stays correctly in sync with all
+four real custom-panel-proposal types, live against the real `devsystem-web` deployment on fresh
+scratch runs, cleaned up after each:
+- **panel add, approve** -- open-points shows the proposal, clears to `[]` on approve, panel
+  really exists afterward. Correct.
+- **panel add, reject** -- open-points clears, `custom_panels` stays empty (never applied).
+  Correct.
+- **panel removal, approve** -- open-points shows the removal proposal, clears on approve, panel
+  really gone from `custom_panels` afterward. Correct.
+- **panel edit, approve** -- open-points shows `panel_edit_proposal` with the real old/new title
+  summary, clears to `[]` on approve, the real panel's title *and* html are both actually updated
+  afterward (not just the title). Correct.
+- **panel edit, reject** -- open-points clears, the real panel is provably untouched (re-fetched
+  and diffed against its pre-proposal state). Correct.
+
+All five paths across all four proposal types are correct; this closes out the cross-feature
+integration angle opened in the previous firing with no new gap found. Combined with firing (hh)'s
+own finding, this is now the second consecutive firing to come back clean on a different lens than
+the numeric/length-bound sweep -- reinforcing that lens is genuinely exhausted too, at least for
+now. No code change this firing; reporting the clean investigation honestly rather than
+manufacturing one. Per the standing guidance already recorded in firing (hh): future firings should
+prioritize re-checking the three open `#382` decision points for a real operator reply over
+continuing speculative sweeps, and if still silent, look toward the still-open hard-block decision,
+Android build progress once M1 is answered, or a genuinely different investigation angle (not yet
+tried: GUI keyboard/accessibility DAU-proofing, or the assistant's own tool-call error paths under
+malformed input) rather than re-treading ground already swept clean twice.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
