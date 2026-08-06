@@ -189,6 +189,8 @@
  .run-delete-btn{flex:0 0 auto;align-self:center}
  .stalled-badge{float:right;font-size:.68rem;color:var(--accent);border:1px solid var(--accent);
                 border-radius:5px;padding:.05rem .35rem;font-weight:700}
+ .paused-badge{float:right;font-size:.68rem;color:var(--accent);border:1px solid var(--accent);
+                border-radius:5px;padding:.05rem .35rem;font-weight:700}
  .attention-badge{float:right;font-size:.68rem;color:var(--danger);border:1px solid var(--danger);
                 border-radius:5px;padding:.05rem .35rem;font-weight:700;margin-left:.3rem}
  .risk-badge{float:right;font-size:.68rem;color:var(--danger);border:1px solid var(--danger);
@@ -1370,13 +1372,19 @@ async function refreshRunsList() {
       const btn = document.createElement('button');
       btn.className = 'run-item' + (r.run_id === currentRun ? ' active' : '');
       // Most urgent signal wins, one badge at a glance rather than a pile-up:
-      // a real pending proposal (a human decision genuinely waiting -- gap
-      // found 2026-08-04: this used to be invisible outside that run's own
-      // Pipeline panel) outranks a health-threshold needs_attention, which
-      // outranks a stalled stage, which outranks a mechanical preflight risk
-      // finding.
+      // a paused run (real gap found live 2026-08-06, stress-test run 50 --
+      // `paused` was already in this exact payload and never once checked here,
+      // so a run could sit fully stopped with zero badge at all if nothing else
+      // happened to also be true) outranks a real pending proposal (a human
+      // decision genuinely waiting -- gap found 2026-08-04: this used to be
+      // invisible outside that run's own Pipeline panel) -- paused is the more
+      // definitive "nothing happens here until you look" state, independent of
+      // whether a proposal also happens to be waiting -- which outranks a
+      // health-threshold needs_attention, which outranks a stalled stage, which
+      // outranks a mechanical preflight risk finding.
       let badge = '';
-      if (r.pending_reviews) badge = `<span class="attention-badge">⚠ ${r.pending_reviews} pending review${r.pending_reviews === 1 ? '' : 's'}</span>`;
+      if (r.paused) badge = `<span class="paused-badge">⏸ ${r.pause_reason ? escapeHtml(r.pause_reason) : 'paused'}</span>`;
+      else if (r.pending_reviews) badge = `<span class="attention-badge">⚠ ${r.pending_reviews} pending review${r.pending_reviews === 1 ? '' : 's'}</span>`;
       else if (r.needs_attention) badge = `<span class="attention-badge">⚠ needs attention</span>`;
       else if (r.stalled_stages && r.stalled_stages.length) badge = `<span class="stalled-badge">${r.stalled_stages.length} stalled</span>`;
       else if (r.risk_count) badge = `<span class="risk-badge">${r.risk_count} risk(s)</span>`;

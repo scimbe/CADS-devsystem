@@ -525,6 +525,12 @@ struct RunSummary {
     /// actually looks first, not a new decision mechanism.
     pending_reviews: usize,
     paused: bool,
+    /// Real gap found live 2026-08-06 (stress-test run 50): the Runs list already
+    /// surfaced `paused`, but never why -- nothing here distinguished a run that
+    /// stopped because it needs a look from one that's simply idle between real
+    /// work. See `devsystem_pipeline::runner::RunState::pause_reason`'s own doc
+    /// comment.
+    pause_reason: Option<String>,
     owner_email: Option<String>,
 }
 
@@ -555,9 +561,22 @@ async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap
             let stalled = stalled_stages(&run_state);
             let risk_count = preflight_annotations(&run_state).len() + process_annotations(&spec, &run_state).len();
             let health = run_health(&run_state);
-            let pending_reviews = run_state.pending_panel_proposals.len() + run_state.pending_stage_proposals.len() + run_state.pending_issue_proposals.len();
+            // Real gap found live 2026-08-06 (stress-test run 50): this only ever
+            // summed three of the five real proposal queues -- the exact same
+            // undercounting shape already found and fixed once for the Pipeline
+            // panel's own chip badge, but this is a genuinely separate call site
+            // that never got the same fix. Live-confirmed before touching anything:
+            // a real pending panel-removal proposal showed pending_reviews: 0 and
+            // needs_attention: false in the actual Runs list, completely invisible
+            // where a human looks first.
+            let pending_reviews = run_state.pending_panel_proposals.len()
+                + run_state.pending_panel_removal_proposals.len()
+                + run_state.pending_panel_edit_proposals.len()
+                + run_state.pending_stage_proposals.len()
+                + run_state.pending_issue_proposals.len();
             let alert = needs_attention(&health, pending_reviews);
             let paused = run_state.paused;
+            let pause_reason = run_state.pause_reason.clone();
             let owner_email = run_state.owner_email.clone();
             runs.push(RunSummary {
                 run_id: id,
@@ -569,6 +588,7 @@ async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap
                 needs_attention: alert,
                 pending_reviews,
                 paused,
+                pause_reason,
                 owner_email,
             });
         }
@@ -3730,6 +3750,37 @@ mod tests {
         let body = body_json(response).await;
         assert_eq!(body[0]["pending_reviews"], 1);
         assert_eq!(body[0]["needs_attention"], true, "a real pending proposal must flag needs_attention on its own, independent of health thresholds");
+    }
+
+    #[tokio::test]
+    /// Real gap found live 2026-08-06 (stress-test run 50): list_runs's own
+    /// pending_reviews only ever summed three of the five real proposal queues --
+    /// the exact same undercounting shape already found and fixed once for the
+    /// Pipeline panel's own chip badge (2026-08-04), but this call site never got
+    /// the same fix. Live-confirmed before touching anything: a real pending
+    /// panel-removal proposal showed pending_reviews: 0 in the actual Runs list.
+    async fn list_runs_pending_reviews_counts_panel_removal_and_edit_proposals_too() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "undercount-run"}))).await.unwrap();
+        let create = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/undercount-run/panels", serde_json::json!({"title": "Real Panel", "html": "<p>x</p>"})))
+            .await
+            .unwrap();
+        let panel_id = body_json(create).await["id"].as_str().unwrap().to_string();
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/undercount-run/panels/{panel_id}/propose-remove")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let response = app.oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body[0]["pending_reviews"], 1, "a real pending panel-removal proposal must count toward pending_reviews, not be silently invisible");
+        assert_eq!(body[0]["needs_attention"], true);
     }
 
     #[tokio::test]
