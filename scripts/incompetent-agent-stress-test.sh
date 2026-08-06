@@ -345,10 +345,22 @@ check "the over-length criterion is ALSO named in the same response, not a separ
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$multibad_run"
 
 echo
+echo "[25] an iteration with multiple simultaneously-bad embedded stage proposals must report ALL of them in one response, not just the first"
+multibadprop_run="${RUN}-multi-bad-proposal-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$multibadprop_run\"}"
+multibadprop_body=$(curl -s -X POST "$BASE/api/runs/$multibadprop_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"a real, substantive feedback string","succeeded":true,"proposals":[{"proposed_by":"devsystem.implement","stage_id":"","tag":"","rationale":"","units":1},{"proposed_by":"devsystem.implement","stage_id":"devsystem.role_b","tag":"role_b","rationale":"probe","units":0}]}')
+has_empty_fields=$(echo "$multibadprop_body" | grep -c 'needs a non-empty stage_id')
+has_bad_units=$(echo "$multibadprop_body" | grep -c 'devsystem.role_b.*needs units between')
+check "the empty-field proposal is named in the one response" "1" "$has_empty_fields"
+check "the zero-units proposal is ALSO named in the same response, not a separate retry" "1" "$has_bad_units"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$multibadprop_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the thirty-five gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the thirty-six gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
