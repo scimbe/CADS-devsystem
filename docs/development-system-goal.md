@@ -2018,4 +2018,18 @@ hard-block-but-forward-looking via an opt-in, or leave it advisory) without pick
 third open, non-urgent decision point now sitting on that issue alongside the M1 checkpoint and the
 OIDC credential note -- all correctly left for the operator, not guessed at.
 
+**Main-dev-loop firing, 2026-08-06 (p) -- no new external signal, closed a real coverage gap adjacent
+to firing (n)'s own fix instead of manufacturing busywork**: checked issue #13 (closed, unchanged),
+issue #14 (no new comment since PR #17's merge), `webconference-android` (no new commits), and
+CADS-Tunnel#382 (no operator reply yet to any of the three open checkpoints -- correctly not
+re-asking). Found one real, bounded gap: `open_points()`'s own honest `"paused, no reason recorded"`
+fallback -- the exact server-side behavior the GUI's recent disclosure fix (`a599dd9`) depends on --
+had zero test coverage. No real HTTP entry point can reach `paused: true` with `pause_reason: None`
+in a fresh test run (every real code path that sets `paused` correctly sets a reason today; the real
+flagship run only has this state because it predates the field), so unit-tested `open_points()`
+directly against a hand-built `RunState` instead (`CADS-devsystem@f5ac95c`) -- the only way to
+exercise this exact case without waiting for history to repeat itself. Hermetic web suite 180/180
+(was 179, no regressions), hermetic clippy clean. Pure coverage addition, no behavior change, so no
+redeploy needed.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
