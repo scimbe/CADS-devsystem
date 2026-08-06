@@ -1189,6 +1189,22 @@ change before writing it. The harness now covers twenty-one real checks, 27/27 i
 assertions passing locally against the real deployment. Fifty-one real stress-test investigations,
 forty real gaps found and closed.
 
+**The stress test's fifty-second real run, 2026-08-06**: while checking whether the pending-reviews
+undercount bug class had a third instance anywhere, found something bigger -- `list_runs` sorted
+purely alphabetically, no priority at all. Live-confirmed before touching anything: the real
+flagship `webconference-android` run (genuinely paused, needing an actual human decision) sat at
+position 105 of 110 in the actual Runs list, behind well over a hundred alphabetically-earlier
+scratch runs with nothing outstanding -- exactly the kind of thing a careless or busy human would
+simply never scroll to. `attention_priority()` now mirrors the GUI's own real badge precedence
+exactly (paused > pending review > needs attention > stalled > risk), so the run at the top of the
+list is always the one showing the most urgent badge -- never a mismatch between what's sorted
+first and what's visually flagged first. Alphabetical stays as the tie-break within a tier, not the
+whole ordering (`CADS-devsystem@f13ddb9`). Hermetic: web crate 167/167 (a new test using run_ids
+deliberately chosen to sort the wrong way alphabetically), clippy clean. Deployed and live-verified
+against the actual deployment: the real `webconference-android` run moved from position 105/110 to
+position 0/110. Full stress-test harness re-run afterward confirmed no regressions elsewhere.
+Fifty-two real stress-test investigations, forty-one real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
