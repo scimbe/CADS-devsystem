@@ -2122,4 +2122,17 @@ not a mechanical API contract, matching §8's own established exclusion for this
 hermetic prompt-content test is the right coverage level, same precedent as the earlier category-3
 fix).
 
+**Main-dev-loop firing, 2026-08-06 (v) -- a full regression pass, honestly reported, no new gap
+fabricated**: no new operator input on any of the three open `CADS-Tunnel#382` checkpoints; issues
+#13/#14 unchanged. Investigated whether the real `ecc-plan-canvas` check-in channel
+(`devsystem_checkin`, `docs/plan-stage.md`) -- the other real, tested check-in delivery mechanism
+this project maintains alongside the GitHub-comment pattern this loop has used all session -- has
+any live gap: confirmed it's genuinely wired (not just mentioned), and confirmed the real flagship
+run isn't currently due for one anyway (`iterations_until_checkin: 4`), so nothing actionable there
+right now. Live-verified `checkin_cadence_effectively_disabled` (`checkin_every: 0`) still correctly
+fires against a real scratch run. Ran the full 57-assertion incompetent-agent stress-test harness
+against the live deployment as a broad regression check after this session's many fixes -- clean,
+57/57. No new gap found this firing; reported honestly as a verification pass rather than
+manufacturing a change to fill the slot.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
