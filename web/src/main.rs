@@ -437,6 +437,26 @@ async fn main() {
 /// state.json without bound (matches the host's real, limited disk headroom).
 const MAX_LIST_ITEMS: usize = 500;
 
+/// Real gap found live 2026-08-06 (stress-test run 42): unlike every per-run list
+/// above, `create_run` had no cap at all on the total NUMBER of runs -- confirmed
+/// live this deployment already carries 110 real run directories on a host at 91%
+/// disk. The sharper real risk isn't disk (each run averages ~15KB): `list_runs`
+/// does a real `fs::read_dir` + a full state load for every run on every single
+/// `GET /api/runs` call (the Runs panel's own refresh) -- a script hammering
+/// `POST /api/runs` with unique ids unboundedly would make that call, and so the
+/// whole dashboard, linearly slower for every real user, with zero protection.
+/// Same "generous enough no real workflow hits it, small enough a runaway script
+/// can't go unbounded" reasoning as `MAX_LIST_ITEMS`; the real delete-run endpoint
+/// (run 31) is the intended way to actually stay under it.
+const MAX_TOTAL_RUNS: usize = 2000;
+
+fn total_run_count(state: &AppState) -> usize {
+    let Ok(entries) = fs::read_dir(state.runs_dir.as_path()) else {
+        return 0;
+    };
+    entries.flatten().filter(|entry| entry.path().join("state.json").exists()).count()
+}
+
 fn run_dir(state: &AppState, id: &str) -> PathBuf {
     assert!(valid_run_id(id), "run_dir called with an unvalidated id -- every handler must check valid_run_id(id) first");
     state.runs_dir.join(id)
@@ -569,6 +589,17 @@ async fn create_run(
     let _guard = state.write_lock.lock().await;
     if run_exists(&state, id) {
         return (StatusCode::CONFLICT, "run already exists").into_response();
+    }
+    if total_run_count(&state) >= MAX_TOTAL_RUNS {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!(
+                "this deployment is at its defensive cap of {MAX_TOTAL_RUNS} total runs -- \
+                 delete a scratch/finished run first (DELETE /api/runs/{{id}}, or the trash-can \
+                 button in the Runs panel) before creating a new one"
+            ),
+        )
+            .into_response();
     }
     let dir = run_dir(&state, id);
     match load_or_init_run(&dir, id) {
@@ -5204,6 +5235,33 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST, "the (MAX_LIST_ITEMS + 1)th issue proposal must be rejected");
+    }
+
+    #[tokio::test]
+    /// Real gap found live 2026-08-06 (stress-test run 42): unlike every per-run cap
+    /// above, `create_run` itself had no cap at all on the total NUMBER of runs --
+    /// confirmed live this deployment already carries 110 real run directories on a
+    /// host at 91% disk, and `list_runs` does a real `fs::read_dir` + full state load
+    /// for every run on every single `GET /api/runs` call, so an unbounded total run
+    /// count degrades the whole dashboard for every real user, not just disk space.
+    /// Seeds `MAX_TOTAL_RUNS` fake run directories directly on disk (a bare
+    /// `state.json`, all `total_run_count`/`run_exists` actually check) rather than
+    /// MAX_TOTAL_RUNS real HTTP round trips, which would make this test needlessly
+    /// slow for no extra real coverage of the one call that matters: the
+    /// (MAX_TOTAL_RUNS + 1)th `create_run`.
+    async fn create_run_rejects_once_the_total_run_cap_is_reached() {
+        let (state, _dir) = test_state();
+        for i in 0..MAX_TOTAL_RUNS {
+            let seed_dir = state.runs_dir.join(format!("seed-{i}"));
+            std::fs::create_dir_all(&seed_dir).expect("create seed run dir");
+            std::fs::write(seed_dir.join("state.json"), "{}").expect("write seed state.json");
+        }
+        let app = api_router(state);
+        let response = app
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "one-too-many"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "the (MAX_TOTAL_RUNS + 1)th run creation must be rejected");
     }
 
     #[tokio::test]
