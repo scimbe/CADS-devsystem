@@ -2026,10 +2026,11 @@ const MAX_RAG_UPLOAD_BYTES: usize = 10_000_000;
 ///    images at all. Unchanged behavior from before this fallback existed.
 /// 2. The real `devsystem.document_extraction` channel
 ///    (`AppState::document_extraction_channel`), when Unstructured isn't
-///    configured but this is -- PDF/DOCX only as of this writing (see that
-///    role's own handler), never images. A real, free, already-auctioned
-///    capability instead of leaving every deployment without a paid
-///    Unstructured key permanently unable to upload at all.
+///    configured but this is -- PDF, DOCX, legacy DOC, and plain
+///    text/markdown as of this writing (see that role's own handler,
+///    updated for issue #14's PR #17), never images. A real, free,
+///    already-auctioned capability instead of leaving every deployment
+///    without a paid Unstructured key permanently unable to upload at all.
 ///
 /// A real `503` (not a silent no-op), naming which path(s) were checked,
 /// when neither is configured -- matching `ask_assistant`'s own "not
