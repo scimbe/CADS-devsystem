@@ -129,24 +129,42 @@ fn security_keyword_hit(state: &RunState) -> Option<RiskAnnotation> {
     None
 }
 
-/// "succeeded iteration admits a known defect" -- the latest iteration is
-/// marked `succeeded: true` but its own feedback contains a real defect-
-/// admission phrase. See [`DEFECT_ADMISSION_PHRASES`]'s own doc comment for
-/// the live-verified gap this closes and its honest limitation.
+/// "succeeded iteration admits a known defect" -- some `succeeded: true`
+/// iteration's own feedback contains a real defect-admission phrase. See
+/// [`DEFECT_ADMISSION_PHRASES`]'s own doc comment for the live-verified gap
+/// this closes and its honest limitation.
+///
+/// **Real gap found live by the stress test, 2026-08-06, same bug shape as
+/// `no_price_ceiling`'s own fix**: this used to only look at the LATEST
+/// iteration. Live-verified: a real, unfixed, admitted defect got correctly
+/// flagged, then silently vanished the moment one completely unrelated
+/// iteration followed it -- the defect was never actually fixed, only
+/// unmentioned. Unlike `no_price_ceiling`, there's no structural "was this
+/// resolved" signal to check (a `price_ceiling` getting set is a real,
+/// checkable field change; a defect getting fixed is free text with no
+/// equivalent marker) -- so the honest fix, matching
+/// `no_review_role_despite_real_progress`'s own established pattern, is to
+/// scan all of history and keep flagging as long as ANY successful iteration
+/// ever admitted a defect. A false "still open" nag on an actually-fixed
+/// defect is a real, named cost of this -- but it's a far smaller one than
+/// silently hiding a defect nobody ever said was fixed.
 fn succeeded_iteration_admits_a_defect(state: &RunState) -> Option<RiskAnnotation> {
-    let latest = state.history.last()?;
-    if !latest.succeeded {
-        return None;
-    }
-    let feedback_lower = latest.feedback.to_lowercase();
+    let hit = state.history.iter().rev().find(|h| {
+        h.succeeded && {
+            let feedback_lower = h.feedback.to_lowercase();
+            DEFECT_ADMISSION_PHRASES.iter().any(|p| feedback_lower.contains(*p))
+        }
+    })?;
+    let feedback_lower = hit.feedback.to_lowercase();
     let phrase = DEFECT_ADMISSION_PHRASES.iter().find(|p| feedback_lower.contains(**p))?;
     Some(RiskAnnotation {
         label: "succeeded iteration admits a known defect".into(),
         evidence: format!(
             "iteration {}'s own feedback contains \"{phrase}\" while marked succeeded:true -- goal \
              doc §5's Vertragsgemäße/Sachmangelfreie row names this exact gap: nothing else blocks \
-             marking work \"done\" with open, known defects",
-            latest.iteration
+             marking work \"done\" with open, known defects. No later iteration signals it was \
+             ever fixed, so this stays flagged.",
+            hit.iteration
         ),
     })
 }
@@ -363,6 +381,27 @@ mod tests {
         let mut state = RunState::new("run-preflight");
         state.history.push(iteration(STAGE_IMPLEMENT, 1, "shipped the retry-on-failure feature, all real acceptance criteria verified", vec![]));
         assert!(!preflight_annotations(&state).iter().any(|f| f.label == "succeeded iteration admits a known defect"));
+    }
+
+    #[test]
+    /// Real gap found live by the stress test, 2026-08-06, same bug shape as
+    /// no_price_ceiling's own fix: a real, unfixed defect admission used to
+    /// silently vanish from risk findings the moment any unrelated iteration
+    /// followed it, even though the defect was never actually addressed.
+    fn defect_admission_survives_an_unrelated_later_iteration() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(
+            STAGE_IMPLEMENT,
+            1,
+            "Shipped the retry-on-failure feature. Known issue: it crashes on a null message id, not fixed yet, workaround needed before real use.",
+            vec![],
+        ));
+        state.history.push(iteration(STAGE_IMPLEMENT, 2, "unrelated real work on a completely different feature entirely", vec![]));
+        let findings = preflight_annotations(&state);
+        assert!(
+            findings.iter().any(|f| f.label == "succeeded iteration admits a known defect"),
+            "the defect was never actually fixed -- it must still be flagged: {findings:?}"
+        );
     }
 
     #[test]
