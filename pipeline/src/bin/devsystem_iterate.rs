@@ -29,7 +29,7 @@
 
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration};
 use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, RunOutcome};
-use devsystem_pipeline::IterationRecord;
+use devsystem_pipeline::{validate_proposals, IterationRecord};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -40,6 +40,21 @@ fn run_local(run_id: &str, record_path: &str) -> std::process::ExitCode {
 
     let record: IterationRecord =
         serde_json::from_str(&fs::read_to_string(record_path).expect("read record.json")).expect("valid record.json");
+
+    // Real gap found live by the incompetent-agent stress test's twelfth run (#382
+    // goal doc §8, 2026-08-06): this local path calls run_iteration directly, with
+    // no HTTP layer in between at all -- devsystem-web's own equivalent check
+    // (POST /api/runs/{id}/iterate) never protected this entry point, since it's a
+    // separate binary reading runs/<run_id>/ straight off disk. Confirmed live: the
+    // exact same garbage proposal devsystem-web now rejects with a real 400 still
+    // sailed straight through here and permanently added a real, empty-tag
+    // ServiceType::Custom("") role to this run's on-disk spec.json. Checked before
+    // any write happens (memory log append, persist_run) -- an invalid record.json
+    // must leave the run's files completely untouched, not partially applied.
+    if let Err(e) = validate_proposals(&record.proposals) {
+        eprintln!("rejected: {e}");
+        return std::process::ExitCode::FAILURE;
+    }
 
     // devsystem.remember, made real: every iteration's zylos envelope is appended to
     // the run's durable memory log before anything else happens to `record`.

@@ -150,6 +150,33 @@ pub fn apply_proposal(spec: &mut PipelineSpec, proposal: &StageProposal) -> Prop
     ProposalOutcome::Added
 }
 
+/// Reject a batch of [`StageProposal`]s that would corrupt a spec if [`apply_proposal`]
+/// ever ran on them -- an empty `stage_id`, `tag`, or `rationale` (after trimming).
+/// `apply_proposal` itself stays permissive-by-design (it's meant to be called on
+/// already-trusted data) so this exists as a real, callable gate any *entry point* can
+/// run first, and every entry point must actually call it -- see the incompetent-agent
+/// stress test's eleventh real run (#382 goal doc §8, 2026-08-06). The bug this closes
+/// wasn't the check missing once, it was the check living in exactly one of two real
+/// entry points (`POST /api/runs/{id}/iterate` in `devsystem-web`) while the other
+/// (`devsystem_iterate <run_id> <record.json>`'s local, non-`--remote` mode, which
+/// calls `run_iteration`/`apply_proposal` directly against `runs/<run_id>/` with no
+/// HTTP layer in between at all) still had none -- confirmed live: the exact same
+/// garbage proposal that a fixed `devsystem-web` correctly rejects with a real `400`
+/// still sailed straight through the local CLI and permanently added a
+/// `ServiceType::Custom("")` role to the run's real spec. Pulling the check in here,
+/// where both entry points can share the identical logic, is the actual fix -- not
+/// re-duplicating the same `if` in a second place, which is exactly how it went missing
+/// from the second place the first time.
+pub fn validate_proposals(proposals: &[StageProposal]) -> Result<(), String> {
+    if let Some(bad) = proposals
+        .iter()
+        .find(|p| p.stage_id.trim().is_empty() || p.tag.trim().is_empty() || p.rationale.trim().is_empty())
+    {
+        return Err(format!("proposal for stage_id {:?} needs a non-empty stage_id, tag, and rationale", bad.stage_id));
+    }
+    Ok(())
+}
+
 /// Explicit, bounded termination criteria for one run's "super loop" (#382 §"Abbruch
 /// kriterien"): the pipeline's own self-optimization is iterative, not unsupervised
 /// forever -- these numbers are what make it a *bounded* loop.
@@ -331,6 +358,56 @@ mod tests {
         };
         assert_eq!(apply_proposal(&mut spec, &proposal), ProposalOutcome::AlreadyPresent);
         assert_eq!(spec.roles.len(), before, "no duplicate role for an already-declared stage");
+    }
+
+    #[test]
+    fn validate_proposals_rejects_an_empty_stage_id_tag_or_rationale() {
+        let base = StageProposal {
+            proposed_by: "devsystem.plan".to_string(),
+            stage_id: "devsystem.real".to_string(),
+            tag: "real".to_string(),
+            rationale: "a genuine reason".to_string(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: None,
+        };
+        assert!(validate_proposals(&[base.clone()]).is_ok(), "a genuine, non-empty proposal must pass");
+
+        let mut empty_stage_id = base.clone();
+        empty_stage_id.stage_id = "".to_string();
+        assert!(validate_proposals(&[empty_stage_id]).is_err());
+
+        let mut empty_tag = base.clone();
+        empty_tag.tag = "  ".to_string();
+        assert!(validate_proposals(&[empty_tag]).is_err(), "whitespace-only must count as empty, not just byte-empty");
+
+        let mut empty_rationale = base;
+        empty_rationale.rationale = "".to_string();
+        assert!(validate_proposals(&[empty_rationale]).is_err());
+    }
+
+    #[test]
+    fn validate_proposals_is_the_real_gate_run_iteration_itself_does_not_enforce() {
+        // apply_proposal (and run_iteration, which calls it directly) stays
+        // permissive by design -- it trusts already-validated data. This proves
+        // the two facts together: an entry point that skips validate_proposals
+        // really does let garbage through run_iteration, which is exactly the
+        // live-confirmed bug this function exists to close at every real entry
+        // point, not just one.
+        let mut spec = full_spec("run-validate", None);
+        let before = spec.roles.len();
+        let garbage = StageProposal {
+            proposed_by: "devsystem.plan".to_string(),
+            stage_id: "".to_string(),
+            tag: "".to_string(),
+            rationale: "".to_string(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: None,
+        };
+        assert!(validate_proposals(&[garbage.clone()]).is_err(), "the shared gate must catch it");
+        assert_eq!(apply_proposal(&mut spec, &garbage), ProposalOutcome::Added, "apply_proposal itself has no opinion -- callers must gate first");
+        assert_eq!(spec.roles.len(), before + 1, "confirms apply_proposal really would add the garbage role if a caller skipped validate_proposals");
     }
 
     #[test]

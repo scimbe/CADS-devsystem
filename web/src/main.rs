@@ -23,7 +23,7 @@ use devsystem_pipeline::runner::{
     toggle_requirement, toggle_requirement_auto_judge, BacklogItem, CustomPanel,
     Milestone, PendingIssueProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal, Requirement, RoleFillMode, RunOutcome,
 };
-use devsystem_pipeline::{apply_proposal, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal};
+use devsystem_pipeline::{apply_proposal, validate_proposals, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
 use ct_common::pipeline::SelectionState;
 use serde::{Deserialize, Serialize};
@@ -647,22 +647,16 @@ async fn iterate_run(
     // Real gap found live by the incompetent-agent stress test (#382 goal doc §8,
     // 2026-08-06): a role-filler's own embedded `proposals` -- applied *immediately*
     // to the live PipelineSpec, no human review step at all (see "How the pipeline
-    // proposes and grows its own stages") -- had zero content validation, unlike
-    // `devsystem.assistant`'s own gated `propose_stage` handler, which already rejects
-    // an empty `stage_id`/`tag`/`rationale`. Live-verified before this fix: a proposal
-    // with all three fields as `""` sailed straight through `apply_proposal` and
-    // permanently added a real `ServiceType::Custom("")` role with an empty tag to the
-    // spec -- with no "remove a stage" mechanism anywhere to undo it. The higher-trust,
-    // immediately-applied path deserves at least the same bar as the gated one, not a
-    // weaker one. Matches `propose_stage`'s own check exactly (trim, then non-empty).
-    if let Some(bad) = body.proposals.iter().find(|p| {
-        p.stage_id.trim().is_empty() || p.tag.trim().is_empty() || p.rationale.trim().is_empty()
-    }) {
-        return (
-            StatusCode::BAD_REQUEST,
-            format!("proposal for stage_id {:?} needs a non-empty stage_id, tag, and rationale", bad.stage_id),
-        )
-            .into_response();
+    // proposes and grows its own stages") -- had zero content validation here. Its
+    // twelfth run found the fix itself was incomplete: this check used to live
+    // inline, right here, duplicated from (and drifting independently of)
+    // `propose_stage`'s own equivalent check -- and the local `devsystem_iterate`
+    // CLI's non-`--remote` mode, which calls `run_iteration` directly with no HTTP
+    // layer at all, still had no protection whatsoever. Moved to
+    // `devsystem_pipeline::validate_proposals` so every real entry point shares the
+    // identical gate instead of each needing to remember its own copy.
+    if let Err(e) = validate_proposals(&body.proposals) {
+        return (StatusCode::BAD_REQUEST, e).into_response();
     }
     // Real idempotency guard, found necessary live (2026-08-05): a same-day window of
     // overlapping devsystem-web container instances during a redeploy let two
