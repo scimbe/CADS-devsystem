@@ -559,13 +559,37 @@ fn ask_llm(instruction: &str, system_prompt: &str) -> Result<LlmReply, String> {
     }
 }
 
-fn ask(api_base: &str, run_id: &str, instruction: &str) -> Result<LlmReply, String> {
+/// Real, honest per-requirement chat attribution (#382 goal doc §4.2, gap #6's
+/// own "still open" note, closed 2026-08-06). Only `ToggleRequirement`/
+/// `ToggleAcceptanceCriterion` carry the real index of an *existing*
+/// requirement -- `AddRequirement` deliberately contributes nothing here,
+/// since its new requirement's final position is a server-assigned append
+/// this bridge can't know without a second round-trip, and guessing would
+/// risk exactly the "attribute the wrong requirement" outcome this was built
+/// to avoid. Sorted + deduped since a single exchange can legitimately touch
+/// the same requirement twice (e.g. toggling two of its acceptance criteria).
+fn requirement_indices_touched(actions: &[Action]) -> Vec<usize> {
+    let mut indices: Vec<usize> = actions
+        .iter()
+        .filter_map(|a| match a {
+            Action::ToggleRequirement { index } => Some(*index),
+            Action::ToggleAcceptanceCriterion { requirement_index, .. } => Some(*requirement_index),
+            _ => None,
+        })
+        .collect();
+    indices.sort_unstable();
+    indices.dedup();
+    indices
+}
+
+fn ask(api_base: &str, run_id: &str, instruction: &str) -> Result<(LlmReply, Vec<usize>), String> {
     let context = fetch_context(api_base, run_id)?;
     let mut reply = ask_llm(instruction, &build_system_prompt(&context))?;
     let (display_text, actions, parse_error) = extract_actions(&reply.text);
+    let requirement_indices = requirement_indices_touched(&actions);
     let results = apply_actions(api_base, run_id, &actions);
     reply.text = render_reply_with_action_results(&display_text, &results, parse_error.as_deref());
-    Ok(reply)
+    Ok((reply, requirement_indices))
 }
 
 fn main() -> ExitCode {
@@ -596,7 +620,7 @@ fn main() -> ExitCode {
     }
 
     match ask(&api_base, &run_id, &instruction) {
-        Ok(reply) => {
+        Ok((reply, _requirement_indices)) => {
             print!("{}", reply.text);
             ExitCode::SUCCESS
         }
@@ -613,7 +637,8 @@ fn json_response(status: u16, body: &str) -> tiny_http::Response<std::io::Cursor
 }
 
 /// HTTP bridge for the GUI: `POST /ask {"run_id": "...", "instruction": "..."}` ->
-/// `{"response": "...", "usage": {...}}`. Meant to sit behind the same reverse-proxy gate as
+/// `{"response": "...", "usage": {...}, "requirement_indices": [...]}` (the last field:
+/// see [`requirement_indices_touched`]'s own doc comment). Meant to sit behind the same reverse-proxy gate as
 /// devsystem-web itself (same-origin from the browser's perspective -- no CORS
 /// needed), on whatever host actually has a real LLM CLI available. Per-run rate
 /// limit (10s) is a deliberate safety backstop against a double-click or a stuck
@@ -758,8 +783,11 @@ fn serve(listen_addr: &str, api_base: &str) -> ExitCode {
         }
 
         match ask(api_base, &run_id, &instruction) {
-            Ok(reply) => {
-                let _ = request.respond(json_response(200, &serde_json::json!({"response": reply.text, "usage": reply.usage}).to_string()));
+            Ok((reply, requirement_indices)) => {
+                let _ = request.respond(json_response(
+                    200,
+                    &serde_json::json!({"response": reply.text, "usage": reply.usage, "requirement_indices": requirement_indices}).to_string(),
+                ));
             }
             Err(e) => {
                 let _ = request.respond(json_response(502, &serde_json::json!({"error": e}).to_string()));
@@ -1201,6 +1229,28 @@ mod tests {
         let client = reqwest::blocking::Client::builder().timeout(Duration::from_millis(500)).build().unwrap();
         let result = apply_action(&client, "http://127.0.0.1:1", "my-run", &Action::AddMilestone { description: "x".to_string() });
         assert!(result.starts_with("FAILED"), "an unreachable backend must be reported as a failure: {result}");
+    }
+
+    #[test]
+    fn requirement_indices_touched_collects_only_real_existing_requirement_indices_sorted_and_deduped() {
+        let actions = vec![
+            Action::ToggleAcceptanceCriterion { requirement_index: 2, criterion_index: 0 },
+            Action::AddMilestone { description: "unrelated".to_string() },
+            Action::ToggleRequirement { index: 0 },
+            Action::ToggleAcceptanceCriterion { requirement_index: 2, criterion_index: 1 },
+            Action::AddRequirement { statement: "WHEN x, THE SYSTEM SHALL y".to_string(), acceptance_criteria: vec!["z".to_string()] },
+        ];
+        assert_eq!(
+            requirement_indices_touched(&actions),
+            vec![0, 2],
+            "must include only ToggleRequirement/ToggleAcceptanceCriterion's real indices, deduped and sorted -- never a guessed index for AddRequirement's brand-new one"
+        );
+    }
+
+    #[test]
+    fn requirement_indices_touched_is_empty_for_a_purely_advisory_or_non_requirement_reply() {
+        assert!(requirement_indices_touched(&[]).is_empty());
+        assert!(requirement_indices_touched(&[Action::AddMilestone { description: "x".to_string() }]).is_empty());
     }
 
     #[test]

@@ -3132,8 +3132,19 @@ async fn ask_assistant(
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
                     let usage = parsed.get("usage");
                     let response_text = parsed.get("response").and_then(|v| v.as_str());
+                    // Real per-requirement chat attribution (#382 goal doc
+                    // §4.2, gap #6): the bridge already computed this from its
+                    // own real, structured Action dispatch -- see
+                    // devsystem_assistant.rs's requirement_indices_touched.
+                    // Missing/malformed here just means no attribution, same
+                    // honest fallback as usage/response_text above.
+                    let requirement_indices: Vec<usize> = parsed
+                        .get("requirement_indices")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_u64()).map(|n| n as usize).collect())
+                        .unwrap_or_default();
                     if usage.is_some() || response_text.is_some() {
-                        persist_assistant_call(&state, &id, &body.instruction, response_text, usage).await;
+                        persist_assistant_call(&state, &id, &body.instruction, response_text, usage, &requirement_indices).await;
                     }
                 }
             }
@@ -3153,7 +3164,14 @@ async fn ask_assistant(
 /// it must never be the reason a real assistant reply fails to reach the caller.
 /// One load/persist round-trip for both usage and chat history, not two --
 /// they're always updated together, from the exact same real `/ask` call.
-async fn persist_assistant_call(state: &AppState, id: &str, instruction: &str, response_text: Option<&str>, usage: Option<&serde_json::Value>) {
+async fn persist_assistant_call(
+    state: &AppState,
+    id: &str,
+    instruction: &str,
+    response_text: Option<&str>,
+    usage: Option<&serde_json::Value>,
+    requirement_indices: &[usize],
+) {
     if !run_exists(state, id) {
         return;
     }
@@ -3164,7 +3182,7 @@ async fn persist_assistant_call(state: &AppState, id: &str, instruction: &str, r
         run_state.assistant_usage.add_call(usage);
     }
     if let Some(response) = response_text {
-        push_chat_exchange(&mut run_state, instruction.to_string(), response.to_string(), unix_now());
+        push_chat_exchange(&mut run_state, instruction.to_string(), response.to_string(), unix_now(), requirement_indices.to_vec());
     }
     let _ = persist_run(&dir, &spec, &run_state);
 }
@@ -6706,6 +6724,33 @@ exit 1"#);
         assert_eq!(history[0]["instruction"], "add a milestone for M1");
         assert_eq!(history[0]["response"], "done: added milestone");
         assert_eq!(history[1]["instruction"], "what's the status?");
+    }
+
+    #[tokio::test]
+    /// Real per-requirement chat attribution (#382 goal doc §4.2, gap #6,
+    /// closed 2026-08-06): the bridge's own real `requirement_indices` field
+    /// (computed from its actual dispatched Actions, not guessed) must
+    /// actually reach and persist onto the real ChatExchange, not just the
+    /// pre-existing instruction/response/usage fields.
+    async fn assistant_calls_persist_the_bridges_real_requirement_indices() {
+        let (port, _rx) = spawn_mock_assistant(
+            StatusCode::OK,
+            serde_json::json!({"response": "toggled requirement #2", "usage": {}, "requirement_indices": [2]}),
+        )
+        .await;
+        let (state, _dir) = test_state_with_assistant(Some(&format!("http://127.0.0.1:{port}")));
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "chat-attrib-run"}))).await.unwrap();
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/chat-attrib-run/assistant", serde_json::json!({"instruction": "verify requirement 2"})))
+            .await
+            .unwrap();
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/chat-attrib-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        let history = body["state"]["chat_history"].as_array().expect("chat_history must be a real array");
+        assert_eq!(history[0]["requirement_indices"].as_array().unwrap(), &vec![serde_json::json!(2)], "the bridge's real attributed index must persist, not be dropped");
     }
 
     #[tokio::test]

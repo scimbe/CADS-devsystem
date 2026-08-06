@@ -415,19 +415,38 @@ pub const MAX_CHAT_HISTORY: usize = 50;
 /// `Action`s dispatched are already visible in the `response` text itself
 /// (`render_reply_with_action_results`'s own "Actions taken:" section), so
 /// this doesn't duplicate that separately.
+///
+/// `requirement_indices` (#382 goal doc §4.2, gap #6's own "still open" note,
+/// closed 2026-08-06): the real, honest form of per-requirement chat
+/// attribution the doc comment on that gap's third slice said would need
+/// "either a fragile text-match heuristic or a real schema change... both
+/// risk showing a WRONG decision basis." Neither risk applies to what this
+/// actually is: `devsystem_assistant.rs`'s own `ask()` already holds the real,
+/// structured `Action`s it dispatched (`ToggleRequirement`/
+/// `ToggleAcceptanceCriterion`, the only two variants that carry an *existing*
+/// requirement's real index) at the exact moment it renders a reply -- this
+/// records exactly those indices, not a guess from parsing prose or matching
+/// keywords. `AddRequirement` deliberately never contributes an index here:
+/// its own new requirement's final position is a server-assigned append, not
+/// something the bridge can know without a second round-trip, and guessing
+/// would reintroduce the exact "might attribute the wrong requirement" risk
+/// this was built to avoid. `#[serde(default)]` so chat history recorded
+/// before this field existed still loads as an empty (unattributed) list.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChatExchange {
     pub instruction: String,
     pub response: String,
     pub at: u64,
+    #[serde(default)]
+    pub requirement_indices: Vec<usize>,
 }
 
 /// Appends one real exchange to `state.chat_history`, dropping the oldest
 /// once past [`MAX_CHAT_HISTORY`] -- a rolling window, not a hard reject,
 /// since this accumulates passively rather than from an explicit "add"
 /// action a human could instead be told to stop doing.
-pub fn push_chat_exchange(state: &mut RunState, instruction: String, response: String, at: u64) {
-    state.chat_history.push(ChatExchange { instruction, response, at });
+pub fn push_chat_exchange(state: &mut RunState, instruction: String, response: String, at: u64, requirement_indices: Vec<usize>) {
+    state.chat_history.push(ChatExchange { instruction, response, at, requirement_indices });
     if state.chat_history.len() > MAX_CHAT_HISTORY {
         let overflow = state.chat_history.len() - MAX_CHAT_HISTORY;
         state.chat_history.drain(0..overflow);
@@ -987,8 +1006,8 @@ mod tests {
     #[test]
     fn push_chat_exchange_appends_real_exchanges_in_order() {
         let mut state = RunState::new("run-chat");
-        push_chat_exchange(&mut state, "add a milestone".into(), "done: added milestone".into(), 100);
-        push_chat_exchange(&mut state, "what's the status?".into(), "3 iterations so far, no risks".into(), 200);
+        push_chat_exchange(&mut state, "add a milestone".into(), "done: added milestone".into(), 100, vec![]);
+        push_chat_exchange(&mut state, "what's the status?".into(), "3 iterations so far, no risks".into(), 200, vec![]);
         assert_eq!(state.chat_history.len(), 2);
         assert_eq!(state.chat_history[0].instruction, "add a milestone");
         assert_eq!(state.chat_history[1].response, "3 iterations so far, no risks");
@@ -999,7 +1018,7 @@ mod tests {
     fn push_chat_exchange_drops_the_oldest_once_past_the_real_cap() {
         let mut state = RunState::new("run-chat-cap");
         for i in 0..MAX_CHAT_HISTORY + 5 {
-            push_chat_exchange(&mut state, format!("instruction {i}"), format!("response {i}"), i as u64);
+            push_chat_exchange(&mut state, format!("instruction {i}"), format!("response {i}"), i as u64, vec![]);
         }
         assert_eq!(state.chat_history.len(), MAX_CHAT_HISTORY, "must stay bounded, not grow unbounded");
         assert_eq!(
@@ -1007,6 +1026,15 @@ mod tests {
             "the oldest 5 entries must have been dropped, not the newest"
         );
         assert_eq!(state.chat_history.last().unwrap().instruction, format!("instruction {}", MAX_CHAT_HISTORY + 4));
+    }
+
+    #[test]
+    fn push_chat_exchange_records_the_real_requirement_indices_it_was_given() {
+        let mut state = RunState::new("run-chat-attrib");
+        push_chat_exchange(&mut state, "verify requirement 2".into(), "toggled".into(), 100, vec![2]);
+        push_chat_exchange(&mut state, "general question".into(), "just an answer".into(), 200, vec![]);
+        assert_eq!(state.chat_history[0].requirement_indices, vec![2]);
+        assert!(state.chat_history[1].requirement_indices.is_empty(), "an exchange with no real touched requirement must record none, not guess one");
     }
 
     #[test]

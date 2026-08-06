@@ -2297,6 +2297,20 @@ function renderRequirementsPanel(id, data) {
       if (addressedBy[i]) addressedBy[i].push(h);
     }
   }
+  // Real per-requirement chat attribution (#382 goal doc §4.2, gap #6,
+  // closed 2026-08-06): the same real signal addressedBy above uses for
+  // iterations, mirrored for chat -- CADS-devsystem_assistant.rs's own
+  // requirement_indices_touched computes this from the actual Actions it
+  // dispatched (ToggleRequirement/ToggleAcceptanceCriterion's real indices),
+  // never a guess from matching text, so this is safe to attribute directly
+  // rather than leaving every exchange panel-level-only as gap #6's third
+  // slice previously had to.
+  const chatAddressedBy = requirements.map(() => []);
+  for (const e of (data.state.chat_history || [])) {
+    for (const i of (e.requirement_indices || [])) {
+      if (chatAddressedBy[i]) chatAddressedBy[i].push(e);
+    }
+  }
   // Same real derivation envelope.rs's own server-side rendering uses
   // (constraints = proposals.map(p => "stage_id: rationale")) -- mirrored here so
   // this panel doesn't need a second fetch to the Memory Log endpoint just to show
@@ -2329,7 +2343,7 @@ function renderRequirementsPanel(id, data) {
               </label>`).join('')}
           </div>
           <div class="lede" style="font-size:.7rem;margin-top:.3rem">${addressedBy[i].length ? `addressed by iteration(s) ${addressedBy[i].map(h => h.iteration).join(', ')}` : 'not yet addressed by any iteration'}</div>
-          ${addressedBy[i].length ? `
+          ${(addressedBy[i].length || chatAddressedBy[i].length) ? `
           <details style="margin-top:.3rem">
             <summary class="lede" style="font-size:.7rem;cursor:pointer">decision basis</summary>
             <div style="margin-top:.25rem;display:flex;flex-direction:column;gap:.45rem">
@@ -2338,6 +2352,12 @@ function renderRequirementsPanel(id, data) {
                   <div class="lede" style="font-size:.68rem">iteration ${h.iteration} (\`${escapeHtml(h.stage)}\`, ${h.succeeded ? 'ok' : 'FAILED'})</div>
                   <div style="font-size:.75rem;margin-top:.1rem">${escapeHtml(truncate(h.feedback, 220))}</div>
                   ${constraintsOf(h).length ? `<div class="lede" style="font-size:.68rem;margin-top:.2rem">constraints for what comes next: ${constraintsOf(h).map(c => escapeHtml(c)).join('; ')}</div>` : ''}
+                </div>`).join('')}
+              ${chatAddressedBy[i].map(e => `
+                <div style="border-left:2px solid var(--accent);padding-left:.5rem">
+                  <div class="lede" style="font-size:.68rem">devsystem.assistant, ${new Date(e.at * 1000).toLocaleString()}</div>
+                  <div style="font-size:.75rem;margin-top:.1rem"><strong>asked:</strong> ${escapeHtml(truncate(e.instruction, 200))}</div>
+                  <div style="font-size:.75rem;margin-top:.15rem"><strong>replied:</strong> ${escapeHtml(truncate(e.response, 200))}</div>
                 </div>`).join('')}
             </div>
           </details>` : ''}
@@ -2359,14 +2379,12 @@ function renderRequirementsPanel(id, data) {
   const startHere = requirements.length ? '' : `
     <div class="start-here-banner">👋 Start here: this run has no requirements yet.
     Add your first one below -- it's what gives the pipeline something concrete to build toward.</div>`;
-  // Real second slice of gap #6's own "chat/docs" half (#382 goal doc §4.2,
-  // CADS-devsystem@b124cd9 built the persistence, this surfaces it): a
-  // ChatExchange has no field linking it to a specific requirement -- forcing
-  // one via a text-match heuristic would risk showing a WRONG decision basis,
-  // worse than not attributing one at all. Honest scope instead: real recent
-  // conversation, panel-level rather than faked per-requirement, most recent
-  // first (this is the actual order a human reviewing "what did I just ask
-  // the assistant" wants).
+  // Real full history of gap #6's own "chat/docs" half (#382 goal doc §4.2):
+  // every real exchange, not just the ones attributed to a specific
+  // requirement above (chatAddressedBy) -- an assistant conversation about
+  // the run in general, or about a requirement that got renumbered/removed
+  // since, still belongs here. Most recent first (the actual order a human
+  // reviewing "what did I just ask the assistant" wants).
   const chatHistory = data.state.chat_history || [];
   const chatHistorySection = chatHistory.length ? `
     <details style="margin-top:.7rem">
