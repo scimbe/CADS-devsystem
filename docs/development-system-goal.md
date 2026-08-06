@@ -3468,4 +3468,22 @@ own standing discipline for clean-audit firings. This mutation-testing technique
 reusable technique for future firings to apply to other checks in this harness, one at a time, rather
 than a one-off.
 
+**Direct operator design session, 2026-08-06 -- the launcher gets a real typed path too**: live
+feedback on the panel launcher itself ("Die Positionierung ist doof, da war reinschreiben schon
+besser") -- clicking a specific bubble by eye felt worse than the Process Prompt's own typed panel
+commands. Rather than dropping the visual/importance-sized overview, added a real `<input>` inside
+the same launcher, autofocused on open, reusing `resolvePanelName`'s own exact matching rule (the
+identical logic `./show`/`./hide`/`./toggle` already trust) to narrow bubbles as you type; Enter
+opens the one real remaining match, same "don't guess on ambiguity" discipline
+`resolvePanelName` itself already uses. `CADS-devsystem@9270114`.
+
+A real, live-caught conflict fixed before shipping: the launcher's existing Ctrl+C-closes-it
+behavior assumed no real text input existed inside the overlay to worry about -- with the filter now
+autofocused on every open, a blanket "never fire while any field is focused" guard would make Ctrl+C
+dead for its own stated purpose most of the time. Fixed precisely: checks for an actual text
+*selection* in the focused field, not just focus itself -- an empty filter still closes on Ctrl+C,
+genuinely selected text is left alone so a real copy is never intercepted. Live-verified both
+directions via Playwright against the real redeployed container. 190/190 web tests unchanged; full
+regression pass (New Project, Keyboard Shortcuts, bubble click, Escape) stayed clean.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
