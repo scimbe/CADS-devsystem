@@ -2667,4 +2667,20 @@ untrusted-by-design and sandboxed -- adding the same rule there would contradict
 security model, not close a gap. No further candidates identified; future firings should look
 toward a genuinely different class rather than re-sweeping this one.
 
+**Docs-loop firing, 2026-08-06 (uu) -- documented firing (tt)'s rationale bidi fix, closing the
+class; and the long-pending `baseurl` fix (firing jj) is finally confirmed live**:
+`CADS-devsystem-docs` shipped `self-optimizing-pipeline.md`'s closing section on `rationale` bidi
+spoofing (`CADS-devsystem-docs@c5c7a4d`), extending its existing passage on why `rationale` has to
+be a genuinely trustworthy, readable record. Hermetically built clean.
+
+**Real, positive resolution, not just a status re-check**: `https://scimbe.github.io/CADS-devsystem-docs/`
+now correctly serves every nav/page link with the `/CADS-devsystem-docs` prefix, and the newest
+content shipped since the fix (`set-auto-refresh-and-fill-mode`, this firing's own `c5c7a4d`) is
+live and reachable -- confirmed with real `200`s, not assumed from GitHub's own incident status
+alone. GitHub's Actions/Pages incident is still showing `major_outage` on the status page itself,
+but the real, actual Pages deploy pipeline has evidently caught up regardless (or the incident's
+practical impact narrowed without a status update yet) -- trusting the real, directly-observed site
+behavior over the secondhand incident label, same discipline this session has applied throughout
+(live-verify, don't assume). No new operator input on any of the three open `#382` checkpoints.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
