@@ -453,6 +453,21 @@ shows the real risk, the real `20`, and a correct `needs_attention: false` -- th
 where there were none or wrong ones, no resubmission needed. Eight real stress-test runs, eight real
 gaps found and closed.
 
+**The stress test's ninth real run, 2026-08-06**: `no_price_ceiling` had the identical "only checks
+the latest iteration" shape as bugs already fixed this session in other checks. Live-verified before
+this fix: proposed `devsystem.gpu_training` with no `price_ceiling`, correctly flagged; one
+completely unrelated iteration later, the exact same still-live, still-unbounded role (confirmed
+still in `state.added_stages`) produced zero risk findings. A human doing periodic check-ins would
+see a real cost risk come and go based on what the most recent iteration happened to mention, not on
+whether the run's actual exposure had changed at all. Fixed by scanning all of history for an
+unbounded proposal whose `stage_id` is still live in `added_stages` -- the real, checkable "is this
+risk still real" signal (`CADS-devsystem@077c6e4`). Deliberately did NOT apply the identical fix to
+`security_keyword_hit`, which has the same shape but no equivalent checkable "still live" entity a
+keyword mention could resolve against -- named honestly as a remaining gap rather than half-fixed
+with an invented resolution signal. Re-verified live against the exact run already used to prove the
+gap: the same run that showed zero risks now correctly re-surfaces the still-live cost risk, no
+resubmission needed. Nine real stress-test runs, nine real gaps found and closed.
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
