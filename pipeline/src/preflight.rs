@@ -64,9 +64,7 @@ pub fn preflight_annotations(state: &RunState) -> Vec<RiskAnnotation> {
     if let Some(a) = checkin_cadence_effectively_disabled(state) {
         findings.push(a);
     }
-    if let Some(a) = vague_acceptance_criteria(state) {
-        findings.push(a);
-    }
+    findings.extend(vague_acceptance_criteria(state));
     findings
 }
 
@@ -93,11 +91,20 @@ const MIN_ACCEPTANCE_CRITERION_DISTINCT_WORDS: usize = 3;
 /// This is the complementary, existing-requirement-scanning half: not a hard
 /// block (some real criteria are legitimately short), an advisory risk a
 /// human reviewing this run's own Risks panel would want to see.
-fn vague_acceptance_criteria(state: &RunState) -> Option<RiskAnnotation> {
+// Real gap found live 2026-08-06, applying the exact same lens that just
+// found `no_price_ceiling`'s own "stops at the first match" bug to every
+// other check in this file: this one had the identical shape, an early
+// `return Some(...)` inside a nested loop over every requirement/criterion.
+// Live-confirmed against a real run with two separate requirements, each
+// with its own genuinely vague criterion ("works", "is fast") -- only the
+// FIRST ever got flagged, the second stayed completely invisible. Now
+// collects every real vague criterion, not just the first one found.
+fn vague_acceptance_criteria(state: &RunState) -> Vec<RiskAnnotation> {
+    let mut findings = Vec::new();
     for (i, r) in state.requirements.iter().enumerate() {
         for (ci, c) in r.acceptance_criteria.iter().enumerate() {
             if distinct_word_count(c) < MIN_ACCEPTANCE_CRITERION_DISTINCT_WORDS {
-                return Some(RiskAnnotation {
+                findings.push(RiskAnnotation {
                     label: "acceptance criteria too vague to be deterministic".into(),
                     evidence: format!(
                         "requirement #{i}'s acceptance criterion #{ci} (\"{c}\") has fewer than \
@@ -110,7 +117,7 @@ fn vague_acceptance_criteria(state: &RunState) -> Option<RiskAnnotation> {
             }
         }
     }
-    None
+    findings
 }
 
 /// Real gap named directly in the goal doc's own §4.3 -- an explicit worked
@@ -972,5 +979,22 @@ mod tests {
         let findings = preflight_annotations(&state);
         assert_eq!(findings.len(), 1);
         assert!(findings[0].evidence.contains("requirement #1"), "must name the real requirement that's actually vague, not the first one checked");
+    }
+
+    #[test]
+    /// Real gap, live-found 2026-08-06 applying the exact same lens that just
+    /// found `no_price_ceiling`'s own "stops at the first match" bug: this
+    /// check had the identical shape (an early `return Some(...)` in a nested
+    /// loop). Two separate requirements, each with its own genuinely vague
+    /// criterion, must both be flagged, not just the first one found.
+    fn flags_every_genuinely_vague_criterion_not_just_the_first() {
+        let mut state = RunState::new("run-preflight");
+        state.requirements.push(requirement("WHEN x, THE SYSTEM SHALL y", vec!["works"]));
+        state.requirements.push(requirement("WHEN a, THE SYSTEM SHALL b", vec!["is fast"]));
+        let findings = preflight_annotations(&state);
+        let vague: Vec<_> = findings.iter().filter(|f| f.label == "acceptance criteria too vague to be deterministic").collect();
+        assert_eq!(vague.len(), 2, "both genuinely vague criteria must be flagged, not just the first: {findings:?}");
+        assert!(vague.iter().any(|f| f.evidence.contains("requirement #0")));
+        assert!(vague.iter().any(|f| f.evidence.contains("requirement #1")));
     }
 }
