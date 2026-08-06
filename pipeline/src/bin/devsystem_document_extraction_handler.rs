@@ -36,8 +36,18 @@
 //! issue #7 (2026-08-05): this agent's own local tooling, not a hosted API key.
 //! image/OCR support remains unbuilt: `tesseract`'s CLI binary is not installed on
 //! this host (only its library, `libtesseract4`/`libtesseract5` -- confirmed via
-//! `dpkg -l`, not assumed), so a real `image/*` request still gets an honest `Error`
-//! rather than a fabricated one.
+//! `dpkg -l`, not assumed), and installing it requires root this environment does
+//! not have (`apt-get install` fails, no passwordless sudo/askpass configured --
+//! checked directly, not assumed) -- so a real `image/*` request still gets an
+//! honest `Error` rather than a fabricated one.
+//!
+//! **Third real increment: plain text**, a real, honest pass-through decode (no
+//! subprocess at all -- there is nothing to convert) for `text/plain` and
+//! `text/markdown`, plus real legacy **`.doc`** support by reusing the exact same
+//! `libreoffice --convert-to txt:Text` path DOCX already uses (`libreoffice` has
+//! handled the legacy binary format from the same headless CLI in every local test
+//! run performed here). A non-UTF-8 `text/plain`/`text/markdown` body gets a real,
+//! honest `Error` naming the decode failure, never a fabricated/lossy re-encode.
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -65,6 +75,7 @@ enum ExtractionResponse {
 const MAX_CONTENT_BYTES: usize = 4 * 1024 * 1024;
 
 const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const DOC_MIME: &str = "application/msword";
 
 /// Real extraction dispatch, pure with respect to the filesystem/subprocess except
 /// for the injected effects -- hermetically testable without real `pdftotext`/
@@ -73,7 +84,7 @@ const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordproce
 fn extract(
     req: &ExtractionRequest,
     run_pdftotext: impl FnOnce(&[u8]) -> Result<String, String>,
-    run_libreoffice_convert: impl FnOnce(&[u8]) -> Result<String, String>,
+    run_libreoffice_convert: impl FnOnce(&[u8], &str) -> Result<String, String>,
 ) -> ExtractionResponse {
     let bytes = match base64::engine::general_purpose::STANDARD.decode(&req.content_base64) {
         Ok(b) => b,
@@ -94,7 +105,21 @@ fn extract(
             },
             Err(e) => ExtractionResponse::Error { error: format!("{}: pdftotext failed: {e}", req.filename) },
         },
-        DOCX_MIME => match run_libreoffice_convert(&bytes) {
+        "text/plain" | "text/markdown" => match String::from_utf8(bytes) {
+            Ok(text) if !text.trim().is_empty() => ExtractionResponse::Extracted { text },
+            Ok(_) => ExtractionResponse::Error {
+                error: format!("{}: document is empty/whitespace-only text", req.filename),
+            },
+            Err(e) => ExtractionResponse::Error { error: format!("{}: not valid UTF-8 text: {e}", req.filename) },
+        },
+        DOCX_MIME => match run_libreoffice_convert(&bytes, "docx") {
+            Ok(text) if !text.trim().is_empty() => ExtractionResponse::Extracted { text },
+            Ok(_) => ExtractionResponse::Error {
+                error: format!("{}: libreoffice produced no extractable text", req.filename),
+            },
+            Err(e) => ExtractionResponse::Error { error: format!("{}: libreoffice conversion failed: {e}", req.filename) },
+        },
+        DOC_MIME => match run_libreoffice_convert(&bytes, "doc") {
             Ok(text) if !text.trim().is_empty() => ExtractionResponse::Extracted { text },
             Ok(_) => ExtractionResponse::Error {
                 error: format!("{}: libreoffice produced no extractable text", req.filename),
@@ -102,7 +127,7 @@ fn extract(
             Err(e) => ExtractionResponse::Error { error: format!("{}: libreoffice conversion failed: {e}", req.filename) },
         },
         other => ExtractionResponse::Error {
-            error: format!("{}: unsupported mime_type {other:?} -- only application/pdf and DOCX are implemented so far (image/OCR is a separate, later increment)", req.filename),
+            error: format!("{}: unsupported mime_type {other:?} -- only application/pdf, DOCX, legacy DOC, and text/plain|markdown are implemented so far (image/OCR is a separate, later increment)", req.filename),
         },
     }
 }
@@ -133,17 +158,20 @@ fn run_pdftotext_real(bytes: &[u8]) -> Result<String, String> {
     String::from_utf8(output.stdout).map_err(|e| format!("pdftotext produced non-UTF-8 output: {e}"))
 }
 
-/// The real `libreoffice --headless --convert-to txt:Text` invocation. Uses a real
-/// temp *directory* (not just a temp file) as `--outdir`, since libreoffice derives
-/// the output filename from the input filename itself (`input.docx` -> `input.txt`)
-/// and a per-process-id dir keeps concurrent handler invocations from colliding --
-/// same reasoning `run_pdftotext_real`'s temp dir already applies, extended because
-/// this path needs to read a real *second* file back, not just stdout.
-fn run_libreoffice_convert_real(bytes: &[u8]) -> Result<String, String> {
-    let dir = std::env::temp_dir().join(format!("devsystem-extraction-docx-{}", std::process::id()));
+/// The real `libreoffice --headless --convert-to txt:Text` invocation, shared by
+/// both DOCX and legacy DOC (`ext` is `"docx"` or `"doc"` -- libreoffice picks its
+/// import filter from the real file extension, so the temp file must carry the
+/// caller's real one, not a hardcoded `.docx`). Uses a real temp *directory* (not
+/// just a temp file) as `--outdir`, since libreoffice derives the output filename
+/// from the input filename itself (`input.<ext>` -> `input.txt`) and a
+/// per-process-id dir keeps concurrent handler invocations from colliding -- same
+/// reasoning `run_pdftotext_real`'s temp dir already applies, extended because this
+/// path needs to read a real *second* file back, not just stdout.
+fn run_libreoffice_convert_real(bytes: &[u8], ext: &str) -> Result<String, String> {
+    let dir = std::env::temp_dir().join(format!("devsystem-extraction-{ext}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).map_err(|e| format!("could not create temp dir: {e}"))?;
-    let docx_path = dir.join("input.docx");
-    std::fs::write(&docx_path, bytes).map_err(|e| format!("could not write temp DOCX: {e}"))?;
+    let input_path = dir.join(format!("input.{ext}"));
+    std::fs::write(&input_path, bytes).map_err(|e| format!("could not write temp {ext}: {e}"))?;
 
     let output = Command::new("libreoffice")
         .arg("--headless")
@@ -151,7 +179,7 @@ fn run_libreoffice_convert_real(bytes: &[u8]) -> Result<String, String> {
         .arg("txt:Text")
         .arg("--outdir")
         .arg(&dir)
-        .arg(&docx_path)
+        .arg(&input_path)
         .output()
         .map_err(|e| format!("could not run libreoffice: {e}"));
 
@@ -206,6 +234,10 @@ mod tests {
         panic!("this effect must not run for this test's mime_type");
     }
 
+    fn unreachable_libreoffice_effect(_: &[u8], _: &str) -> Result<String, String> {
+        panic!("this effect must not run for this test's mime_type");
+    }
+
     #[test]
     fn extract_returns_real_text_when_pdftotext_succeeds() {
         let response = extract(
@@ -214,14 +246,14 @@ mod tests {
                 assert_eq!(bytes, b"real bytes", "the real decoded PDF bytes must reach pdftotext");
                 Ok("real extracted PDF text".to_string())
             },
-            unreachable_effect,
+            unreachable_libreoffice_effect,
         );
         assert_eq!(response, ExtractionResponse::Extracted { text: "real extracted PDF text".to_string() });
     }
 
     #[test]
     fn extract_reports_an_honest_error_when_pdftotext_finds_no_text_layer() {
-        let response = extract(&req("scan.pdf", "application/pdf", "cmVhbCBieXRlcw=="), |_| Ok("   \n  \n".to_string()), unreachable_effect);
+        let response = extract(&req("scan.pdf", "application/pdf", "cmVhbCBieXRlcw=="), |_| Ok("   \n  \n".to_string()), unreachable_libreoffice_effect);
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("no extractable text"), "got: {error}"),
             other => panic!("expected a real Error for an empty text layer, got {other:?}"),
@@ -230,13 +262,13 @@ mod tests {
 
     #[test]
     fn extract_surfaces_a_real_pdftotext_failure_honestly() {
-        let response = extract(&req("corrupt.pdf", "application/pdf", "cmVhbCBieXRlcw=="), |_| Err("not a real PDF".to_string()), unreachable_effect);
+        let response = extract(&req("corrupt.pdf", "application/pdf", "cmVhbCBieXRlcw=="), |_| Err("not a real PDF".to_string()), unreachable_libreoffice_effect);
         assert_eq!(response, ExtractionResponse::Error { error: "corrupt.pdf: pdftotext failed: not a real PDF".to_string() });
     }
 
     #[test]
     fn extract_rejects_invalid_base64_before_ever_touching_pdftotext() {
-        let response = extract(&req("f.pdf", "application/pdf", "not valid base64!!"), unreachable_effect, unreachable_effect);
+        let response = extract(&req("f.pdf", "application/pdf", "not valid base64!!"), unreachable_effect, unreachable_libreoffice_effect);
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("did not decode"), "got: {error}"),
             other => panic!("expected a real Error, got {other:?}"),
@@ -248,8 +280,9 @@ mod tests {
         let response = extract(
             &req("report.docx", DOCX_MIME, "cmVhbCBieXRlcw=="),
             unreachable_effect,
-            |bytes| {
+            |bytes, ext| {
                 assert_eq!(bytes, b"real bytes", "the real decoded DOCX bytes must reach libreoffice");
+                assert_eq!(ext, "docx", "DOCX must pass the real docx extension through to libreoffice");
                 Ok("real extracted DOCX text".to_string())
             },
         );
@@ -258,7 +291,7 @@ mod tests {
 
     #[test]
     fn extract_reports_an_honest_error_when_libreoffice_finds_no_text() {
-        let response = extract(&req("blank.docx", DOCX_MIME, "cmVhbCBieXRlcw=="), unreachable_effect, |_| Ok("  \n ".to_string()));
+        let response = extract(&req("blank.docx", DOCX_MIME, "cmVhbCBieXRlcw=="), unreachable_effect, |_, _| Ok("  \n ".to_string()));
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("no extractable text"), "got: {error}"),
             other => panic!("expected a real Error for empty output, got {other:?}"),
@@ -267,13 +300,76 @@ mod tests {
 
     #[test]
     fn extract_surfaces_a_real_libreoffice_failure_honestly() {
-        let response = extract(&req("corrupt.docx", DOCX_MIME, "cmVhbCBieXRlcw=="), unreachable_effect, |_| Err("not a real DOCX".to_string()));
+        let response = extract(&req("corrupt.docx", DOCX_MIME, "cmVhbCBieXRlcw=="), unreachable_effect, |_, _| Err("not a real DOCX".to_string()));
         assert_eq!(response, ExtractionResponse::Error { error: "corrupt.docx: libreoffice conversion failed: not a real DOCX".to_string() });
     }
 
     #[test]
+    fn extract_returns_real_text_when_doc_via_libreoffice_succeeds() {
+        let response = extract(
+            &req("legacy.doc", DOC_MIME, "cmVhbCBieXRlcw=="),
+            unreachable_effect,
+            |bytes, ext| {
+                assert_eq!(bytes, b"real bytes", "the real decoded DOC bytes must reach libreoffice");
+                assert_eq!(ext, "doc", "legacy DOC must pass the real doc extension through, not docx");
+                Ok("real extracted legacy DOC text".to_string())
+            },
+        );
+        assert_eq!(response, ExtractionResponse::Extracted { text: "real extracted legacy DOC text".to_string() });
+    }
+
+    #[test]
+    fn extract_surfaces_a_real_doc_libreoffice_failure_honestly() {
+        let response = extract(&req("corrupt.doc", DOC_MIME, "cmVhbCBieXRlcw=="), unreachable_effect, |_, _| Err("not a real DOC".to_string()));
+        assert_eq!(response, ExtractionResponse::Error { error: "corrupt.doc: libreoffice conversion failed: not a real DOC".to_string() });
+    }
+
+    #[test]
+    fn extract_returns_real_text_for_plain_text_with_no_subprocess() {
+        let response = extract(
+            &req("notes.txt", "text/plain", base64::engine::general_purpose::STANDARD.encode("real plain text content").as_str()),
+            unreachable_effect,
+            unreachable_libreoffice_effect,
+        );
+        assert_eq!(response, ExtractionResponse::Extracted { text: "real plain text content".to_string() });
+    }
+
+    #[test]
+    fn extract_returns_real_text_for_markdown_with_no_subprocess() {
+        let response = extract(
+            &req("readme.md", "text/markdown", base64::engine::general_purpose::STANDARD.encode("# real markdown heading").as_str()),
+            unreachable_effect,
+            unreachable_libreoffice_effect,
+        );
+        assert_eq!(response, ExtractionResponse::Extracted { text: "# real markdown heading".to_string() });
+    }
+
+    #[test]
+    fn extract_rejects_non_utf8_plain_text_honestly() {
+        let non_utf8 = base64::engine::general_purpose::STANDARD.encode([0xff, 0xfe, 0x00, 0x41]);
+        let response = extract(&req("binary.txt", "text/plain", &non_utf8), unreachable_effect, unreachable_libreoffice_effect);
+        match response {
+            ExtractionResponse::Error { error } => assert!(error.contains("not valid UTF-8"), "got: {error}"),
+            other => panic!("expected a real Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extract_reports_an_honest_error_for_whitespace_only_plain_text() {
+        let response = extract(
+            &req("blank.txt", "text/plain", base64::engine::general_purpose::STANDARD.encode("   \n  ").as_str()),
+            unreachable_effect,
+            unreachable_libreoffice_effect,
+        );
+        match response {
+            ExtractionResponse::Error { error } => assert!(error.contains("empty/whitespace-only"), "got: {error}"),
+            other => panic!("expected a real Error for whitespace-only text, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn extract_reports_an_unsupported_mime_type_honestly_not_fabricated() {
-        let response = extract(&req("photo.png", "image/png", "eA=="), unreachable_effect, unreachable_effect);
+        let response = extract(&req("photo.png", "image/png", "eA=="), unreachable_effect, unreachable_libreoffice_effect);
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("unsupported mime_type"), "got: {error}"),
             other => panic!("expected a real Error, got {other:?}"),
@@ -283,7 +379,7 @@ mod tests {
     #[test]
     fn extract_rejects_an_oversized_document_before_running_pdftotext() {
         let huge = base64::engine::general_purpose::STANDARD.encode(vec![0u8; MAX_CONTENT_BYTES + 1]);
-        let response = extract(&req("huge.pdf", "application/pdf", &huge), unreachable_effect, unreachable_effect);
+        let response = extract(&req("huge.pdf", "application/pdf", &huge), unreachable_effect, unreachable_libreoffice_effect);
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("MAX_CONTENT_BYTES"), "got: {error}"),
             other => panic!("expected a real Error, got {other:?}"),
@@ -292,7 +388,7 @@ mod tests {
 
     #[test]
     fn extract_rejects_an_empty_document() {
-        let response = extract(&req("empty.pdf", "application/pdf", ""), unreachable_effect, unreachable_effect);
+        let response = extract(&req("empty.pdf", "application/pdf", ""), unreachable_effect, unreachable_libreoffice_effect);
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("empty"), "got: {error}"),
             other => panic!("expected a real Error, got {other:?}"),
