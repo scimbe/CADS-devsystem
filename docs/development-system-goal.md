@@ -2311,4 +2311,23 @@ the only criterion now gets `"\"ok\" doesn't have enough real content to be chec
 letters/digits)."` immediately; confirmed a genuine, real criterion still submits correctly (`200`).
 57/57 stress-harness assertions clean.
 
+**Main-dev-loop firing, 2026-08-06 (ff) -- a real, server-side-missing bound found this time, not
+just a client-side early-warning gap**: no new operator input, GitHub's own incident still active
+(checked again, `major_outage`). Checking whether the requirements length-cap fix's own reasoning
+("every real free-text field has a length cap") actually held universally found it didn't: backlog
+item text and milestone descriptions had **no real cap at all**, server-side, unlike every sibling
+free-text field (requirement statements, acceptance criteria, issue title/body) -- bounded only by
+axum's generic whole-request body limit. Live-confirmed before fixing: a real 500,000-character
+backlog item text got a real `200`; only a genuinely oversized (~2MB+) request hit axum's own
+generic `413`. Same reasoning already documented for `MAX_LIST_ITEMS` right above it in the source
+(`web/src/main.rs`): this persists to `state.json` on every add, and nothing else stops a client
+from growing it without bound. Fixed (`CADS-devsystem@42995b0`): a new `MAX_SHORT_TEXT_LEN` (2,000,
+matching `MAX_REQUIREMENT_STATEMENT_LEN`'s own value and reasoning) applied to both
+`add_backlog_item` and `add_milestone`, plus matching `maxlength="2000"` on both real GUI `<form>`
+inputs (both are genuine form submits, so the attribute works on its own here). New hermetic
+regression test covering both handlers plus a genuine, reasonably-sized item still working --
+hermetic web suite 182/182 (was 181), hermetic clippy clean. Deployed, live-verified against the
+real redeployed container (rejected the oversized text, accepted a real short one). Stress-harness
+check [28] added (`CADS-devsystem@d84f137`), 60/60 assertions passing locally.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
