@@ -555,6 +555,25 @@ findings, not zero.
    behind approval, not immediate. The honest next slice isn't "add a `RemoveCustomPanel` action" --
    it's designing a real pending-removal-proposal mechanism first, sized as its own increment, not
    assumed away.
+
+   **Third slice done, 2026-08-06** (`CADS-devsystem@a7ac032`): built the pending-removal-proposal
+   mechanism named as the honest next step above, mirroring `PendingPanelProposal`'s own established
+   shape but inverted -- for adding, rejecting is the destructive step (drafted content discarded)
+   and needs `confirm()`; for `PendingPanelRemovalProposal`, approving is the destructive step (a
+   real panel is deleted) and needs `confirm()`, rejecting is safe (panel untouched). The assistant
+   now has `ProposeRemoveCustomPanel { panel_id }`, gated exactly like `ProposeCustomPanel` -- never
+   applied directly, always queued for human approve/reject. Verified live end to end against run
+   `verify-panel-removal-e2e`: asked the real assistant via the real `/api/runs/{id}/assistant` proxy
+   to propose removing a real panel, confirmed it returned "proposed:" (never "done"), confirmed the
+   panel stayed live with a correctly snapshotted pending proposal, approved it via curl, confirmed
+   the panel was genuinely gone and the pending list cleared. GUI verified live via Playwright against
+   run `verify-panel-gui`: the Custom Panels manager correctly renders the pending removal proposal
+   with working Approve & remove / Reject (keep it) buttons above the still-live panel entry. Still
+   genuinely gated behind human approval by design, matching this whole gap's own established trust
+   model -- not a shortcut around it. Add and remove are now both covered; still genuinely open, named
+   here rather than assumed done: **editing** an existing panel's title/HTML has no assistant path at
+   all yet -- a human can only do it by removing and re-adding one via the direct GUI form, and the
+   assistant still has no equivalent single-step edit action.
 5. ~~**An agents/tokens/costs overview**~~ — **done** (`CADS-devsystem@19c03ef` backend,
    `705b30e` GUI): `RunState.assistant_usage` persists real running totals (call count,
    input/output/cache tokens, `total_cost_usd`) on every real `/ask` call, and a real Assistant
