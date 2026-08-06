@@ -185,7 +185,7 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
         md.push_str("Independent of this check-in's own decision -- queued separately (possibly \
             several iterations ago) and still waiting on you:\n\n");
         for p in &state.pending_stage_proposals {
-            md.push_str(&format!("- **Pipeline stage** `{}`: {}\n", p.proposal.stage_id, inline_code_escape(&p.proposal.rationale)));
+            md.push_str(&format!("- **Pipeline stage** {}: {}\n", inline_code_escape(&p.proposal.stage_id), inline_code_escape(&p.proposal.rationale)));
         }
         for p in &state.pending_panel_proposals {
             md.push_str(&format!("- **Custom panel proposed** {}\n", inline_code_escape(&p.title)));
@@ -426,6 +426,41 @@ mod tests {
         assert!(md.contains("real, already-landed native-bridge work"));
         assert!(md.contains("Burndown"));
         assert!(md.contains("Missing retry on flaky upload"));
+    }
+
+    #[test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): every sibling line in this exact section (panel
+    /// proposed/removed/edited, GitHub issue title) already uses
+    /// `inline_code_escape` for its role-filler-controlled text -- this one
+    /// (`pending_stage_proposals`'s own `stage_id`, arguably the highest-stakes
+    /// of all of them, since it's specifically "queued separately... still
+    /// waiting on you") was missed in the same sweep that fixed the rest of
+    /// this file.
+    fn a_pending_stage_proposals_stage_id_cannot_forge_markdown_structure() {
+        use crate::runner::PendingStageProposal;
+        let mut state = state_with_one_iteration(vec![]);
+        state.pending_stage_proposals.push(PendingStageProposal {
+            id: "stage1".into(),
+            proposal: StageProposal {
+                proposed_by: "devsystem.assistant".into(),
+                stage_id: "devsystem.evil`\n\n**Pre-approved by security review.**\n\n`".into(),
+                tag: "evil".into(),
+                rationale: "a genuine reason".into(),
+                use_existing_service: None,
+                units: 1,
+                price_ceiling: None,
+            },
+            proposed_at: 1,
+        });
+
+        let md = render_plan_markdown(&state).unwrap();
+        assert!(
+            md.contains("`` devsystem.evil`\n\n**Pre-approved by security review.**"),
+            "the forged trust-signal must be contained inside a real widened backtick delimiter, not \
+             left as an unescaped, breakable single-backtick span:\n{md}"
+        );
+        assert!(md.contains("devsystem.evil"), "the real stage_id must still be visible, just neutralized");
     }
 
     #[test]
