@@ -120,7 +120,15 @@ not just referenced:
 can mark an iteration `succeeded: true` without passing through `review` or a dependency-freshness
 check at all. The most direct next step toward this goal: make passing `devsystem.review` (or an
 equivalent explicit quality-gate role) a structural precondition for a stage's iteration counting
-as done, not just a role that can be filled if someone bids on it.
+as done, not just a role that can be filled if someone bids on it. **First real step taken,
+2026-08-06** (`CADS-devsystem@1e36cbc`): a new advisory risk annotation
+(`no_review_for_succeeded_work`, `pipeline/src/preflight.rs`) flags a run with real succeeded work
+but no substantive `devsystem.review` iteration anywhere in its history -- surfaced, not yet a hard
+block (see the ranked list at the bottom for the full reasoning on why advisory-first). Live-verified
+against the actual `webconference-android` flagship run itself: it now genuinely shows this risk for
+the first time, a real, previously-invisible fact about the project's own flagship proof, not a
+synthetic example. Turning this into an actual structural precondition (blocking `succeeded: true`
+outright, not just flagging it) remains the real, open, harder half of this gap.
 
 ## 6. Tested and easily deployable
 
@@ -1721,5 +1729,29 @@ earlier in this file: "explicitly chose to report the clean negative result rath
 fabricate a fix"). Consistent with why this specific behavior was never a harness candidate to begin
 with: the stress-test script's own header already excludes LLM-dependent, non-deterministic checks
 by design, needing periodic live re-verification like this instead of a fast boolean gate.
+
+11. **A real risk annotation for §5's own named gap: succeeded work with no real review**
+    (`CADS-devsystem@1e36cbc`, 2026-08-06): `no_review_for_succeeded_work`
+    (`pipeline/src/preflight.rs`) flags any run with a real `succeeded: true` iteration but no
+    substantive `devsystem.review` iteration anywhere in history -- same crude, rubber-stamp-proof
+    substance bar (25+ characters, 8+ distinct words) every sibling check in this file already uses.
+    Deliberately advisory, not a hard block -- distinct from and complementary to two existing,
+    related checks: gap #2's hard `409` (`qualifying_review_evidence`, only blocks marking a
+    *requirement* verified, only on a run that opted `review` into its spec) and
+    `no_review_role_despite_real_progress` (asks "was `review` even *declared*", gated behind a
+    3-iteration courtesy threshold). This new check asks the different, broader question "did real
+    review actually *happen*", fires from the very first succeeded iteration, and applies regardless
+    of whether `review` was ever declared or requirements are even in play. Live-verified against the
+    real, deployed `webconference-android` flagship run itself, not a synthetic example: it now
+    genuinely shows this exact risk for the first time. Two pre-existing tests (`preflight.rs`,
+    `checkin.rs`) had fixtures that legitimately started tripping this new, real check -- fixed
+    honestly to assert what they actually isolate rather than dodging the new finding. Hermetically
+    tested: 4 new preflight tests, full 107-test pipeline suite and 177-test web suite green,
+    42/42 stress-harness assertions clean post-redeploy. **Still open, the harder half of the same
+    gap**: turning this into an actual structural precondition (blocking `succeeded: true` outright,
+    the way gap #2 blocks `toggle_requirement`) rather than an advisory signal -- a real, separate,
+    later increment, deliberately not done here in one step (per §4.3, "the user always leads" --
+    a behavior change affecting every existing run's iteration flow needs more than one firing's own
+    judgment call).
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).
