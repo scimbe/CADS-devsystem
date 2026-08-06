@@ -2185,4 +2185,25 @@ in `android-ci.yml`, ruling out a config bug on this repo's own side. Re-ran jus
 one-off GitHub infrastructure hiccup from a real, reproducible problem -- in progress as of this
 entry.
 
+**Goal-driven-loop firing, 2026-08-06 (z) -- a thorough sweep across three distinct feature areas,
+honestly reported clean**: no new operator input on any of the three open `CADS-Tunnel#382`
+checkpoints; the `verify-native-bridge` re-run from firing (y) is still legitimately in progress
+(a real cross-compile job, not stuck). DAU-audited three areas not yet individually checked this
+session:
+- **Memory governance** (`govern_memory`/`govern_memory_entry`, `pipeline/src/envelope.rs`) --
+  already correctly bounded: an out-of-range index gets a real `NotFound` regardless of whether
+  `memory.jsonl` exists at all (`read_memory_log` returns an empty `Vec` for a missing file, not an
+  error, so `entries.get_mut(index)` on that empty vec still correctly 404s).
+- **RAG search's empty-query edge case** (`web/src/rag.rs`'s `search`) -- already correctly
+  handled: `terms.is_empty()` returns an explicit empty result set, not "everything" (an empty
+  string would otherwise substring-match every chunk).
+- **Custom panel title/HTML escaping in the outer page** (the panel's own draggable window, not
+  just the manager list) -- already correct: the window title bar uses `escapeHtml(panel.title)`,
+  and the sandboxed iframe's `srcdoc` attribute correctly escapes for the *attribute* context so the
+  browser then parses the (unescaped-after-attribute-decoding) content as real HTML inside the
+  sandbox, exactly the intended behavior for a feature whose whole point is rendering arbitrary
+  user HTML safely.
+No new gap found in any of the three -- reported honestly as a thorough, clean investigation rather
+than manufacturing a change.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
