@@ -211,6 +211,22 @@ check "history stays at exactly the two real iterations actually accepted, not p
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$abort_run"
 
 echo
+echo "[15] the Runs list's pending_reviews must count a real panel-removal proposal, not just three of five queues"
+undercount_run="${RUN}-pending-undercount-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$undercount_run\"}"
+panel_id=$(curl -s -X POST "$BASE/api/runs/$undercount_run/panels" -H 'content-type: application/json' -d '{"title":"Real Panel","html":"<p>x</p>"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' 2>/dev/null)
+curl -s -o /dev/null -X POST "$BASE/api/runs/$undercount_run/panels/$panel_id/propose-remove"
+pending=$(curl -s "$BASE/api/runs" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for r in d:
+    if r['run_id'] == '$undercount_run':
+        print(r['pending_reviews'])
+" 2>/dev/null)
+check "a real pending panel-removal proposal counts toward pending_reviews (previously silently 0)" "1" "$pending"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$undercount_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
