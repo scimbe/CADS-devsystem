@@ -1167,6 +1167,28 @@ honest reason; resume genuinely clears it. Full stress-test harness re-run after
 regressions elsewhere. Forty-nine real stress-test investigations, thirty-eight real gaps found and
 closed.
 
+**The stress test's fiftieth real run, 2026-08-06**: two real gaps in the Runs list, both about it
+silently hiding something a human needs to see. (1) `pending_reviews` only ever summed three of the
+five real proposal queues -- the exact same undercounting shape already found and fixed once for
+the Pipeline panel's own chip badge (2026-08-04), but `list_runs` never got the same fix.
+Live-confirmed before touching anything: a real pending panel-removal proposal showed
+`pending_reviews: 0` and `needs_attention: false` in the actual Runs list. (2) `paused` was already
+in `list_runs`'s own response payload and never once checked in the GUI's badge logic -- a fully
+paused run could show zero badge in the list if nothing else happened to also be true,
+indistinguishable from a healthy run at a glance. Both fixed (`CADS-devsystem@c564df5`): the
+pending-reviews sum now covers all five real queues, and `paused` is now the highest-priority
+badge, showing the real `pause_reason` (run 49) rather than a generic label. Hermetic: web crate
+166/166 (a new test proving the undercount fix), clippy clean. Deployed and live-verified both
+fixes end to end against the actual deployment, including a real Playwright screenshot confirming
+the GUI itself renders `"⏸ milestone achieved: <description>"` in the Runs list, not just the API
+payload.
+
+**The stress test's fifty-first real run, 2026-08-06**: added run 50's pending-reviews undercount
+fix to the harness as check [15] (`CADS-devsystem@a1c0c45`) -- live-confirmed against the deployed
+change before writing it. The harness now covers twenty-one real checks, 27/27 individual
+assertions passing locally against the real deployment. Fifty-one real stress-test investigations,
+forty real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
