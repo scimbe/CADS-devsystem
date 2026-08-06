@@ -987,6 +987,22 @@ real gaps found and closed.
    (report the real ceiling distance), not just papered over with the new risk annotation. Re-
    verified live against the exact run used to prove both bugs: three correct verdicts where there
    were none or wrong ones before, no resubmission needed.
+   **Third slice done, 2026-08-06** (`CADS-devsystem@d7ded6b`): §4.3's own text names two explicit
+   worked examples of what a real `devsystem.process_improve` check should catch -- sparse
+   check-ins (second slice above) and "this role's acceptance criteria are too vague to be
+   deterministic", left honestly open since the first slice. `add_requirement`'s own
+   `MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS` gate already rejects the worst cases at add-time ("ok",
+   "."), but a criterion like "works" or "is fast" clears that 5-character bar while still leaving
+   a real decision to the LLM -- exactly what §1's own commitment ("acceptance criteria specific
+   enough to leave no real decision to the LLM") exists to avoid. `vague_acceptance_criteria`
+   flags any requirement whose criterion has fewer than 3 distinct words -- a real, honestly-scoped
+   mechanical proxy (a terse-but-specific criterion like "file exists" can still false-positive; a
+   vague-but-wordy one can still slip through), same crude-proxy discipline as
+   `DEFECT_ADMISSION_PHRASES`/`SECURITY_KEYWORDS` already use in the same file. Live-verified: a
+   real scratch run's requirement with criterion "works" now correctly shows the new risk. Still
+   open: a real biddable `devsystem.process_improve` role a filler could bid on and actively
+   propose process changes through -- three mechanical checks now exist, but none of them is a
+   role yet, the fuller version of this gap first slice named and still not claimed done here.
 10. ~~**A real evidentiary gate on assistant-driven requirement verification**~~ (§4.3/§8, found by the
     stress test's fourteenth run, 2026-08-06) — today, `devsystem.assistant` can be asked in a plain
     chat message to verify any requirement's acceptance criteria on any run, and will sometimes
