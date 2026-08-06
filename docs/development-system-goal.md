@@ -717,6 +717,19 @@ in this project use single- or low-double-digit values, nowhere close to this li
 after still works cleanly. Twenty-one real stress-test investigations, twenty-one real gaps found and
 closed.
 
+**The stress test's twenty-second real run, 2026-08-06**: `MAX_LIST_ITEMS`'s own doc comment gives a
+real reason for capping list growth (unbounded `state.json` growth, matching this host's own real,
+limited disk headroom) -- but the check that reason justifies only ever got wired into
+`add_backlog_item`/`add_milestone`/`add_requirement`. `custom_panels` and all four pending-proposal
+queues (`pending_panel_proposals`, `pending_panel_removal_proposals`, `pending_panel_edit_proposals`,
+`pending_stage_proposals`, `pending_issue_proposals`) never got it. Live-verified before this fix: 510
+real custom panels added in a row against the actual deployment via `add_custom_panel`, zero
+rejections, no cap anywhere. Fixed by adding the identical `len() >= MAX_LIST_ITEMS` check, in the
+identical place (right after `owner_authorized`, before mutating state), to all six real entry points
+that were missing it (`CADS-devsystem@1e22640`). Re-verified live against the exact case that proved
+the bug: seeded a fresh run to exactly 500 custom panels, the 501st now gets a real `400`. Twenty-two
+real stress-test investigations, twenty-two real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
