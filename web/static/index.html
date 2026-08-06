@@ -1560,7 +1560,15 @@ async function renderRagPanel(id, data) {
     form.append('file', file, file.name);
     try {
       const r = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/rag/upload-file`, { method: 'POST', body: form });
-      statusEl.textContent = `Extracted ${r.elements_extracted} element(s)${r.extracted_text_truncated ? ' (text truncated to the size cap)' : ''}.`;
+      // Real DAU-lens gap (#382 goal doc §8, 2026-08-06): the document_extraction
+      // channel fallback has no "elements" concept at all (unlike Unstructured),
+      // so it always reports elements_extracted:0 -- a real, successful upload
+      // through that path used to render the confusing "Extracted 0 element(s)."
+      // as if something had gone wrong. extracted_via says honestly which real
+      // path actually ran; only Unstructured's own element count is meaningful.
+      statusEl.textContent = r.extracted_via === 'unstructured'
+        ? `Extracted ${r.elements_extracted} element(s)${r.extracted_text_truncated ? ' (text truncated to the size cap)' : ''}.`
+        : `Extracted via ${r.extracted_via}.`;
       statusEl.className = 'status-line ok';
       fileInput.value = '';
       await renderRagPanel(id, data);
