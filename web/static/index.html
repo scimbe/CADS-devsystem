@@ -1970,7 +1970,7 @@ function openFillModePopover(id, data, anchorEl) {
     }
   };
   pop.querySelector('[data-action="auction"]').onclick = () => apply({ mode: 'auction' });
-  pop.querySelector('[data-action="dedicated"]').onclick = () => {
+  const applyDedicated = () => {
     const label = document.getElementById('fillmode-label-input').value.trim();
     if (!label) {
       const statusEl = document.getElementById('fillmode-popover-status');
@@ -1979,6 +1979,16 @@ function openFillModePopover(id, data, anchorEl) {
     }
     apply({ mode: 'dedicated', label });
   };
+  pop.querySelector('[data-action="dedicated"]').onclick = applyDedicated;
+  // DAU-lens gap found live 2026-08-06 (#382 goal doc §7/§8): a single-line
+  // text input with no surrounding <form> gives Enter no default behavior at
+  // all -- a user who types a label and instinctively hits Enter (the
+  // universal "submit this" muscle memory for a lone text field) got
+  // silence: no submission, no error, popover just sits there. Wired
+  // explicitly, same "Set as dedicated" path the button itself uses.
+  document.getElementById('fillmode-label-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); applyDedicated(); }
+  });
   setTimeout(() => {
     document.addEventListener('click', function onDocClick(e) {
       if (!pop.contains(e.target)) { closeFillModePopover(); document.removeEventListener('click', onDocClick); }
