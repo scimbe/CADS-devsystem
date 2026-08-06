@@ -2889,4 +2889,23 @@ found, every commit closing it, the retroactive check, and the harness update --
 action needed, and explicitly not touching or reframing the three still-open decision points while
 doing it.
 
+**Main-dev-loop firing, 2026-08-06 (hhh) -- a genuinely fresh DAU angle: keyboard submission, not
+just keyboard dismissal**: no new operator input on any of the three open `#382` checkpoints (the
+issue's own "latest comment" timestamp was just this loop's own firing (ggg) post, not a real reply
+-- checked the actual content, not just the date, before concluding that). Issue #14 unchanged; no
+scimbe-authored PRs on either repo; `CADS-webconference-android` unchanged upstream; CI still not
+triggering new runs for the last several pushes, same outage.
+
+Firing (ll) closed Escape-to-*dismiss* the fill-mode/refresh popovers; this firing checked the other
+half of the same keyboard-affordance question -- does Enter *submit* the dedicated-agent-label
+input, the universal muscle memory for a lone single-line text field? Live-confirmed before fixing:
+typing a label and pressing Enter did nothing at all -- no submission, no error, the popover just
+sat there, because the input has no surrounding `<form>` to give Enter any default behavior. Fixed
+(`CADS-devsystem@bfb2aee`) by wiring Enter to the same "Set as dedicated" path the button already
+uses (including its existing "label required" validation), factored into one shared function so both
+triggers stay identical. Live-verified via Playwright against the real redeployed site: before, Enter
+left the popover open and the server's `role_fill_modes` unchanged; after, Enter closes the popover
+and the real server state reflects the submitted label, zero console errors. Cleaned up the scratch
+state on the shared docs demo run afterward.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
