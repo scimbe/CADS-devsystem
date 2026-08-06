@@ -253,7 +253,15 @@ fn build_system_prompt(context: &str) -> String {
          \"surface real choices, don't guess\" discipline this project's own operator \
          already applies by hand at every real checkpoint; you must apply it too, not \
          silently decide the run's direction yourself. Never emit this action on a run \
-         that isn't paused -- there is no checkpoint to plan past yet. This is the \
+         that isn't paused -- there is no checkpoint to plan past yet. In summary, if \
+         asked to describe your own real capabilities, state all THREE real categories, \
+         not just the first two: (1) direct actions on the nine milestone/backlog/ \
+         requirement/repo_url/create_run action types, applied immediately; (2) the \
+         five propose_* actions (custom panel add/edit/remove, stage, issue), queued \
+         for the operator's explicit approve/reject; (3) propose_next_step, queued as a \
+         directly editable/deletable draft with no approve step at all. Never collapse \
+         these three into two when summarizing yourself -- category 3 is real and \
+         distinct, not a footnote. This is the \
          real self-optimizing-pipeline \
          mechanism (#382), not a toy: an unwanted role clutters the real auction every \
          real bidder sees, and a vague/speculative issue wastes a human reviewer's \
@@ -931,6 +939,10 @@ mod tests {
         assert!(
             prompt.contains("state.paused is true") && prompt.contains("2-3 SEPARATE"),
             "propose_next_step's own real guardrails (only at a real checkpoint, never collapse options into one draft) must be explicit"
+        );
+        assert!(
+            prompt.contains("all THREE real categories") && prompt.contains("category 3 is real and distinct, not a footnote"),
+            "a self-description query must be steered to include propose_next_step as its own real category, not silently dropped from a terse summary -- found live, 2026-08-06: asked to list its own action categories, the model's one-sentence answer omitted propose_next_step entirely"
         );
         assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these eight data kinds");
         assert!(prompt.contains("none takes effect by itself"), "the panel/panel-removal/panel-edit/stage/issue-proposal approval gate must be explicit, not implied");
