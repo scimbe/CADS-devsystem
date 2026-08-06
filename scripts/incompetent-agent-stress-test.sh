@@ -456,6 +456,35 @@ status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/nex
 check "a bidi-laced next-step draft is rejected" "400" "$status"
 
 echo
+echo "[36] a paused run must refuse further iterations with a real 409, not silently accept them"
+paused_run="${RUN}-paused-iterate-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$paused_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$paused_run/pause"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$paused_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"a real, substantive feedback string","succeeded":true}')
+check "an iteration on a paused run is rejected" "409" "$status"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$paused_run/resume"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$paused_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"a real, substantive feedback string","succeeded":true}')
+check "the identical submission succeeds once the run is genuinely resumed" "200" "$status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$paused_run"
+
+echo
+echo "[37] a submission byte-identical to the run's own immediately-preceding iteration must be refused with a real 409, not recorded as a distinct new one"
+dup_run="${RUN}-dup-iterate-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$dup_run\"}"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$dup_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.plan","feedback":"a real, substantive feedback string","succeeded":true}')
+check "the first, genuine submission succeeds" "200" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$dup_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.plan","feedback":"a real, substantive feedback string","succeeded":true}')
+check "the byte-identical resubmission is rejected" "409" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$dup_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.plan","feedback":"a genuinely different feedback string this time","succeeded":true}')
+check "a genuinely different submission right after still succeeds -- not a blanket same-stage block" "200" "$status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$dup_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
