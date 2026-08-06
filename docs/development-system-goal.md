@@ -3316,4 +3316,45 @@ dedicated future firing (or several, given the count) -- explicitly not attempte
 increment bounded to what firing (xxx) actually named as open, per this session's own standing
 "no silent scope creep" discipline.
 
+**Goal-driven-loop firing, 2026-08-06 (zzz) -- closed the sitewide `aria-live` gap firing (yyy)
+found, after correcting that firing's own miscount**: no new operator input on any of the three open
+`#382` checkpoints; GitHub's incident still `major_outage` though recent CI runs continue completing
+`success`; no scimbe-authored open PRs.
+
+**Honest correction first**: firing (yyy)'s "84 status-line instances" was wrong -- a naive
+`grep -c "status-line"` counts every text occurrence, including the CSS rule and every later
+`.className = 'status-line...'` JS reassignment to an *already-existing* element, not 84 separate
+DOM nodes. A precise check (`grep -oE 'id="[a-z-]+" class="status-line'` deduplicated) found the real
+number: **14 distinct elements**. Recording this plainly rather than quietly fixing the number and
+moving on, matching this session's own standing "catch and correct a wrong number before it
+compounds" discipline (the same one applied earlier to a wrong test count in firing uuu's own draft).
+
+Fixed the real 13 remaining elements (`new-project-status` already got this in firing yyy) with the
+identical `role="status" aria-live="polite" aria-atomic="true"` pattern: `backlog-status`,
+`cp-add-status`, `criteria-status`, `fillmode-popover-status`, `iter-status`, `milestone-status`,
+`op-status`, `quick-offer-status`, `rag-file-upload-status`, `rag-sync-status`, `rag-upload-status`,
+`repo-status`, `requirement-status` (`web/static/index.html`, `CADS-devsystem@37f9868`).
+
+**A real, self-caught regression during this exact firing, worth recording honestly rather than
+quietly fixing**: the explanatory comment written for the fix contained literal backtick characters
+inside an HTML comment that itself lives inside a JS template literal (`overlay.innerHTML =
+\`...\``) -- the backticks prematurely terminated the JS string, throwing a real `SyntaxError` that
+broke the ENTIRE page (blank Runs panel, no chip bar at all). Caught before this got anywhere near a
+commit: a routine post-fix Playwright verification pass found the page hadn't rendered, a console-
+error check confirmed the real `SyntaxError`, traced to the stray backticks, fixed by rewriting the
+comment without them, then the full verification pass was re-run from scratch on the corrected code
+before proceeding to commit. This is exactly the "verify before shipping, don't trust your own
+change" discipline this whole session's methodology is built on -- applied here to a mistake of my
+own making in the same firing, not just to prior code.
+
+Live-verified all 14 elements individually via Playwright against the real redeployed container (12
+reachable directly by opening every panel chip; `new-project-status` and `fillmode-popover-status`
+verified via their own real trigger flows). Regression-checked the focus trap, the real create-run
+flow, and the real error/success status-announcement flow from the two previous firings all still
+work identically. Hermetic `web` suite re-run, 190/190 unchanged.
+
+This closes the DAU/accessibility thread opened by firings (vvv)/(www)/(xxx)/(yyy) for this app's
+custom modal and every real status-line element. No further candidate identified in this specific
+thread; a future firing should look toward a genuinely different lens.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
