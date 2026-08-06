@@ -2104,4 +2104,22 @@ device" before this was caught and cleaned up). Fixed (`CADS-webconference-andro
 directly to that repo (README-only, no code/behavior change, so no CADS-devsystem-side
 test/redeploy applies).
 
+**Goal-driven-loop firing, 2026-08-06 (u) -- a real, live self-contradiction found in the assistant's
+own system prompt, same class as the earlier "all THREE real categories" fix in this exact file**:
+when `propose_next_step` shipped as the fifteenth action type (a real, ninth kind of data --
+next-step drafts), the system prompt's own trailing "kinds of data" summary was left at the stale
+pre-`propose_next_step` value of eight. Live-confirmed before fixing: asked the actual deployed
+assistant to state its own counts -- it replied "Eight kinds of data, fifteen action types."
+followed immediately by its own generated table (5 direct + 3 proposal + 1 draft kinds) that itself
+summed to nine, a real, live self-contradiction. Fixed to state nine, with all nine named explicitly
+so this can't silently drift the same way again (`CADS-devsystem@a261b61`). Strengthened the
+existing system-prompt test with an explicit assertion pinning "fifteen action types" and "nine
+kinds of data" together. Hermetic pipeline suite 111/111 (unchanged count -- extended an existing
+test), hermetic clippy clean. Deployed via `deploy-devsystem-assistant.sh`, re-verified live with the
+identical question: the real reply now says "Nine kinds of data, fifteen action types," internally
+consistent with its own table. No new stress-harness check -- this is non-deterministic LLM output,
+not a mechanical API contract, matching §8's own established exclusion for this class of check (the
+hermetic prompt-content test is the right coverage level, same precedent as the earlier category-3
+fix).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
