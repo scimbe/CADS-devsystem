@@ -3174,10 +3174,52 @@ comparison now calls it instead of keeping a second, separately-maintained copy.
 covering the duplicate case, a genuinely-different-feedback case, an empty-history case, and a
 now-superseded-earlier-entry case in one function, matching this project's own convention for a
 single multi-assertion test over a pure function), 119/119 pipeline-lib tests (was 118), 190/190 web
-tests unchanged, hermetic clippy clean on both crates, 0 warnings. This closes the fourth and, on the current re-enumeration of every `iterate_run` check
+tests unchanged, hermetic clippy clean on both crates, 0 warnings.
+
+This closes the fourth and, on the current re-enumeration of every `iterate_run` check
 against `run_local`, last known instance of this specific "two real entry points, one bug class"
 shape (`valid_run_id`/`owner_authorized`'s HTTP-only half is a correct, non-gap difference -- see
 firing ttt) -- the next firing should re-scan for a genuinely different kind of gap rather than a
 fifth pass over the same two functions.
+
+**Docs-loop firing, 2026-08-06 -- documented the local-CLI idempotency-guard fix**:
+`CADS-devsystem-docs` extended `_explanation/duplicate-iteration-guard.md` (the page already telling
+this guard's full story) with the local-CLI gap and fix, plus a cross-reference in
+`submit-an-iteration.md` alongside the other three local-CLI-only gaps
+(`CADS-devsystem-docs@bafd71e`). Hermetic Jekyll build clean, all cross-links verified in the built
+site. No new operator input on any of the three open `#382` checkpoints; GitHub's incident still
+`major_outage` though both repos' most recent pushes were running rather than stuck queued.
+
+**Goal-driven-loop firing, 2026-08-06 (vvv) -- honored firing (uuu)'s own note and found a genuinely
+different kind of gap: a second DAU-relevant modal missing Escape-to-close**: no new operator input
+on any of the three open `#382` checkpoints (all three most recent comments still my own); GitHub's
+incident still `major_outage`; issue #14 unchanged; no scimbe-authored open PRs on either target
+repo. Re-confirmed the `iterate_run`/`run_local` seam is genuinely exhausted (only two real callers
+of `run_iteration` exist in the whole codebase, both already covered; `apply_proposal` has only one
+real caller) before looking elsewhere, per the previous firing's own closing note.
+
+Picked back up the "GUI keyboard/accessibility DAU-proofing" angle (flagged untried in firing (ii),
+partially closed by firing (ll)'s Escape-to-close fix for the two custom popovers) and swept for any
+*other* custom overlay/modal in the app with the same gap. Grepped sitewide for `.modal-overlay` --
+exactly one other instance exists: the "New Project" dialog (`openNewProjectDialog`), the very first
+control a new user encounters. It already closed on an outside click, same as the two popovers
+before their own fix, but had no `Escape` handling at all.
+
+Live-confirmed before fixing, via a real Playwright run against the actual production
+`devsystem-web` container (reachable directly on `127.0.0.1:8790` on this host, no gate in front of
+it locally): opened the real dialog through its real "+ New" button, pressed `Escape`, the overlay
+was still present afterward with zero console errors -- genuinely missing a handler, not silently
+failing one. Fixed by adding a third branch to the existing sitewide `Escape` keydown listener
+(`web/static/index.html`) calling the dialog's own existing `closeNewProjectDialog()`. Redeployed the
+real `devsystem-web` container (`scripts/deploy-devsystem-web.sh`) and re-ran the identical
+Playwright script against it: the overlay now closes on `Escape`, zero console errors. Regression-
+checked the two original popovers (refresh-interval) still close on `Escape` after this change, and
+that pressing `Escape` with nothing open remains a harmless no-op -- all three real, all clean.
+
+Pure static-frontend change; hermetic `web` crate suite re-run for completeness (190/190, unchanged,
+as expected for a change outside any Rust source). No goal-doc-relevant gap remains open in this
+specific angle -- the sitewide grep confirms these are the only two modal/popover surfaces that
+exist; future firings should look toward a still-different DAU/accessibility lens (e.g. focus-trap
+behavior inside an open modal, or screen-reader labeling) rather than re-sweeping Escape coverage.
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).
