@@ -198,6 +198,19 @@ check "real, non-empty feedback still works" "200" "$status"
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$feedback_run"
 
 echo
+echo "[14] the 'bounded super loop' must actually be enforced, not just reported"
+abort_run="${RUN}-abort-enforcement-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$abort_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$abort_run/criteria" -H 'content-type: application/json' -d '{"max_iterations":2,"max_consecutive_failures":3,"checkin_every":10}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$abort_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.implement","feedback":"real work, iteration 1","succeeded":true}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$abort_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.implement","feedback":"real work, iteration 2 -- hits the real ceiling","succeeded":true}'
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$abort_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.implement","feedback":"should be refused -- already aborted","succeeded":true}')
+check "a THIRD iteration past max_iterations:2 is genuinely refused, not silently accepted (the real regression this session found live)" "409" "$status"
+history_len=$(curl -s "$BASE/api/runs/$abort_run" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["state"]["history"]))' 2>/dev/null)
+check "history stays at exactly the two real iterations actually accepted, not past the configured bound" "2" "$history_len"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$abort_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
