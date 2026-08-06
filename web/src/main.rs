@@ -570,8 +570,19 @@ struct RunHealth {
 fn run_health(run_state: &devsystem_pipeline::runner::RunState) -> RunHealth {
     let criteria = run_state.criteria;
     let completed = run_state.history.len() as u32;
+    // Real bug found live by the incompetent-agent stress test (#382 goal
+    // doc §8/§9, 2026-08-06): `checkin_every: 0` has no validation anywhere
+    // (update_criteria only rejects max_iterations/max_consecutive_failures
+    // at zero) and `should_checkin`'s own real fallback for it means the
+    // mandatory cadence is effectively disabled -- only the hard
+    // `max_iterations` ceiling still forces a check-in. Reporting a
+    // hardcoded `0` here used to actively misrepresent that as "due right
+    // now" -- and, worse, fed straight into `needs_attention`'s own `<= 1`
+    // threshold below, permanently false-flagging such a run as needing
+    // attention for a reason that was never real. Report the real distance
+    // to the actual next check-in event (the ceiling) instead.
     let until_checkin = if criteria.checkin_every == 0 {
-        0
+        criteria.max_iterations.saturating_sub(completed)
     } else {
         let rem = completed % criteria.checkin_every;
         if rem == 0 { criteria.checkin_every } else { criteria.checkin_every - rem }
@@ -4904,6 +4915,53 @@ exit 1"#);
         let body = body_json(response).await;
         assert_eq!(body["health"]["criteria"]["max_iterations"], 50);
         assert_eq!(body["health"]["iterations_until_checkin"], 10, "health should reflect the newly saved criteria, not the old default");
+    }
+
+    #[tokio::test]
+    /// Real bug found live by the incompetent-agent stress test (#382 goal
+    /// doc §8/§9, 2026-08-06): `checkin_every: 0` has no validation
+    /// (`update_criteria` only rejects `max_iterations`/
+    /// `max_consecutive_failures` at zero), and `iterations_until_checkin`
+    /// used to hardcode `0` for it -- actively misrepresenting "the cadence
+    /// is effectively disabled" as "a check-in is due right now", which then
+    /// fed straight into `needs_attention`'s own `<= 1` threshold,
+    /// permanently false-flagging the run. Now reports the real distance to
+    /// the actual next check-in event (the hard `max_iterations` ceiling).
+    async fn checkin_every_zero_reports_the_real_ceiling_distance_not_a_misleading_zero() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "checkin-disabled-run"})))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/checkin-disabled-run/criteria",
+                serde_json::json!({"max_iterations": 20, "max_consecutive_failures": 3, "checkin_every": 0}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri("/api/runs/checkin-disabled-run").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        assert_eq!(
+            body["health"]["iterations_until_checkin"], 20,
+            "must report the real distance to the ceiling, not a misleading 0 that implies imminent"
+        );
+
+        let response = app.oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap();
+        let list = body_json(response).await;
+        let entry = list.as_array().unwrap().iter().find(|r| r["run_id"] == "checkin-disabled-run").unwrap();
+        assert_eq!(
+            entry["needs_attention"], false,
+            "a fresh run with a disabled (not sparse-but-real) cadence must not be permanently false-flagged"
+        );
     }
 
     #[tokio::test]

@@ -60,7 +60,50 @@ pub fn preflight_annotations(state: &RunState) -> Vec<RiskAnnotation> {
     if let Some(a) = succeeded_iteration_admits_a_defect(state) {
         findings.push(a);
     }
+    if let Some(a) = checkin_cadence_effectively_disabled(state) {
+        findings.push(a);
+    }
     findings
+}
+
+/// Real gap named directly in the goal doc's own §4.3 -- an explicit worked
+/// example of what a real `devsystem.process_improve` check should catch:
+/// "this run's check-ins are too sparse". Live-verified before this check
+/// existed: `checkin_every: 0` (accepted by `update_criteria` with zero
+/// validation -- unlike `max_iterations`/`max_consecutive_failures`, which
+/// already reject `0`) produced zero risk findings, even though
+/// `should_checkin`'s own real fallback for it means the mandatory cadence
+/// (`AbortCriteria::checkin_every`'s whole documented purpose: "fires at
+/// least this often, even when every iteration is succeeding") is
+/// effectively disabled -- only the hard `max_iterations` ceiling still
+/// forces a check-in. `checkin_every >= max_iterations` is the same real
+/// problem in a less obvious shape: the cadence can never fire on its own
+/// before the ceiling does either, so it's functionally disabled too, not
+/// just large.
+fn checkin_cadence_effectively_disabled(state: &RunState) -> Option<RiskAnnotation> {
+    let c = state.criteria;
+    if c.checkin_every == 0 {
+        return Some(RiskAnnotation {
+            label: "mandatory check-in cadence effectively disabled".into(),
+            evidence: format!(
+                "checkin_every is 0 -- the mandatory \"check in at least this often\" cadence never \
+                 fires on its own; only the hard max_iterations ceiling ({}) still forces a check-in",
+                c.max_iterations
+            ),
+        });
+    }
+    if c.checkin_every >= c.max_iterations {
+        return Some(RiskAnnotation {
+            label: "mandatory check-in cadence effectively disabled".into(),
+            evidence: format!(
+                "checkin_every ({}) is at or past max_iterations ({}) -- the cadence can never fire \
+                 on its own before the hard ceiling does either, so it never provides an actual \
+                 mid-run check-in",
+                c.checkin_every, c.max_iterations
+            ),
+        });
+    }
+    None
 }
 
 /// "touches auth" (proposal §5's own example): the latest iteration's feedback, or
@@ -216,7 +259,7 @@ fn no_review_role_despite_real_progress(spec: &PipelineSpec, state: &RunState) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{IterationRecord, StageProposal, STAGE_REVIEW, STAGE_VERIFY};
+    use crate::{AbortCriteria, IterationRecord, StageProposal, STAGE_REVIEW, STAGE_VERIFY};
 
     fn iteration(stage: &str, iteration: u32, feedback: &str, proposals: Vec<StageProposal>) -> IterationRecord {
         IterationRecord { run_id: "run-preflight".into(), stage: stage.into(), iteration, feedback: feedback.into(), proposals, succeeded: true, requirement_indices: Vec::new() }
@@ -305,6 +348,44 @@ mod tests {
         let mut state = RunState::new("run-preflight");
         state.history.push(iteration(STAGE_IMPLEMENT, 1, "shipped the retry-on-failure feature, all real acceptance criteria verified", vec![]));
         assert!(!preflight_annotations(&state).iter().any(|f| f.label == "succeeded iteration admits a known defect"));
+    }
+
+    #[test]
+    /// Real gap named directly in the goal doc's own §4.3 worked example
+    /// ("this run's check-ins are too sparse"), live-verified before this
+    /// check existed: checkin_every: 0 is accepted with zero validation and
+    /// produced zero risk findings.
+    fn flags_checkin_every_zero_as_effectively_disabled() {
+        let mut state = RunState::new("run-preflight");
+        state.criteria = AbortCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 0 };
+        let findings = preflight_annotations(&state);
+        assert!(
+            findings.iter().any(|f| f.label == "mandatory check-in cadence effectively disabled" && f.evidence.contains("checkin_every is 0")),
+            "got: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn flags_checkin_every_at_or_past_max_iterations_as_effectively_disabled() {
+        let mut state = RunState::new("run-preflight");
+        state.criteria = AbortCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 20 };
+        let findings = preflight_annotations(&state);
+        assert!(
+            findings.iter().any(|f| f.label == "mandatory check-in cadence effectively disabled"),
+            "checkin_every == max_iterations can never fire on its own before the ceiling does: {findings:?}"
+        );
+
+        let mut state2 = RunState::new("run-preflight-2");
+        state2.criteria = AbortCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 500 };
+        assert!(preflight_annotations(&state2).iter().any(|f| f.label == "mandatory check-in cadence effectively disabled"));
+    }
+
+    #[test]
+    fn no_checkin_cadence_finding_for_a_real_sensible_cadence() {
+        let state = RunState::new("run-preflight");
+        // RunState::new's own default (checkin_every: 5, max_iterations: 20) --
+        // a real, sensible cadence must never be flagged.
+        assert!(!preflight_annotations(&state).iter().any(|f| f.label == "mandatory check-in cadence effectively disabled"));
     }
 
     #[test]
