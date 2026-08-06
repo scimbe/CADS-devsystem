@@ -2876,4 +2876,17 @@ code, a different shape than everything else here; already covered by hermetic R
 binary/Playwright verification at the firings that found it. Ran the full harness against the real
 live deployment: 68/68 passed (was 62).
 
+**Goal-driven-loop firing, 2026-08-06 (ggg) -- closed the loop on today's own real finding by
+actually telling the operator about it**: no new operator input on any of the three open `#382`
+checkpoints; outage still active. Noticed a real process gap of a different kind than usual: today's
+entire Trojan Source bidi-spoofing investigation (eleven fields, six firings, plus the separate
+markdown-forgery class and the retroactive risk check) had only ever been recorded in this goal doc
+-- never surfaced to the operator via the actual communication channel this loop is supposed to use
+for real findings, unlike the CI-outage discovery or the M1/OIDC/hard-block decision points, all of
+which got their own `#382` comment. Posted one consolidated summary
+([comment](https://github.com/scimbe/CADS-Tunnel/issues/382#issuecomment-5208833272)) -- what was
+found, every commit closing it, the retroactive check, and the harness update -- explicitly no
+action needed, and explicitly not touching or reframing the three still-open decision points while
+doing it.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
