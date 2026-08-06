@@ -593,8 +593,38 @@ async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap
             });
         }
     }
-    runs.sort_by(|a, b| a.run_id.cmp(&b.run_id));
+    // Real gap found live 2026-08-06 (stress-test run 52): purely alphabetical, no
+    // priority at all -- confirmed against the actual deployment before touching
+    // anything, the real flagship `webconference-android` run (genuinely paused,
+    // needing a real human decision) sat at position 105 of 110 in the Runs list,
+    // behind over a hundred alphabetically-earlier scratch runs with nothing
+    // outstanding. The same real urgency order this list's own badge logic already
+    // uses (GUI: paused > pending review > needs attention > stalled > risk) now
+    // drives the sort too, so the run that most needs a look is the one a human
+    // actually sees first -- alphabetical only as the tie-break within a tier, not
+    // the whole ordering.
+    runs.sort_by(|a, b| attention_priority(a).cmp(&attention_priority(b)).then_with(|| a.run_id.cmp(&b.run_id)));
     Json(runs).into_response()
+}
+
+/// Lower = more urgent. Mirrors the GUI's own real badge precedence exactly (see
+/// `index.html`'s own comment on the run-list badge) so the run at the top of the
+/// list is always the one showing the most urgent badge, never a mismatch between
+/// what's sorted first and what's visually flagged first.
+fn attention_priority(r: &RunSummary) -> u8 {
+    if r.paused {
+        0
+    } else if r.pending_reviews > 0 {
+        1
+    } else if r.needs_attention {
+        2
+    } else if !r.stalled_stages.is_empty() {
+        3
+    } else if r.risk_count > 0 {
+        4
+    } else {
+        5
+    }
 }
 
 async fn create_run(
@@ -3781,6 +3811,31 @@ mod tests {
         let body = body_json(response).await;
         assert_eq!(body[0]["pending_reviews"], 1, "a real pending panel-removal proposal must count toward pending_reviews, not be silently invisible");
         assert_eq!(body[0]["needs_attention"], true);
+    }
+
+    #[tokio::test]
+    /// Real gap found live 2026-08-06 (stress-test run 52): list_runs sorted purely
+    /// alphabetically, no priority at all. Live-confirmed before touching anything:
+    /// the real flagship webconference-android run (genuinely paused) sat at
+    /// position 105 of 110 in the actual Runs list, behind well over a hundred
+    /// alphabetically-earlier scratch runs with nothing outstanding. Proves the real
+    /// fix with run_ids deliberately chosen to sort the WRONG way alphabetically if
+    /// the old behavior regressed -- "z-paused-run" must still land before
+    /// "a-healthy-run" despite the letters saying otherwise.
+    async fn list_runs_sorts_the_most_urgent_run_first_not_purely_alphabetically() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "a-healthy-run"}))).await.unwrap();
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "z-paused-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/z-paused-run/pause").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        let response = app.oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body[0]["run_id"], "z-paused-run", "the paused run must sort first despite losing alphabetically");
+        assert_eq!(body[1]["run_id"], "a-healthy-run");
     }
 
     #[tokio::test]
