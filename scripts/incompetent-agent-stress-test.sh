@@ -300,6 +300,18 @@ check "a real, substantive review iteration clears the risk" "False" "$has_risk_
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$review_run"
 
 echo
+echo "[21] EVERY simultaneously-unbounded role must be flagged, not just the first one added"
+multi_run="${RUN}-multi-unbounded-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$multi_run\"}"
+prop_a=$(curl -s -X POST "$BASE/api/runs/$multi_run/stages/propose" -H 'content-type: application/json' -d '{"stage_id":"devsystem.role_a","tag":"role_a","rationale":"probe A"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' 2>/dev/null)
+curl -s -o /dev/null -X POST "$BASE/api/runs/$multi_run/stages/proposals/$prop_a/approve"
+prop_b=$(curl -s -X POST "$BASE/api/runs/$multi_run/stages/propose" -H 'content-type: application/json' -d '{"stage_id":"devsystem.role_b","tag":"role_b","rationale":"probe B"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' 2>/dev/null)
+curl -s -o /dev/null -X POST "$BASE/api/runs/$multi_run/stages/proposals/$prop_b/approve"
+unbounded_count=$(curl -s "$BASE/api/runs/$multi_run" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for r in d["risks"] if r["label"]=="no price ceiling set"))' 2>/dev/null)
+check "both real unbounded roles are flagged, not just the first added" "2" "$unbounded_count"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$multi_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
