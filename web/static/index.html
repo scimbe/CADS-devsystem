@@ -707,6 +707,24 @@ function renderCustomPanelsManager(id, data) {
           </div>
         </div>`).join('')
     : '';
+  // Real second half of gap #4 (#382 goal doc §7.2): the assistant can propose
+  // ADDING a panel above; this is the mirror for REMOVING an existing one, same
+  // pending-until-approved trust model, inverted -- here APPROVING is the real,
+  // destructive, irreversible step (matching the human's own Remove button's
+  // confirm() dialog), and rejecting is the safe direction that needs none.
+  const removalProposals = (data.state && data.state.pending_panel_removal_proposals) || [];
+  const removalProposalsHtml = removalProposals.length
+    ? `<div class="arch-note" style="margin-bottom:.4rem">devsystem.assistant proposes removing these -- the real panel stays live until you decide:</div>`
+      + removalProposals.map(p => `
+        <div class="role-card">
+          <div class="role-card-head"><span class="role">${escapeHtml(p.panel_title)}</span></div>
+          <div class="role-meta">removal proposed ${escapeHtml(new Date(p.proposed_at * 1000).toLocaleString())}</div>
+          <div style="margin-top:.4rem;display:flex;gap:.4rem">
+            <button type="button" class="panel-removal-approve-btn" data-id="${p.id}" data-title="${escapeHtml(p.panel_title)}">Approve &amp; remove</button>
+            <button type="button" class="secondary panel-removal-reject-btn" data-id="${p.id}">Reject (keep it)</button>
+          </div>
+        </div>`).join('')
+    : '';
   const list = panels.length
     ? panels.map(p => `
         <div class="role-card">
@@ -719,6 +737,7 @@ function renderCustomPanelsManager(id, data) {
     : `<span class="lede">No custom panels yet -- write one below.</span>`;
   body.innerHTML = `
     ${proposalsHtml ? `<div style="margin-bottom:.6rem">${proposalsHtml}</div>` : ''}
+    ${removalProposalsHtml ? `<div style="margin-bottom:.6rem">${removalProposalsHtml}</div>` : ''}
     <div style="margin-bottom:.6rem">${list}</div>
     <form id="add-custom-panel-form">
       <label>title<input id="cp-title" type="text" placeholder="My Panel" required></label>
@@ -762,6 +781,43 @@ function renderCustomPanelsManager(id, data) {
         await refreshRunsList();
       } catch (err) {
         alert(`Could not reject proposal: ${err.message}`);
+      }
+    };
+  }
+  for (const btn of body.querySelectorAll('.panel-removal-approve-btn')) {
+    btn.onclick = async () => {
+      // Real DAU-lens gap (#382 goal doc §7), inverted from the add-proposal
+      // case above: here APPROVING is the real, permanent, destructive step
+      // (it actually removes the real panel) -- same confirmation the human's
+      // own direct Remove button already gets, so the assistant-proposed path
+      // can't quietly skip it.
+      if (!confirm(`Remove the real panel "${btn.dataset.title}"? This deletes it for real, not just hides it.`)) return;
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/panels/removal-proposals/${encodeURIComponent(btn.dataset.id)}/approve`, { method: 'POST' });
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        if (id === currentRun) renderPanelToggleBar();
+        renderCustomPanelsManager(id, fresh);
+        renderCustomPanels(id, fresh);
+        await refreshRunsList();
+      } catch (err) {
+        alert(`Could not remove panel: ${err.message}`);
+      }
+    };
+  }
+  for (const btn of body.querySelectorAll('.panel-removal-reject-btn')) {
+    btn.onclick = async () => {
+      // The safe direction here -- the real panel was never touched, so
+      // rejecting a removal proposal needs no confirmation, unlike rejecting
+      // an ADD proposal (which discards real drafted content).
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/panels/removal-proposals/${encodeURIComponent(btn.dataset.id)}/reject`, { method: 'POST' });
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        renderCustomPanelsManager(id, fresh);
+        await refreshRunsList();
+      } catch (err) {
+        alert(`Could not reject removal proposal: ${err.message}`);
       }
     };
   }

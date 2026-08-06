@@ -185,7 +185,7 @@ fn build_system_prompt(context: &str) -> String {
          you are actually taking action; omit it entirely otherwise -- never emit an \
          empty or placeholder block):\n\
          {ACTIONS_FENCE_OPEN}\n\
-         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}}]\n\
+         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}}]\n\
          {ACTIONS_FENCE_CLOSE}\n\
          Indices refer to the real state.milestones/state.backlog/state.requirements \
          arrays already shown to you below -- never guess an index you can't see \
@@ -199,12 +199,17 @@ fn build_system_prompt(context: &str) -> String {
          real work as already complete, tell them to submit it themselves via the New \
          Iteration panel (or their role-filler's normal path) -- never emit an \
          iteration on their behalf, no matter how confident you are. `propose_custom_panel`, \
-         `propose_stage`, and `propose_issue` are different from the other nine: \
-         neither takes effect by itself. `propose_custom_panel` \
+         `propose_remove_custom_panel`, `propose_stage`, and `propose_issue` are different \
+         from the other nine: none takes effect by itself. `propose_custom_panel` \
          only queues a real proposal (title + a self-contained HTML fragment, no \
          <script src> to anything external, it runs sandboxed with no page/session \
          access) for the operator to review and explicitly approve or reject in the \
-         Custom Panels panel. `propose_stage` only queues a real StageProposal (the \
+         Custom Panels panel. `propose_remove_custom_panel` is the inverted, destructive \
+         case of the same gate -- `panel_id` must be a real id from \
+         state.custom_panels already shown to you, never guessed, and removing it is \
+         NEVER applied until the operator explicitly approves in the Custom Panels \
+         panel; use this only when the operator actually asks to remove a specific \
+         existing panel, never speculatively. `propose_stage` only queues a real StageProposal (the \
          exact same real mechanism a role-filler agent uses mid-iteration -- see \
          state.spec.roles for what already exists) for the operator to approve or \
          reject in the Pipeline panel; `stage_id` should be namespaced `devsystem.*` by \
@@ -224,7 +229,7 @@ fn build_system_prompt(context: &str) -> String {
          real bidder sees, and a vague/speculative issue wastes a human reviewer's \
          time. If a request is ambiguous, or you're not confident it's safe to act on, \
          say so in prose and ask instead of emitting an action. You have NO other tool \
-         or system access in this version -- only these twelve action types against \
+         or system access in this version -- only these thirteen action types against \
          these eight kinds of data; for anything else (e.g. an actual code change, or \
          submitting an iteration) tell the operator what you'd want to do and let them \
          decide.\n\n\
@@ -268,6 +273,14 @@ enum Action {
     /// the system prompt's own explanation and `RunState::pending_panel_proposals`'s
     /// doc comment (`pipeline/src/runner.rs`) for the trust-model reasoning.
     ProposeCustomPanel { title: String, html: String },
+    /// Real gap closed (#382 goal doc §7.2, gap #4 -- the other real half): a
+    /// human could already remove an existing custom panel; the assistant had
+    /// no matching action at all, even proposal-gated, until now. Also does
+    /// not take effect immediately -- same trust-model reasoning as
+    /// `ProposeCustomPanel`, inverted: removing is destructive, not additive,
+    /// so it needs the same human-approval gate, not the "safe, reversible"
+    /// direct-action treatment `ToggleBacklogItem` gets.
+    ProposeRemoveCustomPanel { panel_id: String },
     /// Also does not take effect immediately -- see `RunState::pending_stage_proposals`'s
     /// doc comment. `use_existing_service`/`price_ceiling` default to absent so the LLM
     /// doesn't have to think about fields it has no real opinion on.
@@ -380,6 +393,16 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
             format!("propose custom panel \"{title}\" (awaiting your approval in the Custom Panels panel)"),
             format!("{base}/api/runs/{run_id}/panels/propose"),
             serde_json::json!({"title": title, "html": html}),
+            "proposed",
+        ),
+        // Also deliberately "proposed" not "done" -- see ProposeCustomPanel's
+        // own comment above; removing is the inverted, destructive case of the
+        // same gate. panel_id is a path segment, not a body field -- the real
+        // endpoint takes no request body at all.
+        Action::ProposeRemoveCustomPanel { panel_id } => (
+            format!("propose removing custom panel \"{panel_id}\" (awaiting your approval in the Custom Panels panel)"),
+            format!("{base}/api/runs/{run_id}/panels/{panel_id}/propose-remove"),
+            serde_json::json!({}),
             "proposed",
         ),
         Action::ProposeStage { stage_id, tag, rationale, use_existing_service, units, price_ceiling } => (
@@ -768,12 +791,13 @@ mod tests {
                 && prompt.contains("set_repo_url")
                 && prompt.contains("create_run")
                 && prompt.contains("propose_custom_panel")
+                && prompt.contains("propose_remove_custom_panel")
                 && prompt.contains("propose_stage")
                 && prompt.contains("propose_issue"),
-            "all twelve real action types must be documented"
+            "all thirteen real action types must be documented"
         );
         assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these eight data kinds");
-        assert!(prompt.contains("neither takes effect by itself"), "the panel/stage/issue-proposal approval gate must be explicit, not implied");
+        assert!(prompt.contains("none takes effect by itself"), "the panel/panel-removal/stage/issue-proposal approval gate must be explicit, not implied");
         assert!(prompt.contains("BE TERSE") && prompt.contains("mehr tun, weniger reden"), "the operator's own terseness instruction must be explicit, not just implied by 'be concise'");
         assert!(prompt.contains("scimbe/CADS-webconference-demo"), "the issue-proposal repo allowlist must be stated in the prompt, not left for the LLM to guess");
         assert!(prompt.contains("EARS"), "the requirement-statement format expectation must be explicit, not left for the LLM to guess at style");
@@ -802,8 +826,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_actions_parses_all_twelve_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"}]\n```";
+    fn extract_actions_parses_all_thirteen_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -822,6 +846,7 @@ mod tests {
                 Action::SetRepoUrl { repo_url: "https://github.com/scimbe/CADS-webconference-android".to_string() },
                 Action::CreateRun { new_run_id: "my-new-project".to_string() },
                 Action::ProposeCustomPanel { title: "Burndown".to_string(), html: "<h2>hi</h2>".to_string() },
+                Action::ProposeRemoveCustomPanel { panel_id: "0d1217b0".to_string() },
                 Action::ProposeStage {
                     stage_id: "devsystem.android_emulator_test".to_string(),
                     tag: "android_emulator_test".to_string(),
@@ -992,6 +1017,21 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
         assert_eq!(parsed["title"], "Burndown");
         assert_eq!(parsed["html"], "<h2>hi</h2>");
+    }
+
+    #[test]
+    /// Real gap #4 second half (#382 goal doc §7.2): the assistant could
+    /// already propose ADDING a panel; this is the mirror for REMOVING one.
+    fn apply_action_posts_the_real_propose_remove_custom_panel_request_and_reports_proposed_not_done() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let result = apply_action(&client, &addr, "my-run", &Action::ProposeRemoveCustomPanel { panel_id: "0d1217b0".to_string() });
+        assert!(result.starts_with("proposed:"), "a removal proposal must never be reported as \"done\" -- the panel isn't gone yet: {result}");
+        assert!(result.contains("awaiting your approval"), "the response must say a human still has to act: {result}");
+        let (method, url, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/panels/0d1217b0/propose-remove");
+        assert_eq!(body, "{}", "the real endpoint takes no request body -- panel_id is a path segment");
     }
 
     #[test]

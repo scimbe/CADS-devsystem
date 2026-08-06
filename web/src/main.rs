@@ -21,7 +21,7 @@ use devsystem_pipeline::preflight::{preflight_annotations, process_annotations};
 use devsystem_pipeline::runner::{
     load_or_init_run, persist_run, push_chat_exchange, render_requirements_markdown, run_iteration, toggle_acceptance_criterion, toggle_milestone,
     toggle_requirement, toggle_requirement_auto_judge, BacklogItem, CustomPanel,
-    Milestone, PendingIssueProposal, PendingPanelProposal, PendingStageProposal, Requirement, RoleFillMode, RunOutcome,
+    Milestone, PendingIssueProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal, Requirement, RoleFillMode, RunOutcome,
 };
 use devsystem_pipeline::{apply_proposal, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
@@ -196,6 +196,9 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/panels/propose", post(propose_custom_panel))
         .route("/api/runs/{id}/panels/proposals/{proposal_id}/approve", post(approve_panel_proposal))
         .route("/api/runs/{id}/panels/proposals/{proposal_id}/reject", post(reject_panel_proposal))
+        .route("/api/runs/{id}/panels/{panel_id}/propose-remove", post(propose_panel_removal))
+        .route("/api/runs/{id}/panels/removal-proposals/{proposal_id}/approve", post(approve_panel_removal))
+        .route("/api/runs/{id}/panels/removal-proposals/{proposal_id}/reject", post(reject_panel_removal))
         .route("/api/runs/{id}/stages/propose", post(propose_stage))
         .route("/api/runs/{id}/stages/proposals/{proposal_id}/approve", post(approve_stage_proposal))
         .route("/api/runs/{id}/stages/proposals/{proposal_id}/reject", post(reject_stage_proposal))
@@ -2062,6 +2065,122 @@ async fn reject_panel_proposal(
     run_state.pending_panel_proposals.retain(|p| p.id != proposal_id);
     if run_state.pending_panel_proposals.len() == before {
         return (StatusCode::NOT_FOUND, format!("no pending proposal with id {proposal_id:?}")).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"rejected": proposal_id})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/panels/{panel_id}/propose-remove` -- the other real
+/// half of gap #4 (#382 goal doc §7.2). Mirrors `propose_custom_panel`'s own
+/// trust model exactly, inverted: the assistant can already propose ADDING a
+/// panel (pending until a human approves); this lets it propose REMOVING an
+/// existing one, equally pending until a human approves -- never applied
+/// directly, since removal is destructive and irreversible the same way the
+/// human's own Remove button already gets a real confirm() dialog for.
+async fn propose_panel_removal(
+    State(state): State<AppState>,
+    AxPath((id, panel_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let Some(panel) = run_state.custom_panels.iter().find(|p| p.id == panel_id) else {
+        return (StatusCode::NOT_FOUND, format!("no custom panel with id {panel_id:?}")).into_response();
+    };
+    let proposal = PendingPanelRemovalProposal {
+        id: format!("{:016x}", rand::random::<u64>()),
+        panel_id: panel_id.clone(),
+        panel_title: panel.title.clone(),
+        proposed_at: unix_now(),
+    };
+    run_state.pending_panel_removal_proposals.push(proposal.clone());
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(proposal).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/panels/removal-proposals/{proposal_id}/approve` --
+/// the actual destructive step: removes the real panel from `custom_panels`
+/// for real, and drops the proposal. If the panel was already removed some
+/// other way in the meantime (e.g. a human used the direct Remove button),
+/// this still clears the now-stale proposal rather than leaving it dangling,
+/// but honestly reports that nothing was actually removed by this call.
+async fn approve_panel_removal(
+    State(state): State<AppState>,
+    AxPath((id, proposal_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let Some(pos) = run_state.pending_panel_removal_proposals.iter().position(|p| p.id == proposal_id) else {
+        return (StatusCode::NOT_FOUND, format!("no pending removal proposal with id {proposal_id:?}")).into_response();
+    };
+    let proposal = run_state.pending_panel_removal_proposals.remove(pos);
+    let before = run_state.custom_panels.len();
+    run_state.custom_panels.retain(|p| p.id != proposal.panel_id);
+    let actually_removed = run_state.custom_panels.len() != before;
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"removed": actually_removed, "panel_id": proposal.panel_id})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/panels/removal-proposals/{proposal_id}/reject` --
+/// the safe direction: the panel was never touched, so this only ever drops
+/// the pending proposal.
+async fn reject_panel_removal(
+    State(state): State<AppState>,
+    AxPath((id, proposal_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let before = run_state.pending_panel_removal_proposals.len();
+    run_state.pending_panel_removal_proposals.retain(|p| p.id != proposal_id);
+    if run_state.pending_panel_removal_proposals.len() == before {
+        return (StatusCode::NOT_FOUND, format!("no pending removal proposal with id {proposal_id:?}")).into_response();
     }
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"rejected": proposal_id})).into_response(),
@@ -4410,6 +4529,98 @@ mod tests {
         // Rejecting an id that no longer exists (already rejected) is a real 404, not silently OK.
         let response = app
             .oneshot(Request::builder().method("POST").uri(format!("/api/runs/reject-run/panels/proposals/{proposal_id}/reject")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    /// Real gap #4 second half (#382 goal doc §7.2): the assistant could
+    /// already propose ADDING a panel; this is the mirror for REMOVING an
+    /// existing one, same pending-until-approved trust model.
+    async fn a_panel_removal_proposal_only_removes_the_real_panel_once_approved() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "remove-propose-run"}))).await.unwrap();
+        let added = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/remove-propose-run/panels", serde_json::json!({"title": "Burndown", "html": "<h2>hi</h2>"})))
+            .await
+            .unwrap();
+        let panel_id = body_json(added).await["id"].as_str().unwrap().to_string();
+
+        let proposed = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/remove-propose-run/panels/{panel_id}/propose-remove")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(proposed.status(), SC::OK);
+        let proposal = body_json(proposed).await;
+        assert_eq!(proposal["panel_title"], "Burndown");
+        let proposal_id = proposal["id"].as_str().unwrap().to_string();
+
+        // The whole point: proposing removal must NOT remove it yet.
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/remove-propose-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["custom_panels"].as_array().unwrap().len(), 1, "the panel must still be live while the removal is only proposed");
+        assert_eq!(run["state"]["pending_panel_removal_proposals"].as_array().unwrap().len(), 1);
+
+        let approve = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/remove-propose-run/panels/removal-proposals/{proposal_id}/approve")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(approve.status(), SC::OK);
+        assert_eq!(body_json(approve).await["removed"], true);
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/remove-propose-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["custom_panels"].as_array().unwrap().len(), 0, "approval must actually remove the real panel");
+        assert_eq!(run["state"]["pending_panel_removal_proposals"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn rejecting_a_panel_removal_proposal_leaves_the_real_panel_untouched() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "remove-reject-run"}))).await.unwrap();
+        let added = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/remove-reject-run/panels", serde_json::json!({"title": "Keep me", "html": "<p>real</p>"})))
+            .await
+            .unwrap();
+        let panel_id = body_json(added).await["id"].as_str().unwrap().to_string();
+
+        let proposed = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/remove-reject-run/panels/{panel_id}/propose-remove")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let proposal_id = body_json(proposed).await["id"].as_str().unwrap().to_string();
+
+        let reject = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/remove-reject-run/panels/removal-proposals/{proposal_id}/reject")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(reject.status(), SC::OK);
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/remove-reject-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["custom_panels"].as_array().unwrap().len(), 1, "a rejected removal proposal must never have touched the real panel");
+        assert_eq!(run["state"]["pending_panel_removal_proposals"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn proposing_removal_of_an_unknown_panel_id_is_a_real_404() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "remove-unknown-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/remove-unknown-run/panels/does-not-exist/propose-remove").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), SC::NOT_FOUND);

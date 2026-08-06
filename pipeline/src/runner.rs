@@ -263,6 +263,19 @@ pub struct RunState {
     /// pre-existing `state.json` files (none proposed yet) still load.
     #[serde(default)]
     pub pending_panel_proposals: Vec<PendingPanelProposal>,
+    /// The other real half of gap #4 (#382 goal doc §7.2, "beyond the current fixed
+    /// Action enum"): the assistant could already `propose_custom_panel` (add) but
+    /// had no path at all to remove an existing one, even though a human always
+    /// could. Deliberately NOT a direct action the same way `ToggleBacklogItem` is
+    /// -- removing an existing panel is destructive and irreversible (the human's
+    /// own Remove button already gets a real confirm() dialog for exactly that
+    /// reason), so it needs the same propose-then-approve trust model
+    /// `pending_panel_proposals` already established for adding one, not the
+    /// "safe, reversible, applies immediately" model the rest of the Action enum
+    /// uses. `#[serde(default)]` so pre-existing `state.json` files (none proposed
+    /// yet) still load.
+    #[serde(default)]
+    pub pending_panel_removal_proposals: Vec<PendingPanelRemovalProposal>,
     /// A new pipeline stage/role the assistant has proposed but a human hasn't
     /// approved yet -- same trust-model pattern as `pending_panel_proposals`, applied
     /// to the OTHER thing that renders into the live system: a real role real
@@ -416,6 +429,18 @@ pub struct PendingPanelProposal {
     pub proposed_at: u64,
 }
 
+/// See [`RunState::pending_panel_removal_proposals`]'s doc comment. `panel_title`
+/// is snapshotted at proposal time (not looked up live from `custom_panels`) so
+/// the GUI can render a real, meaningful label even in the same response that's
+/// about to remove the panel it refers to.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingPanelRemovalProposal {
+    pub id: String,
+    pub panel_id: String,
+    pub panel_title: String,
+    pub proposed_at: u64,
+}
+
 impl RunState {
     pub fn new(run_id: impl Into<String>) -> Self {
         RunState {
@@ -432,6 +457,7 @@ impl RunState {
             role_fill_modes: std::collections::HashMap::new(),
             custom_panels: Vec::new(),
             pending_panel_proposals: Vec::new(),
+            pending_panel_removal_proposals: Vec::new(),
             pending_stage_proposals: Vec::new(),
             pending_issue_proposals: Vec::new(),
             requirements: Vec::new(),
