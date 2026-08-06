@@ -3066,6 +3066,30 @@ function renderNewIterationPanel(id, data) {
   document.getElementById('it-has-proposal').onchange = (e) => {
     document.getElementById('proposal-fields').style.display = e.target.checked ? 'block' : 'none';
   };
+  // DAU-lens follow-up to the fill-mode Enter fix (#382 goal doc §7/§8,
+  // 2026-08-06): this whole form submits as one unit via a plain button, not
+  // a real <form>, so wiring Enter here to submit the entire iteration from a
+  // single embedded-proposal field would be a real footgun -- a user tabbing
+  // through pr-tag mid-fill-in and reflexively hitting Enter could
+  // prematurely submit an incomplete or wrong iteration (deliberately left
+  // unfixed the firing this was first noticed, exactly for that reason).
+  // Enter previously did nothing at all in these fields, its own real gap --
+  // the considered fix is the common multi-field-form convention instead:
+  // Enter advances focus to the next single-line field, never submits.
+  // pr-rationale is a <textarea> and deliberately excluded -- Enter there
+  // must keep inserting a real newline, not hijack multi-line rationale text.
+  const proposalFieldOrder = ['pr-stage-id', 'pr-tag', 'pr-existing-service', 'pr-units', 'pr-price-ceiling'];
+  proposalFieldOrder.forEach((fieldId, i) => {
+    const el = document.getElementById(fieldId);
+    if (!el) return;
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const nextId = proposalFieldOrder[i + 1];
+      const next = nextId ? document.getElementById(nextId) : document.getElementById('submit-iter');
+      if (next) next.focus();
+    });
+  });
 }
 
 function getSelectedStage() {
