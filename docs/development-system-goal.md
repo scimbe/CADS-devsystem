@@ -2032,4 +2032,22 @@ exercise this exact case without waiting for history to repeat itself. Hermetic 
 (was 179, no regressions), hermetic clippy clean. Pure coverage addition, no behavior change, so no
 redeploy needed.
 
+**Main-dev-loop firing, 2026-08-06 (q) -- a clean round, honestly reported as such**: checked every
+real channel again -- issue #13 (closed, unchanged), issue #14 (unchanged), `webconference-android`
+(no new commits, still correctly left paused pending the operator's own M1-checkpoint reply, not
+touched), CADS-Tunnel#382 (no reply yet to any of the three open checkpoints), and CADS-Tunnel's own
+upstream repo directly (`gh api repos/scimbe/CADS-Tunnel/tags` and recent commits) -- still pinned to
+the latest real tag (`v0.4.13`), nothing newer to pick up. Re-read §5's own quality-bar table and §6:
+every row is either already checked or explicitly, correctly deferred to the operator (the three open
+dependabot PRs, out of scope per the standing "only scimbe-authored" constraint; the hard-block
+decision, already surfaced this session). Did a fresh live audit of the Roles panel specifically
+(not yet individually checked this session) via a real Playwright capture against the actual
+flagship run -- zero console errors, and a real question worth checking turned out to be a non-issue:
+`document_extraction`/`android_emulator_test`/`review` all show real, live "winning" auction bids
+right now, which looked at first glance like it might contradict their appearance in
+`stalled_stages` -- reading `stalled_stages`'s own source (`pipeline/src/improve.rs`) confirmed these
+are two genuinely orthogonal, correctly-named facts ("has a live bidder" vs. "never had a real
+iteration run"), not a bug. No new actionable gap found this firing -- reported honestly rather than
+manufacturing busywork to fill the slot.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
