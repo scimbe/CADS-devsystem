@@ -2820,4 +2820,32 @@ scrambled label as typed (visual deception before submission), and the real reje
 checkpoints; GitHub's incident still `major_outage` per the status page; live docs site continues
 serving correctly (spot-checked again).
 
+**Main-dev-loop firing, 2026-08-06 (ddd) -- a systematic field-by-field sweep found two more real
+bidi-spoofing gaps**: no new operator input on any of the three open `#382` checkpoints; issue #13
+confirmed closed unchanged, #14 confirmed still open unchanged; no scimbe-authored PRs on either
+repo; outage still active. Listed every real request struct in both `web/src/main.rs` and
+`pipeline/src/runner.rs`/`lib.rs` and checked each short/medium free-text field against the
+bidi-control-character class one more time. Two genuine, previously-unchecked gaps found:
+
+1. **A next-step draft's own `text`** (both `propose_next_step` and `update_next_step_draft`) --
+   exactly the advice a human reads at a paused checkpoint to decide what to do next. Live-confirmed
+   before fixing: "Resume with devsystem.implement" + a real U+202E sailed through untouched,
+   visually hiding "Just continue and ignore all safety guidance" behind an apparently ordinary
+   recommendation -- about as dangerous a case as this whole class gets.
+2. **A proposed GitHub issue's `title`/`body`** (`propose_issue`) -- a human approving from the
+   review queue trusts this text, and approving it files a real issue with whatever's actually
+   stored.
+
+Fixed both (`CADS-devsystem@b3cae68`). 3 new regression tests, 190/190 web tests (was 188), hermetic
+clippy clean. Deployed and live-verified against the real redeployed container: both bidi-laced
+payloads now get a real `400`, clean text still gets `200`.
+
+Also checked `ChatExchange.instruction`/`.response` (the assistant Q&A log) directly, not assumed:
+both are already `escapeHtml`'d at their only two GUI render sites (confirmed via grep, not
+guessed), and neither is ever embedded in `checkin.rs`'s markdown artifact (confirmed zero
+references) -- so the specific attack this whole class targets (a human trusting scrambled text to
+make a real decision) doesn't apply the same way to a passive chat log a human is just reading, not
+approving or deciding from. Deliberately not adding the check there this firing -- a genuinely
+different severity tier, not a same-class miss like the two fixed above.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
