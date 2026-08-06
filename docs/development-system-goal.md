@@ -2270,4 +2270,25 @@ than or equal to 100.") before the request is ever sent -- even more immediate t
 panel's own JS-level catch, confirmed via a real screenshot. 57/57 stress-harness assertions still
 clean; no new harness check needed (pure frontend change).
 
+**Goal-driven-loop firing, 2026-08-06 (dd) -- the third real instance of the same class, sweep now
+complete**: continuing the identical sweep found one more, in the New Iteration panel's own
+embedded-proposal form. `pr-units` had a client-side `min` but no `max`, same server-side
+`MAX_ROLE_UNITS` (100) gap, live-confirmed before fixing (`units:99999` in an embedded proposal
+round-tripped to a real `400`). This form's Submit is a plain button click too (not a real `<form>`
+submit), so the added `max="100"` needed a real JS check to do anything, same shape as the criteria
+panel. Also found and fixed a second, related gap in the same field: the old `parseInt(...) || 1`
+silently coerced a deliberately typed `0` (or any invalid value) to `1` with zero feedback, instead
+of validating it -- fixed to block and clearly message instead of silently overriding whatever was
+actually typed (`CADS-devsystem@b8332e5`). Deployed, live-verified with a real Playwright run:
+typing `99999` and submitting now gets `"Units must be a whole number between 1 and 100."`
+immediately; a genuine, in-bounds proposal (`units: 3`) still lands correctly (`200`,
+`added_stages: ["devsystem.foo"]`). 57/57 stress-harness assertions clean. This closes out the
+"no client-side upper bound on a units field" sweep across all three real entry points that have
+one (Health & Criteria, quick-offer, embedded-proposal) -- checked and no fourth remains.
+
+Also noting: the Android repo's `verify-native-bridge` re-run (from firing (y)/(z)/(cc)) succeeded
+on this latest attempt -- consistent with GitHub's own incident being active but intermittent, not
+a fixed, permanent failure. Actions/Pages still show `major_outage` as of this firing, so still not
+treating a single green run as "resolved."
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
