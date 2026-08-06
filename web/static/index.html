@@ -1447,6 +1447,19 @@ async function renderRagPanel(id, data) {
   // after a successful upload.
   const wasDocsOpen = body.querySelector('details')?.open ?? false;
   const manualDocs = status.manual_documents || [];
+  const hasIndexedContent = (status.configured && status.branch) || manualDocs.length > 0;
+  // Same real DAU-lens gap as Requirements/Backlog/Milestones' own empty
+  // states (#382 goal doc §7.1, gap #3, fourth slice): a run with nothing
+  // indexed at all had two separate honest-but-passive messages (syncLine
+  // above, "No uploaded documents yet." below) and no single active nudge.
+  // Unlike those three panels there's no one obvious field to auto-focus here
+  // (search is useless against an empty index, and the real next action --
+  // set repo_url, or upload -- lives in two different places), so this stays
+  // a banner only, plus auto-expanding the upload form below instead of
+  // leaving a first-time user to discover it's collapsed.
+  const startHere = hasIndexedContent ? '' : `
+    <div class="start-here-banner">👋 Start here: nothing is indexed for this run yet.
+    Set a repo_url on the Pipeline panel to sync a repo, or upload a document below.</div>`;
   const docsList = manualDocs.length
     ? manualDocs.map(d => `
         <div class="role-card" style="padding:.4rem .5rem">
@@ -1457,6 +1470,7 @@ async function renderRagPanel(id, data) {
         </div>`).join('')
     : `<span class="lede" style="font-size:.72rem">No uploaded documents yet.</span>`;
   body.innerHTML = `
+    ${startHere}
     <div style="display:flex;gap:.4rem;margin-bottom:.5rem">
       <input id="rag-search-input" type="text" placeholder="search docs..." style="flex:1">
       <button type="button" class="secondary" id="rag-sync-btn"${repoUrl ? '' : ' disabled title="set repo_url first"'}>Sync now</button>
@@ -1465,7 +1479,7 @@ async function renderRagPanel(id, data) {
     <div id="rag-sync-status" class="status-line"></div>
     <div id="rag-results" style="margin-top:.5rem;display:flex;flex-direction:column;gap:.5rem"></div>
 
-    <details style="margin-top:.7rem"${wasDocsOpen ? ' open' : ''}>
+    <details style="margin-top:.7rem"${(wasDocsOpen || !hasIndexedContent) ? ' open' : ''}>
       <summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Uploaded documents (${manualDocs.length})</summary>
       <div id="rag-docs-list" style="display:flex;flex-direction:column;gap:.3rem;margin:.4rem 0">${docsList}</div>
       <form id="rag-upload-form" style="margin-top:.4rem">
