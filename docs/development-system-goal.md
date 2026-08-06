@@ -2291,4 +2291,24 @@ on this latest attempt -- consistent with GitHub's own incident being active but
 a fixed, permanent failure. Actions/Pages still show `major_outage` as of this firing, so still not
 treating a single green run as "resolved."
 
+**Goal-driven-loop firing, 2026-08-06 (ee) -- the same "no client-side early feedback" class, this
+time for text-length/triviality rules, not numeric bounds**: no new operator input, GitHub's own
+incident still active (checked again). Investigated whether the units-bound sweep's own lesson --
+server-side rules with no client-side early warning -- also applies to text-shaped rules, and found
+it does: the Requirements panel's add-requirement form had zero client-side check matching two real
+server-side rules (`MAX_REQUIREMENT_STATEMENT_LEN`/`MAX_ACCEPTANCE_CRITERION_LEN`, and the
+minimum-5-real-alphanumeric-characters triviality check that catches `"ok"`/`"."`/an
+invisible-character-only string). Live-confirmed before fixing: a 2001-character statement
+round-tripped to a real `400` with no earlier warning. Fixed (`CADS-devsystem@a5a2d6a`):
+`maxlength="2000"` on the statement input (a real `<form>` submit, so it actually works), plus
+explicit JS-level checks for the per-criterion rules -- criteria share one textarea, one per line,
+so `maxlength` can't express a per-line rule, and the triviality check needs real logic regardless.
+Client-side alphanumeric counting uses `\p{L}\p{N}` Unicode property classes to approximate Rust's
+`char::is_alphanumeric()`; the server remains the authoritative check either way, so an imperfect
+edge-case match costs nothing beyond the normal round-trip that already existed. Deployed,
+live-verified with a real Playwright run against the actual redeployed container: typing `"ok"` as
+the only criterion now gets `"\"ok\" doesn't have enough real content to be checkable (minimum 5
+letters/digits)."` immediately; confirmed a genuine, real criterion still submits correctly (`200`).
+57/57 stress-harness assertions clean.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
