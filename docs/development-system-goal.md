@@ -2083,4 +2083,25 @@ No new external signal either (issues #13/#14 unchanged, no reply yet on any of 
 sweep is genuinely complete rather than assuming it was after the one fix -- no new gap found,
 reported honestly.
 
+**Goal-driven-loop firing, 2026-08-06 (t) -- a real gap in the flagship proof's own README, found by
+checking a third repo directly, not another endpoint sweep**: re-established this loop as a real
+recurring cron (`/loop 6m`, session-scoped per the operator's own standing note about durability).
+Checked `CADS-Tunnel#382` for a reply to any of the three open checkpoints -- still none -- then
+widened the check beyond `CADS-devsystem`/`web/src/main.rs` to `CADS-webconference-android`'s own
+README, which this loop hadn't specifically audited for staleness before. Found it badly out of
+date: still claimed `MainActivity` was "a placeholder `TextView`, not a working client" and that the
+direct channel was only proven "local-process-to-local-process (two `cargo test` instances)" -- both
+false by a wide margin. Verified against the actual current `MainActivity.kt` (a real, fully-wired
+chat client: identity generation, listen/connect, real send/receive thread, Room-persisted history,
+several DAU-lens hardening passes) and against the real M1 milestone evidence
+(`CADS-devsystem` issue #13: two separately-booted real KVM Android emulator instances running the
+actual compiled app exchanged a real message, cross-checked screenshots both sides). Also corrected
+a stale test-count claim (14 real tests today, not one) -- counted via `grep -c '@Test'` and
+cross-checked against the real, currently-green GitHub Actions CI for the exact commit, deliberately
+not attempting a local Android build given this host's own real disk headroom constraints (was at
+90% used; a partial `mingc/android-build-box` pull failed mid-extraction with "no space left on
+device" before this was caught and cleaned up). Fixed (`CADS-webconference-android@c6fc0bd`), pushed
+directly to that repo (README-only, no code/behavior change, so no CADS-devsystem-side
+test/redeploy applies).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
