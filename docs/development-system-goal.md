@@ -997,6 +997,18 @@ separately from a real compile/test problem. Verified live: self-test passes, a 
 this actual repo reports clean. Thirty-seven real stress-test investigations, thirty-four real gaps
 found and closed (runs 35-37 built and wired real infrastructure rather than fixing new bugs).
 
+**The stress test's thirty-eighth real run, 2026-08-06**: a correction to run 35's own scoping
+decision. `incompetent-agent-stress-test.sh`'s header excluded gap #10's requirement-verification
+evidentiary gate as "LLM-dependent" -- wrong: `toggle_requirement`'s real gate keys off a plain
+`X-Actor: devsystem.assistant` HTTP header, not anything an LLM says, so it's exactly as mechanical
+and deterministic as the other thirteen checks. Live-confirmed before writing the check: a toggle
+with that header and zero review evidence gets a real `409`; the identical request with no header
+(a plain human click) gets a real `200` -- no LLM involved either way. Added as check [8]
+(`CADS-devsystem@8e11333`); the harness now covers fourteen real checks, 15/15 individual assertions
+passing locally against the real deployment (two per check [8]). Thirty-eight real stress-test
+investigations, thirty-four real gaps found and closed -- runs 35, 36, 37, and 38 all strengthened
+the stress test's own infrastructure rather than finding a new bug.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
