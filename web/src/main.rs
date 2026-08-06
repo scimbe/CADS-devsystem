@@ -1988,6 +1988,17 @@ async fn add_custom_panel(
     if !owner_authorized(&headers, &run_state) {
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
     }
+    // Real gap found live by the incompetent-agent stress test (#382 goal doc
+    // §8, 2026-08-06): MAX_LIST_ITEMS's own doc comment gives a real reason
+    // ("nothing stops a client from adding items in a tight loop... matches the
+    // host's real, limited disk headroom") that applies just as much to
+    // custom_panels and every pending-proposal queue as it does to backlog/
+    // milestones/requirements -- but only the latter three ever got the check.
+    // Live-confirmed before this fix: 510 real panels added in a row, zero
+    // rejections, no cap anywhere.
+    if run_state.custom_panels.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("custom_panels is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
+    }
     let panel = CustomPanel {
         id: format!("{:016x}", rand::random::<u64>()),
         title,
@@ -2130,6 +2141,10 @@ async fn propose_custom_panel(
     if !owner_authorized(&headers, &run_state) {
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
     }
+    // Same real defensive cap as add_custom_panel -- see its own doc comment.
+    if run_state.pending_panel_proposals.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("pending_panel_proposals is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
+    }
     let proposal = PendingPanelProposal { id: format!("{:016x}", rand::random::<u64>()), title, html: body.html, proposed_at: unix_now() };
     run_state.pending_panel_proposals.push(proposal.clone());
     match persist_run(&dir, &spec, &run_state) {
@@ -2235,6 +2250,10 @@ async fn propose_panel_removal(
     };
     if !owner_authorized(&headers, &run_state) {
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    // Same real defensive cap as add_custom_panel -- see its own doc comment.
+    if run_state.pending_panel_removal_proposals.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("pending_panel_removal_proposals is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
     }
     let Some(panel) = run_state.custom_panels.iter().find(|p| p.id == panel_id) else {
         return (StatusCode::NOT_FOUND, format!("no custom panel with id {panel_id:?}")).into_response();
@@ -2363,6 +2382,10 @@ async fn propose_panel_edit(
     };
     if !owner_authorized(&headers, &run_state) {
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    // Same real defensive cap as add_custom_panel -- see its own doc comment.
+    if run_state.pending_panel_edit_proposals.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("pending_panel_edit_proposals is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
     }
     let Some(panel) = run_state.custom_panels.iter().find(|p| p.id == panel_id) else {
         return (StatusCode::NOT_FOUND, format!("no custom panel with id {panel_id:?}")).into_response();
@@ -2509,6 +2532,10 @@ async fn propose_stage(
     };
     if !owner_authorized(&headers, &run_state) {
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    // Same real defensive cap as add_custom_panel -- see its own doc comment.
+    if run_state.pending_stage_proposals.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("pending_stage_proposals is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
     }
     let proposal = PendingStageProposal {
         id: format!("{:016x}", rand::random::<u64>()),
@@ -2668,6 +2695,10 @@ async fn propose_issue(
     };
     if !owner_authorized(&headers, &run_state) {
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    // Same real defensive cap as add_custom_panel -- see its own doc comment.
+    if run_state.pending_issue_proposals.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("pending_issue_proposals is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
     }
     let proposal = PendingIssueProposal { id: format!("{:016x}", rand::random::<u64>()), repo, title, body: issue_body, proposed_at: unix_now() };
     run_state.pending_issue_proposals.push(proposal.clone());
@@ -4839,6 +4870,100 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST, "the (MAX_LIST_ITEMS + 1)th milestone must be rejected");
+    }
+
+    #[tokio::test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): MAX_LIST_ITEMS's own doc comment gives a real reason
+    /// (unbounded state.json growth, real disk headroom) that applies just as
+    /// much to custom_panels and every pending-proposal queue as it does to
+    /// backlog/milestones/requirements -- but only the latter three ever got
+    /// the check. Live-confirmed before this fix: 510 real panels added in a
+    /// row against the actual deployment, zero rejections. Seeds each list
+    /// directly to MAX_LIST_ITEMS via the real persist_run (not 3000 real HTTP
+    /// round trips, which the backlog/milestones test above already proves the
+    /// per-request pattern for) so this stays fast while still exercising the
+    /// real handler code path for the one call that matters: the
+    /// (MAX_LIST_ITEMS + 1)th.
+    async fn every_panel_and_proposal_queue_rejects_growth_past_the_defensive_cap() {
+        let (state, dir) = test_state();
+        let spec = ct_common::pipeline::PipelineSpec {
+            id: "devsystem-cap-run".to_string(),
+            roles: vec![ct_common::pipeline::RequiredRole { service: ServiceType::Custom("devsystem.plan".to_string()), units: 1, tag: "plan".to_string(), selection_policy: None }],
+            operator_pubkey_hex: None,
+            selection_policy: ct_common::pipeline::SelectionPolicy::LowestFloor,
+        };
+        let mut run_state = devsystem_pipeline::runner::RunState::new("cap-run");
+        run_state.custom_panels = (0..MAX_LIST_ITEMS)
+            .map(|i| CustomPanel { id: format!("panel-{i}"), title: format!("P{i}"), html: "<p>x</p>".into(), source: None, created_at: 0 })
+            .collect();
+        run_state.pending_panel_proposals = (0..MAX_LIST_ITEMS)
+            .map(|i| PendingPanelProposal { id: format!("prop-{i}"), title: format!("P{i}"), html: "<p>x</p>".into(), proposed_at: 0 })
+            .collect();
+        run_state.pending_panel_removal_proposals = (0..MAX_LIST_ITEMS)
+            .map(|i| PendingPanelRemovalProposal { id: format!("rm-{i}"), panel_id: "panel-0".into(), panel_title: format!("P{i}"), proposed_at: 0 })
+            .collect();
+        run_state.pending_panel_edit_proposals = (0..MAX_LIST_ITEMS)
+            .map(|i| PendingPanelEditProposal { id: format!("edit-{i}"), panel_id: "panel-0".into(), old_title: format!("P{i}"), new_title: "New".into(), new_html: "<p>x</p>".into(), proposed_at: 0 })
+            .collect();
+        run_state.pending_stage_proposals = (0..MAX_LIST_ITEMS)
+            .map(|i| PendingStageProposal {
+                id: format!("stage-{i}"),
+                proposal: StageProposal { proposed_by: "devsystem.assistant".into(), stage_id: format!("devsystem.x{i}"), tag: format!("x{i}"), rationale: "real reason".into(), use_existing_service: None, units: 1, price_ceiling: None },
+                proposed_at: 0,
+            })
+            .collect();
+        run_state.pending_issue_proposals = (0..MAX_LIST_ITEMS)
+            .map(|i| PendingIssueProposal { id: format!("issue-{i}"), repo: "scimbe/CADS-webconference-demo".into(), title: format!("T{i}"), body: "real body".into(), proposed_at: 0 })
+            .collect();
+        persist_run(&dir.path().join("cap-run"), &spec, &run_state).expect("seed the run directly, same real persist_run the handlers use");
+
+        let app = api_router(state);
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/cap-run/panels", serde_json::json!({"title": "one too many", "html": "<p>x</p>"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "the (MAX_LIST_ITEMS + 1)th custom panel must be rejected");
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/cap-run/panels/propose", serde_json::json!({"title": "one too many", "html": "<p>x</p>"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "the (MAX_LIST_ITEMS + 1)th panel-add proposal must be rejected");
+
+        let response = app.clone().oneshot(json_request("POST", "/api/runs/cap-run/panels/panel-0/propose-remove", serde_json::json!({}))).await.unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "the (MAX_LIST_ITEMS + 1)th panel-removal proposal must be rejected");
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/cap-run/panels/panel-0/propose-edit", serde_json::json!({"title": "one too many", "html": "<p>x</p>"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "the (MAX_LIST_ITEMS + 1)th panel-edit proposal must be rejected");
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/cap-run/stages/propose",
+                serde_json::json!({"stage_id": "devsystem.one_too_many", "tag": "one_too_many", "rationale": "a real reason here"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "the (MAX_LIST_ITEMS + 1)th stage proposal must be rejected");
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/cap-run/issues/propose",
+                serde_json::json!({"repo": "scimbe/CADS-webconference-demo", "title": "one too many", "body": "a real body here"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "the (MAX_LIST_ITEMS + 1)th issue proposal must be rejected");
     }
 
     #[tokio::test]
