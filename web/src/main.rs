@@ -644,6 +644,26 @@ async fn iterate_run(
         return (StatusCode::BAD_REQUEST, format!("requirement_indices references index {bad}, but state.requirements only has {} entries", run_state.requirements.len()))
             .into_response();
     }
+    // Real gap found live by the incompetent-agent stress test (#382 goal doc §8,
+    // 2026-08-06): a role-filler's own embedded `proposals` -- applied *immediately*
+    // to the live PipelineSpec, no human review step at all (see "How the pipeline
+    // proposes and grows its own stages") -- had zero content validation, unlike
+    // `devsystem.assistant`'s own gated `propose_stage` handler, which already rejects
+    // an empty `stage_id`/`tag`/`rationale`. Live-verified before this fix: a proposal
+    // with all three fields as `""` sailed straight through `apply_proposal` and
+    // permanently added a real `ServiceType::Custom("")` role with an empty tag to the
+    // spec -- with no "remove a stage" mechanism anywhere to undo it. The higher-trust,
+    // immediately-applied path deserves at least the same bar as the gated one, not a
+    // weaker one. Matches `propose_stage`'s own check exactly (trim, then non-empty).
+    if let Some(bad) = body.proposals.iter().find(|p| {
+        p.stage_id.trim().is_empty() || p.tag.trim().is_empty() || p.rationale.trim().is_empty()
+    }) {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("proposal for stage_id {:?} needs a non-empty stage_id, tag, and rationale", bad.stage_id),
+        )
+            .into_response();
+    }
     // Real idempotency guard, found necessary live (2026-08-05): a same-day window of
     // overlapping devsystem-web container instances during a redeploy let two
     // functionally-identical iterations both land with the same computed iteration
@@ -5379,6 +5399,34 @@ exit 1"#);
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST, "no requirements exist yet, so index 0 must be rejected, not silently accepted");
+    }
+
+    #[tokio::test]
+    async fn iterate_run_rejects_an_embedded_proposal_with_an_empty_stage_id_tag_or_rationale() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "empty-proposal-run"}))).await.unwrap();
+
+        for bad_proposal in [
+            serde_json::json!({"proposed_by": "devsystem.plan", "stage_id": "", "tag": "x", "rationale": "y", "units": 1}),
+            serde_json::json!({"proposed_by": "devsystem.plan", "stage_id": "devsystem.x", "tag": "", "rationale": "y", "units": 1}),
+            serde_json::json!({"proposed_by": "devsystem.plan", "stage_id": "devsystem.x", "tag": "x", "rationale": "   ", "units": 1}),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/runs/empty-proposal-run/iterate",
+                    serde_json::json!({"stage": "plan", "feedback": "real feedback", "succeeded": true, "proposals": [bad_proposal]}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::BAD_REQUEST, "an empty stage_id/tag/rationale must never reach apply_proposal, not even from a role-filler's own immediately-applied proposal");
+        }
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/empty-proposal-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["spec"]["roles"].as_array().unwrap().len(), 1, "none of the rejected iterations may have left a garbage role behind");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
