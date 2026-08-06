@@ -2955,4 +2955,12 @@ whole time (nothing was ever submitted, confirming the footgun firing (jjj) worr
 exist in this design), the rationale textarea still gets a real newline and keeps focus, zero console
 errors either way. This closes the last open DAU-lens candidate from the Enter-to-submit sweep.
 
+**Docs-loop firing, 2026-08-06 (lll) -- documented firing (kkk)'s Enter-advances-focus fix**:
+`CADS-devsystem-docs` extended `submit-an-iteration.md`'s embedded-proposal section with a real
+screenshot proving focus visibly moves from "New stage id" to "Tag" after Enter, nothing submitted
+(`CADS-devsystem-docs@b86f830`). Explains the deliberate design choice (why this form doesn't wire
+Enter to submit, unlike the simpler fill-mode popover) rather than just stating the behavior.
+Hermetically built clean. No new operator input on any of the three open `#382` checkpoints;
+GitHub's incident still `major_outage`; live docs site continues serving correctly.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
