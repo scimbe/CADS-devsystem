@@ -2330,4 +2330,18 @@ hermetic web suite 182/182 (was 181), hermetic clippy clean. Deployed, live-veri
 real redeployed container (rejected the oversized text, accepted a real short one). Stress-harness
 check [28] added (`CADS-devsystem@d84f137`), 60/60 assertions passing locally.
 
+**Combined docs/goal-driven firing, 2026-08-06 (gg) -- closing out the missing-length-cap class,
+found one more real instance**: docs-loop shipped the backlog/milestone fix's write-up
+(`CADS-devsystem-docs@54ccd94`, `rest-api.md` + running tallies). Continuing to check whether the
+same "no real length cap at all" gap existed anywhere else found one more: `set_repo_url` had none
+either, unlike every sibling free-text field. Live-confirmed before fixing: a real
+500,000-character `repo_url` got a real `200` -- a genuine GitHub URL is nowhere near this length.
+Fixed (`CADS-devsystem@6134124`) reusing the existing `MAX_SHORT_TEXT_LEN` constant rather than
+adding a new one. New regression test `set_repo_url_rejects_an_absurdly_long_value`, hermetic web
+suite 183/183 (was 182), hermetic clippy clean. Deployed, live-verified against the real
+redeployed container (rejected the oversized URL, accepted a genuine, real-sized one). Stress-
+harness check [29] added (`CADS-devsystem@fc99582`), 62/62 assertions passing locally. GitHub's own
+Actions/Pages incident checked again -- still `major_outage` -- continuing to rely on local
+hermetic + live verification.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
