@@ -891,6 +891,24 @@ Playwright verification scratch-runs from the previous firing -- the tool provin
 first real use, not just its own test suite. Thirty-one real stress-test investigations, thirty-one
 real gaps found and closed.
 
+**The stress test's thirty-second real run, 2026-08-06**: found by deliberately stress-testing the
+previous run's own fix, same discipline the price_ceiling saga established -- a new feature's edge
+cases are exactly where the next real gap tends to hide. `refreshTick`'s own catch block treated
+every fetch failure as transient ("the panel just keeps showing its last-known-good content until
+the next tick"), correct for a network blip but wrong for a genuine 404: a run deleted from another
+tab (now a real, one-click-away action after run 31) while still open here would silently keep
+showing dead, stale content forever, every further auto-refresh tick 404ing the exact same way with
+no visible sign anything was wrong. Fixed (`CADS-devsystem@0be5225`): `fetchJSON` now attaches the
+real HTTP status to every thrown error (was message-only), and `refreshTick` distinguishes a genuine
+404 for the currently-open run from everything else -- clears `currentRun`, tells the operator
+plainly via the same `alert()` convention every other GUI failure already uses, falls back to the
+runs list. Everything else keeps the existing silent-retry behavior, still correct for a transient
+failure. Live-verified end-to-end via Playwright through the REAL `setInterval(refreshTick, 1000)`
+itself, not a direct function call: deleted a run out from under an open session the way a second
+tab would, confirmed the real alert fires with the right message, confirmed the GUI recovers to
+another real run rather than getting stuck, confirmed the deleted run is genuinely gone from the
+list. Thirty-two real stress-test investigations, thirty-two real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
