@@ -1765,6 +1765,15 @@ async fn set_repo_url(
     if !trimmed.is_empty() && !trimmed.starts_with("https://") {
         return (StatusCode::BAD_REQUEST, "repo_url must start with https:// (or be empty to clear it)").into_response();
     }
+    // DAU-lens gap found live 2026-08-06 (#382 goal doc §8), the same class just
+    // closed for backlog/milestone text: repo_url had no length cap at all, unlike
+    // every sibling free-text field. Live-confirmed before this fix: a real
+    // 500,000-character repo_url got a real 200. A genuine GitHub URL is nowhere
+    // near this length; reusing the same generous-but-finite MAX_SHORT_TEXT_LEN
+    // every other short free-text field already uses.
+    if trimmed.len() > MAX_SHORT_TEXT_LEN {
+        return (StatusCode::BAD_REQUEST, format!("repo_url must be under {MAX_SHORT_TEXT_LEN} characters")).into_response();
+    }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
     let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
@@ -4754,6 +4763,34 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    /// DAU-lens gap found live 2026-08-06 (#382 goal doc §8), the same class just
+    /// closed for backlog/milestone text: repo_url had no length cap at all.
+    /// Live-confirmed before fixing: a real 500,000-character repo_url got a real 200.
+    async fn set_repo_url_rejects_an_absurdly_long_value() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "repo-long-run"}))).await.unwrap();
+
+        let huge = format!("https://{}", "x".repeat(MAX_SHORT_TEXT_LEN + 1));
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/repo-long-run/repo", serde_json::json!({"repo_url": huge})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "an absurdly long repo_url must be rejected");
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/repo-long-run/repo",
+                serde_json::json!({"repo_url": "https://github.com/scimbe/CADS-webconference-android"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "a genuine, real-sized repo_url must not be rejected");
     }
 
     #[tokio::test]
