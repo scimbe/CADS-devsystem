@@ -2908,4 +2908,12 @@ left the popover open and the server's `role_fill_modes` unchanged; after, Enter
 and the real server state reflects the submitted label, zero console errors. Cleaned up the scratch
 state on the shared docs demo run afterward.
 
+**Docs-loop firing, 2026-08-06 (iii) -- documented firing (hhh)'s Enter-to-submit fix**:
+`CADS-devsystem-docs` extended `set-auto-refresh-and-fill-mode.md` (right alongside the
+Escape-to-close section) with two real screenshots -- the popover with a label typed but not yet
+submitted, and the same popover closed after pressing Enter, proving the server state actually
+changed (`CADS-devsystem-docs@67afe2d`). Hermetically built clean. No new operator input on any of
+the three open `#382` checkpoints; GitHub's incident still `major_outage` per the status page; live
+docs site continues serving correctly (spot-checked again).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
