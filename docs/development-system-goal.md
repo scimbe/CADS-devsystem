@@ -1115,6 +1115,40 @@ The harness now covers nineteen real checks, 24/24 individual assertions passing
 the real deployment. Forty-six real stress-test investigations, thirty-six real gaps found and
 closed.
 
+**The stress test's forty-seventh real run, 2026-08-06 -- the most significant gap this
+methodology has found**: `RunOutcome::Abort` was purely advisory -- a string in the HTTP response,
+nothing more. Live-confirmed before touching anything, against the actual deployment: with
+`max_iterations: 2`, iteration 2 correctly reported `"outcome":"Abort"`, but iterations 3 and 4
+were STILL accepted with a real `200`, `state.history` growing to 4 real entries -- double the
+configured, operator-set bound, `paused` never flipping. This project's own central architectural
+claim -- "a bounded super loop," named throughout this codebase's own doc comments and
+`update_criteria`'s own error message (line 708 above, a *different*, complementary gap: that fix
+prevents configuring an unreasonable bound in the first place, this one ensures whatever bound IS
+configured actually gets enforced) -- was genuinely not enforced at the one real call site that
+matters, for either real entry point (`run_iteration` is the single function both the HTTP handler
+and the local `devsystem_iterate` CLI's non-`--remote` path call directly). Fixed at the root:
+`run_iteration` itself now sets `state.paused = true` when `should_abort` fires, reusing the exact
+same mechanism `toggle_milestone` already established (the real GUI banner, the disabled New
+Iteration form, and critically the `if run_state.paused { 409 }` check `iterate_run` already runs
+at the top) -- the next real iterate call on an aborted run is blocked by code that already
+existed, zero new enforcement logic needed at either real entry point (`CADS-devsystem@9261087`).
+Honestly named, not solved here: distinguishing *why* a run is paused (milestone vs. abort ceiling)
+in the GUI remains a real, separate refinement. Hermetic: pipeline lib 101/101, web crate 164/164
+(a real end-to-end test: two iterations accepted, a third correctly refused with 409, history
+genuinely stays at exactly two), clippy clean on both crates. Deployed and re-ran the exact live
+scenario that proved the bug: iterations 3 and 4 now correctly get a real 409, final history length
+is exactly 2, `paused` is genuinely `true`. Full stress-test harness re-run afterward confirmed no
+regressions elsewhere. Forty-seven real stress-test investigations, thirty-seven real gaps found
+and closed.
+
+**The stress test's forty-eighth real run, 2026-08-06**: added run 47's fix to the harness as check
+[14] (`CADS-devsystem@f528377`) -- a regression guard for the most significant finding this
+methodology has produced deserves a permanent check, not just a one-time fix. Live-confirmed
+against the deployed change: a third iteration past `max_iterations: 2` is genuinely refused with a
+real `409`, history stays at exactly the two real iterations actually accepted. The harness now
+covers twenty real checks, 26/26 individual assertions passing locally against the real deployment.
+Forty-eight real stress-test investigations, thirty-seven real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
