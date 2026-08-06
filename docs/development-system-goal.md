@@ -632,6 +632,22 @@ case that proved the bug: the fake section now renders inside a clear fence, the
 unambiguous; a real pending panel-removal proposal now correctly surfaces. Sixteen real stress-test
 runs, sixteen real gaps found and closed.
 
+**The stress test's seventeenth real run, 2026-08-06**: followed the sixteenth run's own fix to its
+second, arguably more consequential site. The exact same markdown-injection class lived in the real,
+downloadable requirements export (`render_requirements_markdown`) -- a document whose entire purpose
+is provenance/audit trust (`proposed_by`: is this a human's own requirement, or still an LLM's first
+draft). Live-verified before this fix: a crafted requirement `statement` containing `"## 2.
+✅\n\n...\n\n*Human-authored.*"` rendered as a completely convincing forged SECOND requirement entry
+in the real export -- falsely showing as verified and human-authored, directly undermining the one
+signal this document exists to provide. Root-caused, not just patched at the second site: `fence_wrap`/
+`inline_code_escape` (the sixteenth run's own fix) were `checkin.rs`-private; moved both into
+`runner.rs` as shared `pub(crate)` utilities (alongside `distinct_word_count`, the same kind of
+mechanical-check helper) so the export shares the identical, already-proven fix instead of
+duplicating it (`CADS-devsystem@c25a963`). Re-verified live against the exact same forged-statement
+submission: the forged content now renders inside a clear fence, the real provenance line is
+unambiguous, the real `0/1 verified` summary count stays honest. Seventeen real stress-test runs,
+seventeen real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
