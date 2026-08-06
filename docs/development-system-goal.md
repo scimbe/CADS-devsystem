@@ -2224,4 +2224,27 @@ round-trip -- and confirmed a genuine, in-bounds value still saves correctly (`2
 stress-harness assertions still clean; no new harness check needed (pure frontend change, same
 precedent as the pause-reason and `truncate()` fixes).
 
+**Goal-driven-loop firing, 2026-08-06 (bb) -- the CI-reliability question from firings (y)/(z) now
+definitively answered, not just re-run again**: `verify-native-bridge`'s re-run (firing z) was
+cancelled a second time, mid-`cargo`/`rustc`, again with no superseding commit -- genuinely
+reproducible, not a one-off. Re-ran once more specifically to test an account-level-contention
+hypothesis (this session's own very frequent `CADS-devsystem` pushes competing for the same
+account's runner slots), but the real account-wide job count was checked directly first
+(`gh api .../actions/runs`, filtering to non-completed) and found only **two** total active runs
+across the entire account when both got stuck queued simultaneously -- far too few to plausibly hit
+any real concurrency limit, ruling that hypothesis out too. Checked GitHub's own public status API
+next (`https://www.githubstatus.com/api/v2/...`, read-only, no guessing): **confirmed, with
+certainty, not inferred** -- GitHub Actions and GitHub Pages both currently show
+`major_outage`, from an active, unresolved, **critical**-impact incident ("Incident with Actions",
+status `investigating`, started `2026-08-06T15:22:49Z`) whose start time lines up almost exactly
+with this session's own first-noticed persistent CI queue delays. This fully explains every CI
+symptom observed this session on both repos -- not a bug in either repo's workflow config (already
+individually ruled out for `android-ci.yml` in firing (y)), not account contention, a real, external,
+GitHub-acknowledged outage. Stopping further re-run attempts -- they can't reliably succeed until
+GitHub's own incident resolves, and repeatedly retrying against a known outage isn't real, bounded
+progress. Continuing to rely on local hermetic tests + live redeploy/Playwright verification (this
+session's own established first and second verification layers) as the trustworthy signal for any
+further work while this incident is active, exactly as reasoned through earlier this session before
+the root cause was this clear.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
