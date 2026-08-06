@@ -2987,4 +2987,27 @@ security verification, not a fix, recorded the same as any other real audit resu
 every "deliberately not `html`" note already in this codebase and docs was actually correct, not
 just assumed.
 
+**Goal-driven-loop firing, 2026-08-06 (nnn) -- extending firing (mmm)'s sandbox verification to a
+distinct attack class: navigation and popup hijacking, not just DOM/cookie/storage access**: no new
+operator input on any of the three open `#382` checkpoints; run `824e17f`'s CI still `queued` over an
+hour now; issue #14 unchanged.
+
+The previous firing verified `allow-same-origin` is really absent (blocks DOM/cookie/localStorage
+access). `sandbox="allow-scripts"` alone also implies `allow-top-navigation`/`allow-popups` are
+absent -- a genuinely different real-world risk (a malicious panel silently redirecting the whole
+control panel to a phishing page, or spawning deceptive popups) that the previous firing's attack
+didn't attempt. Built a second real, live attack: a custom panel whose script attempts
+`window.top.location.href = "https://evil.example/phishing"` and `window.open(...)`, submitted
+through the real API, opened through the real GUI, inspected via Playwright.
+
+**Both blocked, confirmed three independent ways**: the malicious script's own outcome report
+(`topNavigation: "blocked: ... does not have permission to navigate the target frame"`,
+`popupOpen: "blocked: window.open returned null"`), the real browser's own security warnings logged
+to console (confirming the sandbox flags are exactly what's missing --
+`'allow-top-navigation'`/`'allow-popups'` not set), and the main page's own URL staying at the real
+`devsystem-web` origin, never redirected. Zero popups actually opened (`page.on('popup')` listener
+stayed empty). No code change -- another genuine, clean security verification. Between this and the
+previous firing, the sandbox has now been live-attacked across all three of its meaningfully
+different escape classes (state access, top navigation, popups) and held every time.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
