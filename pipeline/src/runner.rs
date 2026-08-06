@@ -600,58 +600,73 @@ fn same_requirement_set(a: &[usize], b: &[usize]) -> bool {
     a == b
 }
 
+/// The real evidence bar gap #2's mandatory review gate applies once a run
+/// declares `review` (see `toggle_requirement` below) -- pulled out into its
+/// own function so gap #10's assistant-specific gate
+/// (`web/src/main.rs`'s `toggle_requirement_handler`) can require the
+/// identical real evidence **unconditionally**, on any run, regardless of
+/// whether that run happens to have declared `review` at all. Same three
+/// real bars, byte-identical logic to what this function replaced inline:
+/// a qualifying `devsystem.review` iteration must exist, have succeeded,
+/// name this exact requirement, and clear the length/distinct-word/
+/// not-reused-elsewhere bars.
+pub fn qualifying_review_evidence(state: &RunState, index: usize) -> Result<(), String> {
+    // Every qualifying review (right requirement, succeeded), not just the first
+    // or the last -- an early lazy rubber-stamp must not poison a genuinely
+    // substantive review submitted afterward, and a later lazy one must not
+    // undo an earlier real review either. The gate passes if AT LEAST ONE
+    // qualifying review clears the length bar.
+    let reviews: Vec<&IterationRecord> =
+        state.history.iter().filter(|h| h.stage == "devsystem.review" && h.succeeded && h.requirement_indices.contains(&index)).collect();
+    if reviews.is_empty() {
+        return Err(format!(
+            "requirement {index} cannot be marked verified yet -- no successful devsystem.review \
+             iteration addressing requirement {index} (via its requirement_indices) exists yet. \
+             Submit one first."
+        ));
+    }
+    let long_enough = |r: &&IterationRecord| {
+        let trimmed = r.feedback.trim();
+        trimmed.chars().count() >= MIN_REVIEW_FEEDBACK_LEN && distinct_word_count(trimmed) >= MIN_REVIEW_DISTINCT_WORDS
+    };
+    let reused_verbatim_elsewhere = |r: &&IterationRecord| {
+        let trimmed = r.feedback.trim();
+        state.history.iter().any(|other| {
+            other.stage == "devsystem.review"
+                && other.succeeded
+                && other.feedback.trim() == trimmed
+                && !same_requirement_set(&other.requirement_indices, &r.requirement_indices)
+        })
+    };
+    let qualifies = |r: &&IterationRecord| long_enough(r) && !reused_verbatim_elsewhere(r);
+    if !reviews.iter().any(qualifies) {
+        if reviews.iter().any(|r| long_enough(r) && reused_verbatim_elsewhere(r)) {
+            return Err(format!(
+                "requirement {index} cannot be marked verified yet -- the devsystem.review iteration \
+                 addressing it reuses feedback text verbatim from a review of a different, unrelated \
+                 requirement in this run's history. Real scrutiny of THIS requirement's specific \
+                 acceptance criteria is required, not a copy-pasted review meant for something else."
+            ));
+        }
+        let best = reviews.iter().max_by_key(|r| (r.feedback.trim().chars().count(), distinct_word_count(r.feedback.trim()))).unwrap();
+        return Err(format!(
+            "requirement {index} cannot be marked verified yet -- every devsystem.review iteration \
+             addressing it is too short or too repetitive to plausibly be real scrutiny (best is \
+             iteration {}, {} character(s) and {} distinct word(s); minimum {MIN_REVIEW_FEEDBACK_LEN} \
+             characters AND {MIN_REVIEW_DISTINCT_WORDS} distinct words). A rubber-stamp or padded \
+             filler review doesn't satisfy this gate.",
+            best.iteration,
+            best.feedback.trim().chars().count(),
+            distinct_word_count(best.feedback.trim()),
+        ));
+    }
+    Ok(())
+}
+
 pub fn toggle_requirement(spec: &PipelineSpec, state: &mut RunState, index: usize) -> Result<(), String> {
     let requirement = state.requirements.get(index).ok_or_else(|| format!("no requirement at index {index}"))?;
     if !requirement.verified && spec.roles.iter().any(|r| r.tag == "review") {
-        // Every qualifying review (right requirement, succeeded), not just the first
-        // or the last -- an early lazy rubber-stamp must not poison a genuinely
-        // substantive review submitted afterward, and a later lazy one must not
-        // undo an earlier real review either. The gate passes if AT LEAST ONE
-        // qualifying review clears the length bar.
-        let reviews: Vec<&IterationRecord> =
-            state.history.iter().filter(|h| h.stage == "devsystem.review" && h.succeeded && h.requirement_indices.contains(&index)).collect();
-        if reviews.is_empty() {
-            return Err(format!(
-                "requirement {index} cannot be marked verified yet -- this run declares a devsystem.review \
-                 role, but no successful devsystem.review iteration addressing requirement {index} (via its \
-                 requirement_indices) exists yet. Submit one first."
-            ));
-        }
-        let long_enough = |r: &&IterationRecord| {
-            let trimmed = r.feedback.trim();
-            trimmed.chars().count() >= MIN_REVIEW_FEEDBACK_LEN && distinct_word_count(trimmed) >= MIN_REVIEW_DISTINCT_WORDS
-        };
-        let reused_verbatim_elsewhere = |r: &&IterationRecord| {
-            let trimmed = r.feedback.trim();
-            state.history.iter().any(|other| {
-                other.stage == "devsystem.review"
-                    && other.succeeded
-                    && other.feedback.trim() == trimmed
-                    && !same_requirement_set(&other.requirement_indices, &r.requirement_indices)
-            })
-        };
-        let qualifies = |r: &&IterationRecord| long_enough(r) && !reused_verbatim_elsewhere(r);
-        if !reviews.iter().any(qualifies) {
-            if reviews.iter().any(|r| long_enough(r) && reused_verbatim_elsewhere(r)) {
-                return Err(format!(
-                    "requirement {index} cannot be marked verified yet -- the devsystem.review iteration \
-                     addressing it reuses feedback text verbatim from a review of a different, unrelated \
-                     requirement in this run's history. Real scrutiny of THIS requirement's specific \
-                     acceptance criteria is required, not a copy-pasted review meant for something else."
-                ));
-            }
-            let best = reviews.iter().max_by_key(|r| (r.feedback.trim().chars().count(), distinct_word_count(r.feedback.trim()))).unwrap();
-            return Err(format!(
-                "requirement {index} cannot be marked verified yet -- every devsystem.review iteration \
-                 addressing it is too short or too repetitive to plausibly be real scrutiny (best is \
-                 iteration {}, {} character(s) and {} distinct word(s); minimum {MIN_REVIEW_FEEDBACK_LEN} \
-                 characters AND {MIN_REVIEW_DISTINCT_WORDS} distinct words). A rubber-stamp or padded \
-                 filler review doesn't satisfy this gate.",
-                best.iteration,
-                best.feedback.trim().chars().count(),
-                distinct_word_count(best.feedback.trim()),
-            ));
-        }
+        qualifying_review_evidence(state, index)?;
     }
     let requirement = state.requirements.get_mut(index).unwrap();
     requirement.verified = !requirement.verified;

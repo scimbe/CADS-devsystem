@@ -19,8 +19,8 @@ use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::{preflight_annotations, process_annotations};
 use devsystem_pipeline::runner::{
-    load_or_init_run, persist_run, push_chat_exchange, render_requirements_markdown, run_iteration, toggle_acceptance_criterion, toggle_milestone,
-    toggle_requirement, toggle_requirement_auto_judge, BacklogItem, CustomPanel,
+    load_or_init_run, persist_run, push_chat_exchange, qualifying_review_evidence, render_requirements_markdown, run_iteration, toggle_acceptance_criterion,
+    toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, BacklogItem, CustomPanel,
     Milestone, PendingIssueProposal, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal, Requirement, RoleFillMode,
     RunOutcome,
 };
@@ -425,6 +425,22 @@ fn owner_authorized(headers: &axum::http::HeaderMap, run_state: &devsystem_pipel
         None => true,
         Some(owner) => owner == caller,
     }
+}
+
+/// Real gap #10 (#382 goal doc §8, fourteenth stress-test run, 2026-08-06):
+/// `devsystem.assistant`'s own `apply_action` calls this exact same
+/// `/requirements/{index}/toggle` endpoint a human's GUI click does, with
+/// nothing server-side distinguishing the two -- live-verified the assistant
+/// will sometimes genuinely mark a requirement verified from a plain chat
+/// request, based purely on the implementer's own self-reported feedback,
+/// with zero independent evidence and zero mechanical bar, on any run that
+/// hasn't declared a `review` role (most runs, by default -- gap #2's own
+/// mandatory gate only bites once a run opts in). `X-Actor: devsystem.assistant`
+/// is the real signal `apply_action` now sends on every request it makes so
+/// this handler can tell the two callers apart -- see
+/// `toggle_requirement_handler`'s own use of this for the actual gate.
+fn is_assistant_actor(headers: &axum::http::HeaderMap) -> bool {
+    headers.get("x-actor").and_then(|v| v.to_str().ok()) == Some("devsystem.assistant")
 }
 
 #[derive(Serialize)]
@@ -1186,6 +1202,31 @@ async fn toggle_requirement_handler(
     };
     if !owner_authorized(&headers, &run_state) {
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    // Real gap #10 (#382 goal doc §8, fourteenth stress-test run): when the
+    // assistant relay is the caller AND this toggle would mark the
+    // requirement verified (not un-verify it -- that direction stays
+    // unconditionally safe, same as the human path), require the same real
+    // evidence the review gate already enforces, UNCONDITIONALLY -- not just
+    // on runs that happen to have declared `review`. A human's own direct
+    // click is unaffected; this only closes the chat-driven path a plain
+    // instruction could otherwise talk the assistant into.
+    if is_assistant_actor(&headers) {
+        if let Some(requirement) = run_state.requirements.get(index) {
+            if !requirement.verified {
+                if let Err(e) = qualifying_review_evidence(&run_state, index) {
+                    return (
+                        StatusCode::CONFLICT,
+                        format!(
+                            "{e} This check applies unconditionally to devsystem.assistant-driven \
+                             verification, regardless of whether this run declares a review role -- a \
+                             human's own direct click in the Requirements panel is not affected."
+                        ),
+                    )
+                        .into_response();
+                }
+            }
+        }
     }
     if let Err(e) = toggle_requirement(&spec, &mut run_state, index) {
         let status = if e.contains("no requirement at index") { StatusCode::NOT_FOUND } else { StatusCode::CONFLICT };
@@ -4531,6 +4572,105 @@ mod tests {
         assert_eq!(response.status(), SC::CONFLICT, "a rubber-stamp review must not satisfy the gate, even though it succeeded and named the right requirement");
         let body = String::from_utf8(axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
         assert!(body.contains("too short"), "the error must explain why: {body}");
+    }
+
+    fn assistant_toggle_request(uri: &str) -> Request<Body> {
+        Request::builder().method("POST").uri(uri).header("X-Actor", "devsystem.assistant").body(Body::empty()).expect("build request")
+    }
+
+    #[tokio::test]
+    /// Real gap #10 (#382 goal doc §8, fourteenth stress-test run, 2026-08-06):
+    /// on a run that never declared `review` -- most runs, by default -- a
+    /// human's own direct click has always been free to verify a requirement
+    /// with zero evidence at all (by design, per gap #2's own scoping). This
+    /// run proves the assistant-relayed path is now held to the real evidence
+    /// bar UNCONDITIONALLY, even here, where the human path stays unblocked.
+    async fn assistant_driven_verification_requires_real_review_evidence_even_with_no_review_role_declared() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "assistant-gate-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/assistant-gate-run/requirements",
+                serde_json::json!({"statement": "WHEN a user does X, THE SYSTEM SHALL fulfill a real requirement", "acceptance_criteria": ["checkable"]}),
+            ))
+            .await
+            .unwrap();
+
+        // The assistant-relayed call must be blocked -- no review role declared,
+        // no review iteration, nothing but this bare request.
+        let response = app.clone().oneshot(assistant_toggle_request("/api/runs/assistant-gate-run/requirements/0/toggle")).await.unwrap();
+        assert_eq!(response.status(), SC::CONFLICT, "the assistant-relayed path must require real evidence even on a run that never declared review");
+        let body = String::from_utf8(axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+        assert!(body.contains("unconditionally"), "the error must explain this is the assistant-specific gate, not the review-declared one: {body}");
+
+        // The exact same request, minus the X-Actor header (a human's own
+        // direct click), must still succeed unconditionally -- gap #2's own
+        // scoping decision for un-gated runs is unaffected by this fix.
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/assistant-gate-run/requirements/0/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "a human's own direct click on an un-gated run must be completely unaffected by this fix");
+    }
+
+    #[tokio::test]
+    /// Real gap #10, the positive case: once genuine review evidence exists,
+    /// the assistant-relayed path succeeds exactly like a human's would.
+    async fn assistant_driven_verification_succeeds_once_real_review_evidence_exists() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "assistant-gate-pass-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/assistant-gate-pass-run/requirements",
+                serde_json::json!({"statement": "WHEN a user does X, THE SYSTEM SHALL fulfill a real requirement", "acceptance_criteria": ["checkable"]}),
+            ))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/assistant-gate-pass-run/iterate",
+                serde_json::json!({"stage": "devsystem.review", "feedback": "Checked the actual implementation directly against the acceptance criteria, confirmed real behavior matches.", "succeeded": true, "requirement_indices": [0]}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app.oneshot(assistant_toggle_request("/api/runs/assistant-gate-pass-run/requirements/0/toggle")).await.unwrap();
+        assert_eq!(response.status(), SC::OK, "real review evidence must satisfy the assistant-specific gate too");
+        let body = body_json(response).await;
+        assert_eq!(body["requirements"][0]["verified"], true);
+    }
+
+    #[tokio::test]
+    /// Real gap #10: un-verifying must stay unconditionally safe for the
+    /// assistant-relayed path too, same as the human path -- loosening a
+    /// claim never needs evidence to justify it.
+    async fn assistant_driven_un_verification_needs_no_evidence() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "assistant-unverify-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/assistant-unverify-run/requirements",
+                serde_json::json!({"statement": "WHEN a user does X, THE SYSTEM SHALL fulfill a real requirement", "acceptance_criteria": ["checkable"]}),
+            ))
+            .await
+            .unwrap();
+        // Verify it directly first (human path, un-gated run).
+        app.clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/assistant-unverify-run/requirements/0/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        let response = app.oneshot(assistant_toggle_request("/api/runs/assistant-unverify-run/requirements/0/toggle")).await.unwrap();
+        assert_eq!(response.status(), SC::OK, "un-verifying via the assistant-relayed path must stay unconditionally safe, no evidence required");
+        let body = body_json(response).await;
+        assert_eq!(body["requirements"][0]["verified"], false);
     }
 
     #[tokio::test]

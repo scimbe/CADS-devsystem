@@ -450,7 +450,15 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
             "proposed",
         ),
     };
-    match client.post(&url).json(&body).send() {
+    // Real gap #10 (#382 goal doc §8, fourteenth stress-test run, 2026-08-06):
+    // devsystem-web's toggle_requirement_handler needs a real way to tell this
+    // relay's own calls apart from a human's direct GUI click, so it can hold
+    // an assistant-driven verification to the same real evidence bar the
+    // review gate already enforces -- unconditionally, not just on runs that
+    // declared review. Sent on every real action this relay takes, not just
+    // ToggleRequirement, so the signal stays honest and simple rather than
+    // special-cased per action type.
+    match client.post(&url).header("X-Actor", "devsystem.assistant").json(&body).send() {
         Ok(resp) if resp.status().is_success() => format!("{success_verb}: {method_desc}"),
         Ok(resp) => {
             let status = resp.status();
@@ -946,6 +954,31 @@ mod tests {
         assert_eq!(url, "/api/runs/my-run/milestones");
         let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
         assert_eq!(parsed["description"], "M1: ship it");
+    }
+
+    #[test]
+    /// Real gap #10 (#382 goal doc §8, fourteenth stress-test run, 2026-08-06):
+    /// devsystem-web can only hold this relay's own requests to the real
+    /// evidence bar if it can actually tell them apart from a human's direct
+    /// GUI click. This is the real signal it looks for -- separate from
+    /// spawn_capturing_server (which doesn't capture headers) since this is
+    /// the one thing worth a dedicated real assertion on.
+    fn apply_action_sends_a_real_x_actor_header_identifying_itself() {
+        let server = tiny_http::Server::http("127.0.0.1:0").expect("bind ephemeral port");
+        let addr = format!("http://{}", server.server_addr());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for req in server.incoming_requests() {
+                let header = req.headers().iter().find(|h| h.field.as_str().as_str().eq_ignore_ascii_case("x-actor")).map(|h| h.value.as_str().to_string());
+                let _ = tx.send(header);
+                let _ = req.respond(tiny_http::Response::from_string("{}").with_status_code(200));
+            }
+        });
+        let client = reqwest::blocking::Client::new();
+        let result = apply_action(&client, &addr, "my-run", &Action::AddMilestone { description: "M1".to_string() });
+        assert!(result.starts_with("done:"));
+        let header = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(header.as_deref(), Some("devsystem.assistant"), "devsystem-web's gap #10 gate depends on this real header being present and correct");
     }
 
     #[test]
