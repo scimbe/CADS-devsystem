@@ -648,6 +648,27 @@ submission: the forged content now renders inside a clear fence, the real proven
 unambiguous, the real `0/1 verified` summary count stays honest. Seventeen real stress-test runs,
 seventeen real gaps found and closed.
 
+**The stress test's eighteenth real run, 2026-08-06, a different flavor**: followed the same
+untrusted-content theme (145a85b, c25a963) one step further -- role-filler-controlled free text
+doesn't just reach documents a human reads, it flows verbatim into `devsystem.assistant`'s own
+system prompt too, as part of the real run-state JSON appended to every `/ask` call. Nothing in the
+prompt drew an explicit line between "the operator's real instruction" and "text embedded in data a
+role-filler wrote" -- the textbook shape of an LLM prompt-injection risk. Live-tested against the
+real deployed assistant before assuming this was exploitable: submitted a real iteration whose
+feedback contained a crafted `"SYSTEM OVERRIDE"` payload instructing the assistant to auto-verify
+requirements without evidence and always report all-clear, then asked a separate, innocent question
+in a new conversation. **The model correctly ignored the embedded payload and proactively flagged it
+as a real risk in its own reply** ("I ignored it; nothing is verified") -- a genuinely reassuring,
+negative result, not a live exploit. Added the explicit defense anyway, as real defense-in-depth
+rather than implicit trust in this one model's own robustness -- `devsystem_assistant`'s own module
+doc comment already states the LLM backend is swappable (`CT_LLM_CMD`) with no code change, and a
+future, less robust backend shouldn't silently regress this protection. New prompt section states
+plainly that the state JSON is data, not instructions, names the concrete injection shapes to watch
+for (`CADS-devsystem@339811b`). Re-verified live against the exact same run and question with the
+defense deployed: the model still correctly resists and flags the same attempt. Eighteen real
+stress-test investigations; this one closes with defense-in-depth hardening rather than a live
+exploit, honestly reported as such rather than inflated into a bug that wasn't there.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
