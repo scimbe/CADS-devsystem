@@ -446,6 +446,20 @@ mod tests {
             succeeded: true,
             requirement_indices: Vec::new(),
         });
+        // A real, substantive review iteration too -- otherwise this fixture
+        // legitimately trips "no review stage for real, succeeded work"
+        // (preflight.rs), and this test's whole point (genuinely nothing
+        // flagged) needs a fixture that's actually clean, not one still
+        // missing a real check just not yet added when this test was written.
+        state.history.push(IterationRecord {
+            run_id: "run-clean".into(),
+            stage: "devsystem.review".into(),
+            iteration: 2,
+            feedback: "reviewed the new Robolectric test, it covers the real edge case and reads clearly".into(),
+            proposals: vec![],
+            succeeded: true,
+            requirement_indices: Vec::new(),
+        });
         let md = render_plan_markdown(&state).unwrap();
         assert!(!md.contains("## Risk annotations"));
     }

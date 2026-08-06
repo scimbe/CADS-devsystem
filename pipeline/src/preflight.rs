@@ -6,7 +6,7 @@
 //! do by hand.
 
 use crate::runner::{distinct_word_count, RunState};
-use crate::{STAGE_IMPLEMENT, STAGE_TEST};
+use crate::{STAGE_IMPLEMENT, STAGE_REVIEW, STAGE_TEST};
 use ct_common::pipeline::PipelineSpec;
 
 /// Same real, mechanical substance bars `runner.rs`'s review gate uses
@@ -52,6 +52,9 @@ pub fn preflight_annotations(state: &RunState) -> Vec<RiskAnnotation> {
         findings.push(a);
     }
     if let Some(a) = missing_test_before_implement(state) {
+        findings.push(a);
+    }
+    if let Some(a) = no_review_for_succeeded_work(state) {
         findings.push(a);
     }
     if let Some(a) = no_price_ceiling(state) {
@@ -254,6 +257,48 @@ fn missing_test_before_implement(state: &RunState) -> Option<RiskAnnotation> {
     }
 }
 
+/// Goal doc §5's own named "most direct next step" toward the quality-bar table:
+/// "a role-filler can mark an iteration `succeeded: true` without passing
+/// through `review`... at all." Deliberately advisory, not a hard block --
+/// same trust level `missing_test_before_implement`/`no_price_ceiling` already
+/// get, not the narrower hard `409` gap #2 already closed for
+/// `toggle_requirement` specifically (`qualifying_review_evidence`,
+/// `pipeline/src/runner.rs`). That gate only fires for a run that opted
+/// `review` into its own spec and only blocks marking a *requirement*
+/// verified; this is the broader, still-open half of the same gap -- a run
+/// with real succeeded work and NO substantive `devsystem.review` iteration
+/// anywhere in its history at all, regardless of whether the run declared a
+/// review role or touches requirements. Turning this into a hard block is a
+/// real, separate, later increment (per §4.3, "the user always leads") -- this
+/// makes the gap visible first, the same safe rollout shape every other real
+/// quality signal in this file already took before (if ever) becoming a gate.
+fn no_review_for_succeeded_work(state: &RunState) -> Option<RiskAnnotation> {
+    let has_succeeded_work = state.history.iter().any(|r| r.succeeded && r.stage != STAGE_REVIEW);
+    if !has_succeeded_work {
+        return None;
+    }
+    let has_real_review = state.history.iter().any(|r| {
+        r.stage == STAGE_REVIEW && {
+            let trimmed = r.feedback.trim();
+            trimmed.chars().count() >= MIN_TEST_FEEDBACK_LEN && distinct_word_count(trimmed) >= MIN_TEST_DISTINCT_WORDS
+        }
+    });
+    if has_real_review {
+        None
+    } else {
+        Some(RiskAnnotation {
+            label: "no review stage for real, succeeded work".into(),
+            evidence: format!(
+                "this run has at least one succeeded:true iteration, but no devsystem.review \
+                 iteration anywhere in its history that's substantive enough to count as real \
+                 evidence review happened ({MIN_TEST_FEEDBACK_LEN}+ characters and \
+                 {MIN_TEST_DISTINCT_WORDS}+ distinct words of feedback, not a rubber-stamp) -- \
+                 advisory today, not a block (goal doc §5)"
+            ),
+        })
+    }
+}
+
 /// "external-partner role with no price ceiling" (proposal §5's own example),
 /// honestly scoped to what the data actually shows: a proposal that needs a new
 /// service built or provided (`use_existing_service` is `None` -- the closest
@@ -432,7 +477,11 @@ mod tests {
         let mut state = RunState::new("run-preflight");
         state.history.push(iteration(STAGE_TEST, 1, "added a real unit test covering the empty-input edge case and confirmed it fails without the fix", vec![]));
         state.history.push(iteration(STAGE_IMPLEMENT, 2, "wrote a helper function", vec![]));
-        assert!(preflight_annotations(&state).is_empty());
+        // Isolates the security check specifically -- this fixture legitimately
+        // trips the separate "no review for succeeded work" finding below (real
+        // succeeded work, no devsystem.review iteration at all), so this can't
+        // assert is_empty() anymore.
+        assert!(!preflight_annotations(&state).iter().any(|f| f.label == "touches auth/security"));
     }
 
     #[test]
@@ -548,7 +597,11 @@ mod tests {
         let mut state = RunState::new("run-preflight");
         state.history.push(iteration(STAGE_TEST, 1, "added a real test asserting the empty-message case never calls sendText and keeps focus", vec![]));
         state.history.push(iteration(STAGE_IMPLEMENT, 2, "wrote code", vec![]));
-        assert!(preflight_annotations(&state).is_empty());
+        // Isolates the test-before-implement check specifically -- this fixture
+        // legitimately trips the separate "no review for succeeded work" finding
+        // (real succeeded work, no devsystem.review iteration at all), so this
+        // can't assert is_empty() anymore.
+        assert!(!preflight_annotations(&state).iter().any(|f| f.label == "no test stage before implement"));
     }
 
     #[test]
@@ -578,6 +631,49 @@ mod tests {
             findings.iter().any(|f| f.label == "no test stage before implement"),
             "a rubber-stamp test iteration must not silently satisfy this check: {findings:?}"
         );
+    }
+
+    #[test]
+    /// Goal doc §5's own named "most direct next step": "a role-filler can
+    /// mark an iteration succeeded: true without passing through review... at
+    /// all." Advisory, not the narrower hard `409` gap #2 already closed for
+    /// `toggle_requirement` specifically.
+    fn flags_succeeded_work_with_no_review_iteration_anywhere_in_history() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_IMPLEMENT, 1, "shipped a real feature", vec![]));
+        let findings = preflight_annotations(&state);
+        assert!(findings.iter().any(|f| f.label == "no review stage for real, succeeded work"), "got: {findings:?}");
+    }
+
+    #[test]
+    fn does_not_flag_when_a_real_substantive_review_iteration_exists() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_IMPLEMENT, 1, "shipped a real feature", vec![]));
+        state.history.push(iteration(STAGE_REVIEW, 2, "reviewed the diff line by line, confirmed the edge cases are covered and the naming is clear", vec![]));
+        assert!(!preflight_annotations(&state).iter().any(|f| f.label == "no review stage for real, succeeded work"));
+    }
+
+    #[test]
+    /// Same "rubber-stamp doesn't count" discipline as the sibling test-stage
+    /// check above -- a one-line "looks good" must not silently satisfy this.
+    fn a_rubber_stamp_review_iteration_still_flags_as_missing_real_review_evidence() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_IMPLEMENT, 1, "shipped a real feature", vec![]));
+        state.history.push(iteration(STAGE_REVIEW, 2, "looks good", vec![]));
+        let findings = preflight_annotations(&state);
+        assert!(
+            findings.iter().any(|f| f.label == "no review stage for real, succeeded work"),
+            "a rubber-stamp review iteration must not silently satisfy this check: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn does_not_flag_a_run_whose_only_succeeded_iterations_are_review_itself() {
+        let mut state = RunState::new("run-preflight");
+        // A review-only history has no OTHER real work that would need reviewing --
+        // must not self-referentially flag review as missing review.
+        state.history.push(iteration(STAGE_REVIEW, 1, "reviewed the plan doc, it's clear and complete", vec![]));
+        assert!(!preflight_annotations(&state).iter().any(|f| f.label == "no review stage for real, succeeded work"));
     }
 
     fn proposal(use_existing_service: Option<&str>, price_ceiling: Option<u64>) -> StageProposal {
