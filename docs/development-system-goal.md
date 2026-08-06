@@ -2147,4 +2147,26 @@ category-3 self-description fix already documented above it. Not manufacturing a
 code change this same cycle just to have one on the CADS-devsystem side -- the docs increment is
 real, real work, and a legitimate outcome of this loop on its own.
 
+**Goal-driven-loop firing, 2026-08-06 (x) -- a real, live, reproducible Unicode bug found DAU-
+auditing a feature not yet checked (the requirements decision-basis view)**: `truncate()`'s plain
+`s.slice(0, n)` indexes by UTF-16 code unit, not real character -- real feedback/rationale text
+containing an emoji or any other supplementary-plane character that straddles the cut point gets
+sliced in half, leaving a lone unpaired surrogate in the rendered `"…"` preview. Used at 12 real
+call sites across the GUI (decision basis, chat history, and others), so a real, if low-probability,
+blast radius. Reproduced directly before fixing, not assumed:
+`truncate("x".repeat(219) + "😀" + "y".repeat(50), 220)` returned a string ending in the bare high
+surrogate `\ud83d` with no matching low surrogate (verified via `node -e`). Fixed
+(`CADS-devsystem@9d3dcf0`) with `Array.from()`, which iterates by real Unicode code point so a
+surrogate pair is never split -- verified the fix resolves the exact reproduction case and preserves
+existing behavior (short strings, normal ASCII truncation) via `node -e` before and after. No
+automated JS test harness exists in this repo for `web/static/index.html` (confirmed earlier this
+session), so `node -e` reproduction is the established rigor for this class of fix. Deployed,
+live-verified end to end with a real headless-browser (Playwright) run against the actual
+redeployed container: created a real requirement addressed by a real iteration whose feedback
+contains an emoji positioned exactly at the truncation boundary, opened the real decision-basis
+`<details>` by clicking it (not programmatically forced), confirmed the rendered preview shows the
+whole emoji (`"emoji test 😀 more t…"`) with no replacement character. 57/57 stress-harness
+assertions still clean (pure frontend change, no API behavior affected, so no new harness check
+applies -- same precedent as the pause-reason disclosure fix).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
