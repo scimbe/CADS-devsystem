@@ -3970,10 +3970,21 @@ function initProcessPrompt() {
   // `typing` check above: Escape must close the popover even while its own
   // dedicated-label <input> is focused, unlike the other global shortcuts
   // that must stay out of normal typing.
+  //
+  // Same real gap, found live 2026-08-06 in a fresh sweep for the identical
+  // shape: the "New Project" modal (this app's ONLY other overlay/modal --
+  // grepped `.modal-overlay` sitewide to confirm) had the same "outside-click
+  // only" behavior and no Escape handling either, even though it's the very
+  // first control a new user encounters. Live-confirmed before fixing (real
+  // Playwright run against the actual deployed devsystem-web): the dialog
+  // opened, Escape was pressed, and the overlay was still there afterward --
+  // zero console errors, so it wasn't erroring silently, it just genuinely
+  // had no handler for the key at all.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (document.getElementById('fillmode-popover')) { closeFillModePopover(); return; }
-    if (document.getElementById('refresh-popover')) { closeRefreshPopover(); }
+    if (document.getElementById('refresh-popover')) { closeRefreshPopover(); return; }
+    if (document.getElementById('new-project-overlay')) { closeNewProjectDialog(); }
   });
 }
 
