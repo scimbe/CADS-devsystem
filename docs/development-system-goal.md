@@ -1080,6 +1080,18 @@ the real "succeeded iteration admits a known defect" risk on the run. Added as c
 assertions passing locally against the real deployment. Forty-three real stress-test
 investigations, thirty-five real gaps found and closed.
 
+**The stress test's forty-fourth real run, 2026-08-06**: extended the harness with a regression
+guard for the mechanism this session found TWO real bugs in already (runs 25-27: a zero
+`price_ceiling` not flagged, then an assistant-relayed proposal losing its `price_ceiling`
+entirely, then the fix itself only checking the FIRST matching proposal for a `stage_id` instead of
+the latest) -- exactly the kind of area worth a permanent check, not just a one-time fix.
+Live-confirmed before writing the check: propose+approve an unbounded stage, confirm the real
+"no price ceiling set" risk fires; re-propose+approve the SAME `stage_id` with a real
+`price_ceiling`, confirm the risk genuinely clears. Added as check [12] (`CADS-devsystem@225af3d`);
+the harness now covers eighteen real checks, 21/21 individual assertions passing locally against
+the real deployment. Forty-four real stress-test investigations, thirty-five real gaps found and
+closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
