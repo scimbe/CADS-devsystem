@@ -341,6 +341,11 @@
  .modal input{width:100%;margin-top:.3rem;background:#0d1117;border:1px solid var(--border);
               color:var(--text);border-radius:6px;padding:.45rem .6rem;font-family:var(--mono);font-size:.85rem}
  .modal-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:.4rem}
+ .shortcut-section-head{margin:.7rem 0 .3rem;font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+ .shortcut-row{display:flex;align-items:baseline;gap:.7rem;padding:.35rem 0;border-bottom:1px solid var(--border);font-size:.8rem}
+ .shortcut-row:last-child{border-bottom:none}
+ .shortcut-row code{flex-shrink:0;min-width:6.5rem}
+ .shortcut-row .shortcut-unbind{margin-left:.5rem;padding:.05rem .5rem;font-size:.68rem}
  pre.checkin{white-space:pre-wrap;font-family:var(--mono);font-size:.8rem;background:#0d1117;
              border:1px solid var(--border);border-radius:8px;padding:1rem;overflow:auto}
  .memory-list{display:flex;flex-direction:column;gap:.5rem;margin-top:.5rem}
@@ -1746,6 +1751,102 @@ function openNewProjectDialog() {
       status.textContent = err.message; status.className = 'status-line err';
     }
   });
+}
+
+// Real operator ask, 2026-08-06: "mache eine intelligente shortcut liste
+// fuer alle bisherigen funktionen." A real, accessible modal (same proven
+// role="dialog"/aria-modal/focus-trap pattern as New Project above) listing
+// every fixed keyboard behavior (FIXED_SHORTCUTS, near the ./shortcuts
+// command below) plus the user's own real ./bind custom shortcuts, with a
+// real unbind action right there rather than needing the Process Prompt for
+// that too. Triggered by the existing ./shortcuts command.
+let shortcutsTriggerEl = null;
+
+function trapShortcutsFocus(e) {
+  if (e.key !== 'Tab') return;
+  const overlay = document.getElementById('shortcuts-overlay');
+  if (!overlay) return;
+  const focusable = Array.from(overlay.querySelectorAll('button, [href], input, [tabindex]:not([tabindex="-1"])')).filter(
+    (el) => !el.disabled && el.offsetParent !== null,
+  );
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (e.shiftKey) {
+    if (active === first || !overlay.contains(active)) {
+      e.preventDefault();
+      last.focus();
+    }
+  } else if (active === last || !overlay.contains(active)) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+function closeShortcutsDialog() {
+  const overlay = document.getElementById('shortcuts-overlay');
+  if (overlay) overlay.remove();
+  document.removeEventListener('keydown', trapShortcutsFocus);
+  if (shortcutsTriggerEl) {
+    shortcutsTriggerEl.focus();
+    shortcutsTriggerEl = null;
+  }
+}
+
+function openShortcutsDialog() {
+  const trigger = document.activeElement;
+  closeShortcutsDialog();
+  shortcutsTriggerEl = trigger;
+  const overlay = document.createElement('div');
+  overlay.id = 'shortcuts-overlay';
+  overlay.className = 'modal-overlay';
+  const fixedRows = FIXED_SHORTCUTS.map(
+    (s) => `<div class="shortcut-row"><code>${escapeHtml(s.combo)}</code><span>${escapeHtml(s.description)}</span></div>`,
+  ).join('');
+  const customEntries = Object.entries(shortcuts);
+  const customRows = customEntries.length
+    ? customEntries
+        .map(
+          ([combo, cmd]) => `<div class="shortcut-row"><code>${escapeHtml(combo)}</code><span>runs <code>./${escapeHtml(cmd)}</code>
+        <button type="button" class="secondary shortcut-unbind" data-combo="${escapeHtml(combo)}">unbind</button></span></div>`,
+        )
+        .join('')
+    : `<p class="lede" style="font-size:.78rem">No custom shortcuts bound yet -- type <code>./bind &lt;combo&gt; &lt;command&gt;</code> in the Process Prompt below, e.g. <code>./bind ctrl+k show requirements</code>.</p>`;
+  overlay.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title" style="width:min(36rem,92vw)">
+      <h3 id="shortcuts-title">Keyboard Shortcuts</h3>
+      <p class="lede" style="font-size:.8rem">Every real keyboard behavior in this app -- built in, plus whatever you've bound yourself.</p>
+      <h4 class="shortcut-section-head">Built in</h4>
+      ${fixedRows}
+      <h4 class="shortcut-section-head">Your custom bindings</h4>
+      ${customRows}
+      <div class="modal-actions"><button type="button" id="shortcuts-close-btn">Close</button></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  // Real bug, live-confirmed via Playwright (a stack trace showing
+  // closeShortcutsDialog invoked as HTMLButtonElement's own handler, not
+  // called directly, was the tell): this dialog is opened from Enter on the
+  // Process Prompt (the ./shortcuts command) -- focusing a <button>
+  // synchronously, still within that same physical Enter keystroke's own
+  // event processing, means the browser's native "Enter activates the
+  // focused element" behavior fires AGAIN for the button, which was this
+  // button's own onclick -- closing the dialog the instant it opened.
+  // Deferred one tick so the button is focused only after this keystroke's
+  // own native handling has fully finished; the New Project dialog never
+  // hit this because it focuses an <input>, which has no such native
+  // Enter-activates-me behavior.
+  setTimeout(() => document.getElementById('shortcuts-close-btn')?.focus(), 0);
+  document.addEventListener('keydown', trapShortcutsFocus);
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeShortcutsDialog(); });
+  document.getElementById('shortcuts-close-btn').onclick = closeShortcutsDialog;
+  for (const btn of overlay.querySelectorAll('.shortcut-unbind')) {
+    btn.onclick = () => {
+      delete shortcuts[btn.dataset.combo];
+      saveShortcuts();
+      openShortcutsDialog(); // re-render in place, same trigger/focus story
+    };
+  }
 }
 
 async function refreshRunsList() {
@@ -3910,6 +4011,22 @@ function saveShortcuts() {
   try { localStorage.setItem(SHORTCUTS_KEY, JSON.stringify(shortcuts)); } catch (e) { /* storage unavailable */ }
 }
 
+// Real operator ask, 2026-08-06: "mache eine intelligente shortcut liste
+// fuer alle bisherigen funktionen." The `./shortcuts` command used to only
+// ever show the user's own custom `bind`ings (empty by default) -- every
+// real, fixed keyboard behavior already built into this app (Escape's
+// context-aware close, the panel launcher's own Ctrl+C, Enter's several
+// real meanings, the modal focus trap) was undiscoverable unless you
+// already knew to look at the source. This is the single source of truth
+// for that list -- add a real entry here whenever a new fixed keyboard
+// behavior ships, same discipline COMMANDS already keeps for ./ commands.
+const FIXED_SHORTCUTS = [
+  { combo: 'Escape', description: 'Closes whichever real overlay is currently open -- a popover (refresh interval, fill mode), the New Project dialog, this Shortcuts dialog, or the panel launcher -- always the topmost one, context-aware.' },
+  { combo: 'Ctrl+C', description: 'Closes the panel launcher (the green dot), only while it is actually open -- never intercepts a real copy anywhere else in the app.' },
+  { combo: 'Enter', description: 'Submits the Process Prompt / autocomplete selection, advances focus through the New Project dialog\'s fields, or applies a fill-mode popover\'s dedicated label -- deliberately never "submit the whole form" in a multi-field context, to avoid a premature-submit footgun.' },
+  { combo: 'Tab / Shift+Tab', description: 'Cycles focus within whichever real modal is currently open (New Project, this Shortcuts dialog) -- a real accessible focus trap, never escapes to the page behind it.' },
+];
+
 function resolvePanelName(name) {
   const q = (name || '').trim().toLowerCase();
   if (!q) return { error: 'panel name required' };
@@ -4025,8 +4142,13 @@ function runCommand(cmdline) {
   }
 
   if (cmd === 'shortcuts') {
-    const entries = Object.entries(shortcuts);
-    return { ok: true, message: entries.length ? entries.map(([k, v]) => `${k} -> ${v}`).join(', ') : 'no shortcuts bound' };
+    // Real operator ask, 2026-08-06: opens the real Keyboard Shortcuts
+    // dialog (every fixed behavior + your own ./bind bindings, with a real
+    // unbind action right there) instead of the old one-line status text --
+    // `.prompt-status` is `white-space:nowrap`, genuinely the wrong widget
+    // for a real list, not just a smaller version of the same thing.
+    openShortcutsDialog();
+    return { ok: true, message: 'Keyboard Shortcuts opened' };
   }
 
   if (cmd === 'help') {
@@ -4350,8 +4472,25 @@ function initProcessPrompt() {
     if (document.getElementById('fillmode-popover')) { closeFillModePopover(); return; }
     if (document.getElementById('refresh-popover')) { closeRefreshPopover(); return; }
     if (document.getElementById('new-project-overlay')) { closeNewProjectDialog(); return; }
+    if (document.getElementById('shortcuts-overlay')) { closeShortcutsDialog(); return; }
     const orb = document.getElementById('orb-overlay');
     if (orb && orb.classList.contains('open')) { closeOrbLauncher(); }
+  });
+
+  // Real operator ask: Ctrl+C also closes the orb launcher ("um den Punkt zu
+  // entspannen"). Deliberately scoped to ONLY fire while the launcher is
+  // actually open -- Ctrl+C's own native browser meaning (copy selected
+  // text) must never be intercepted anywhere else in the app. Safe even
+  // then: the launcher's own overlay already captures all pointer events
+  // while open (see .orb-overlay.open{pointer-events:auto}), so there's no
+  // real "copy text from the page behind it" case this could break.
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey && e.key.toLowerCase() === 'c')) return;
+    const orb = document.getElementById('orb-overlay');
+    if (orb && orb.classList.contains('open')) {
+      e.preventDefault();
+      closeOrbLauncher();
+    }
   });
 }
 
