@@ -3292,4 +3292,28 @@ labeling) for this app's one real modal. A genuinely fresh angle for a future fi
 `aria-live` region -- a screen-reader user gets no announcement of the outcome at all. Deliberately
 not bundled into this same firing to keep the increment bounded to what was already named as open.
 
+**Goal-driven-loop firing, 2026-08-06 (yyy) -- closed the `aria-live` candidate firing (xxx) named**:
+no new operator input on any of the three open `#382` checkpoints; GitHub's incident still
+`major_outage` though CADS-devsystem's most recent completed CI runs are `success`; no scimbe-
+authored open PRs.
+
+Fixed `#new-project-status` (the New Project dialog's `Creating…`/error line) with
+`role="status" aria-live="polite" aria-atomic="true"` (`web/static/index.html`,
+`CADS-devsystem@3f87965`) -- the region already exists in the DOM before any text is set into it, so
+no other JS change was needed. Live-verified via a real accessibility snapshot against the actual
+redeployed production container: submitting a `run_id` that already exists now shows a real `status:
+run already exists` node; the real success path (scratch run created, then cleaned up via a real
+`DELETE`) still closes cleanly with zero console errors. Hermetic `web` suite re-run, 190/190
+unchanged.
+
+**A newly-discovered, much larger version of this same gap, deliberately NOT bundled into this
+firing**: a sitewide grep shows `.status-line` used **84 times** across this app, and `aria-live`
+appeared nowhere in the file before this firing's own fix -- every one of those other 83 status
+lines (create/update/delete confirmations and errors across every panel: Requirements, Backlog,
+Milestones, Custom Panels, and more) has the identical silent-to-screen-readers gap this firing only
+just closed for the one dialog it was already scoped to. This is a real, sizeable candidate for a
+dedicated future firing (or several, given the count) -- explicitly not attempted here to keep this
+increment bounded to what firing (xxx) actually named as open, per this session's own standing
+"no silent scope creep" discipline.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
