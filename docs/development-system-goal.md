@@ -1092,6 +1092,29 @@ the harness now covers eighteen real checks, 21/21 individual assertions passing
 the real deployment. Forty-four real stress-test investigations, thirty-five real gaps found and
 closed.
 
+**The stress test's forty-fifth real run, 2026-08-06**: every other real free-text field in this
+codebase (milestones, backlog items, requirement statements, stage proposals via
+`validate_proposals`) already rejected whitespace-only content -- an iteration's own `feedback` was
+the one exception. Confirmed live: a real `succeeded: true` iteration with `""` or `"   "` as its
+feedback got a real `200` -- zero real record of what happened, while multiple real mechanical
+checks that depend on the actual feedback text (defect-admission phrases, security keywords, the
+review-evidence bars) silently had nothing to work with. Same "two real entry points, one bug
+class" shape already found this session for `validate_proposals` itself:
+`devsystem_iterate`'s local, non-`--remote` CLI path calls `run_iteration` directly, no HTTP layer
+at all, so a check added only in `web/src/main.rs` would leave that path unprotected. Added
+`validate_feedback` as a shared function in the pipeline crate (matching `validate_proposals`'s own
+precedent exactly), called from both the HTTP handler and the local CLI's own pre-write check
+(`CADS-devsystem@15c8d0f`). Hermetic: pipeline lib 100/100, web crate 163/163, clippy clean on both
+crates. Deployed (a genuinely slow build this time -- the earlier host-disk cleanup had cleared the
+build cache, so this was a cold compile) and live-verified against the actual deployed change: empty
+and whitespace-only feedback both get a real `400`, real non-empty feedback still works.
+
+**The stress test's forty-sixth real run, 2026-08-06**: added run 45's fix to the harness as check
+[13] (`CADS-devsystem@292388e`) -- live-confirmed against the deployed change before writing it.
+The harness now covers nineteen real checks, 24/24 individual assertions passing locally against
+the real deployment. Forty-six real stress-test investigations, thirty-six real gaps found and
+closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
