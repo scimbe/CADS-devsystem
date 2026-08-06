@@ -3423,4 +3423,49 @@ the real enum). 48/48 `devsystem_assistant` tests, hermetic clippy clean. Docume
 future firing that adds a new `Action` variant should treat this hardcoded count as part of the same
 change, not a separate thing to remember.
 
+**Direct operator design session, 2026-08-06 -- the panel launcher (§7)**: the operator drove this
+one live and directly, not an autonomous firing -- a real navigation-paradigm redesign, iterated
+against real screenshots and real reported bugs in the same session rather than shipped once and
+left. The flat, always-visible chip bar (18+ equally-weighted buttons) is replaced by a fixed,
+un-draggable green dot (bottom-left) that unfolds into a real, animated, corner-confined circle
+segment of panel "bubbles" -- sized by real contextual importance (a pending decision, the starter-
+panel set, currently-open state), never abbreviated, Dock-style (important panels get a permanent
+icon+label, the rest are icon-only with a real hover-reveal label). `CADS-devsystem@8c4d402` /
+`7f23b1e` / `8b720c4`. Along the way: two real, live-caught bugs (a CSS specificity conflict that
+silently knocked 12 bubbles out of the radial layout entirely; a native-browser "Enter activates the
+newly-focused button" interaction that closed the new Keyboard Shortcuts dialog the instant it
+opened) -- both found via real Playwright DOM/stack-trace evidence, not assumed from a screenshot
+alone, and both fixed same-session. Also shipped: `Ctrl+C` closes the launcher (scoped to while it's
+open, real copy elsewhere never intercepted), and a real, accessible Keyboard Shortcuts dialog
+(`./shortcuts`) listing every fixed keyboard behavior plus the user's own `./bind` bindings.
+Documented in `CADS-devsystem-docs@45ec2b7`.
+
+**Goal-driven-loop firing, 2026-08-06 -- applying the Anthropic harness-design article's own
+"stress-test your harness's assumptions" idea concretely, for real**: no new operator input on any
+of the three open `#382` checkpoints; issue #14 unchanged; no scimbe-authored open PRs. Two other
+real gaps from the same article read this session (activating RAG for real, and the mandatory-review
+hard-block the article's generator/evaluator-separation idea directly supports) both stay explicitly
+paused on the operator's own still-open decisions -- not guessed at here.
+
+The article's own point: "every component in a harness encodes an assumption... those assumptions
+are worth stress testing" -- this session's own `incompetent-agent-stress-test.sh` has never actually
+had this done to it. Every check was written once, against a real live-confirmed bug, and trusted
+ever since -- never re-verified that it would still genuinely FAIL if that exact gate broke again,
+as opposed to passing vacuously for an unrelated reason.
+
+Picked check `[37]` (the byte-identical-resubmission `409` guard, firing aaaa) as a real, concrete
+mutation test: built a throwaway Docker image from a deliberately neutered
+`duplicate_of_last_iteration` (hardcoded to always report "not a duplicate"), ran it as a fully
+isolated container (a different host port, its own scratch Docker volume, the real production
+`devsystem-web` on `:8790` never touched), and ran the full real harness against it. Result: check
+`[37]`'s middle assertion correctly failed (`expected 409, got 200`) while all 71 other checks stayed
+green -- proof the check is genuinely load-bearing, not just historically true. Mutated container,
+image, and volume all torn down; the source mutation was never committed (`git checkout --` reverted
+it, confirmed clean before this entry was written).
+
+No code change this firing -- a real verification, honestly reported as one, matching this session's
+own standing discipline for clean-audit firings. This mutation-testing technique is now a real,
+reusable technique for future firings to apply to other checks in this harness, one at a time, rather
+than a one-off.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
