@@ -369,10 +369,22 @@ check "the second out-of-range index is ALSO named in the same response, not a s
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$multioob_run"
 
 echo
+echo "[27] adding a custom panel with empty/whitespace-only html must be rejected, not create a genuinely blank panel"
+blankpanel_run="${RUN}-blank-panel-html-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$blankpanel_run\"}"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$blankpanel_run/panels" -H 'content-type: application/json' -d '{"title":"T","html":""}')
+check "add_custom_panel rejects an empty html body" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$blankpanel_run/panels" -H 'content-type: application/json' -d '{"title":"T","html":"   "}')
+check "add_custom_panel rejects a whitespace-only html body" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$blankpanel_run/panels" -H 'content-type: application/json' -d '{"title":"T","html":"<p>real</p>"}')
+check "a genuine, non-empty panel still works" "200" "$status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$blankpanel_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the thirty-seven gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the thirty-eight gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
