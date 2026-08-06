@@ -762,6 +762,29 @@ same real timing a fast human eye would also lose) to catch the transient state,
 deployed code now shows "Extracted via document_extraction_channel." for real. Twenty-four real
 stress-test investigations, twenty-four real gaps found and closed.
 
+**The stress test's twenty-fifth real run, 2026-08-06**: two real gaps in `no_price_ceiling`,
+found together. **First**: `price_ceiling` is never actually enforced against a real bid's price
+anywhere in this codebase -- confirmed by reading every real call site, not assumed -- which is
+exactly why this risk exists in the first place. That makes `price_ceiling: Some(0)` exactly as
+meaningless as `None`, not safer, but the check only ever matched `is_none()` -- live-confirmed: a
+proposal with `price_ceiling: 0` produced zero risk findings, a false "this is bounded" signal.
+**Second, found investigating the first's own live test, more significant**: the fix still didn't
+fire against a real assistant-relayed proposal (`approve_stage_proposal`) -- traced to a real,
+structural issue, not just a check bug: `no_price_ceiling` only ever scanned `history.proposals`,
+which only a role-filler's own iteration-embedded proposals land in. An assistant-relayed proposal,
+approved via `POST .../stages/proposals/{id}/approve`, never touches `history` at all -- its real
+`price_ceiling` became permanently unrecoverable the moment it was approved, genuinely lost, not
+just invisible to one check. The same "two real entry points, one bug class" shape already found
+this session for `validate_proposals`/markdown-fencing/`valid_run_id`/signing-key permissions.
+Fixed both real call sites of `apply_proposal` (`run_iteration`, `approve_stage_proposal`) to push
+the real, full proposal into a new `RunState.approved_stage_proposals` field whenever one is
+actually added, and pointed `no_price_ceiling` at that instead (`CADS-devsystem@fd11c30`). Hermetic:
+pipeline lib 97/97, web crate 157/157 (a new test proving the fix at the real
+`approve_stage_proposal` call site specifically). Live-verified against a fresh scratch run created
+after the fix: propose+approve a stage with `price_ceiling: 0` through the real assistant-relayed
+path now correctly shows the real risk. Twenty-five real stress-test investigations, twenty-five
+real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
