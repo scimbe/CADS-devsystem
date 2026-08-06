@@ -185,7 +185,7 @@ fn build_system_prompt(context: &str) -> String {
          you are actually taking action; omit it entirely otherwise -- never emit an \
          empty or placeholder block):\n\
          {ACTIONS_FENCE_OPEN}\n\
-         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"...\"}},{{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"...\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}},{{\"type\":\"propose_next_step\",\"text\":\"...\"}}]\n\
+         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"...\"}},{{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"...\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}},{{\"type\":\"propose_next_step\",\"text\":\"...\"}}]\n\
          {ACTIONS_FENCE_CLOSE}\n\
          Indices refer to the real state.milestones/state.backlog/state.requirements \
          arrays already shown to you below -- never guess an index you can't see \
@@ -307,6 +307,17 @@ enum Action {
     /// the Requirements panel's per-criterion checkboxes); the assistant had no
     /// matching action at all until now.
     ToggleAcceptanceCriterion { requirement_index: usize, criterion_index: usize },
+    /// Real gap closed (#382 goal doc §7.2, gap #4, 2026-08-06): a human can
+    /// already toggle a requirement's `auto_judge` flag directly
+    /// (`toggle_requirement_auto_judge_handler`, the Requirements panel's own
+    /// per-requirement checkbox) -- found by cross-checking every real
+    /// human-editable field in the GUI against this enum and confirming this
+    /// one, `update_criteria`, and `set_role_fill_mode` had no matching
+    /// action at all. Picked this one first: the simplest, safest, most
+    /// directly analogous to `ToggleAcceptanceCriterion` already above (same
+    /// index-based toggle shape, same panel, no approval gate needed since
+    /// toggling a checkbox is fully reversible either direction).
+    ToggleRequirementAutoJudge { requirement_index: usize },
     /// Sets (or clears, with an empty string) the CURRENT run's repo_url --
     /// the same field `set_repo_url`/the Code panel already manage. Not a
     /// proposal -- like the other direct actions, takes effect immediately,
@@ -467,6 +478,12 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
         Action::ToggleAcceptanceCriterion { requirement_index, criterion_index } => (
             format!("toggle requirement #{requirement_index}'s acceptance criterion #{criterion_index}"),
             format!("{base}/api/runs/{run_id}/requirements/{requirement_index}/criteria/{criterion_index}/toggle"),
+            serde_json::json!({}),
+            "done",
+        ),
+        Action::ToggleRequirementAutoJudge { requirement_index } => (
+            format!("toggle requirement #{requirement_index}'s auto_judge flag"),
+            format!("{base}/api/runs/{run_id}/requirements/{requirement_index}/auto-judge/toggle"),
             serde_json::json!({}),
             "done",
         ),
@@ -642,8 +659,9 @@ fn ask_llm(instruction: &str, system_prompt: &str) -> Result<LlmReply, String> {
 
 /// Real, honest per-requirement chat attribution (#382 goal doc §4.2, gap #6's
 /// own "still open" note, closed 2026-08-06). Only `ToggleRequirement`/
-/// `ToggleAcceptanceCriterion` carry the real index of an *existing*
-/// requirement -- `AddRequirement` deliberately contributes nothing here,
+/// `ToggleAcceptanceCriterion`/`ToggleRequirementAutoJudge` carry the real
+/// index of an *existing* requirement -- `AddRequirement` deliberately
+/// contributes nothing here,
 /// since its new requirement's final position is a server-assigned append
 /// this bridge can't know without a second round-trip, and guessing would
 /// risk exactly the "attribute the wrong requirement" outcome this was built
@@ -671,6 +689,7 @@ fn requirement_indices_touched(actions: &[Action], results: &[String]) -> Vec<us
         .filter_map(|(a, _)| match a {
             Action::ToggleRequirement { index } => Some(*index),
             Action::ToggleAcceptanceCriterion { requirement_index, .. } => Some(*requirement_index),
+            Action::ToggleRequirementAutoJudge { requirement_index } => Some(*requirement_index),
             _ => None,
         })
         .collect();
@@ -959,6 +978,7 @@ mod tests {
                 && prompt.contains("add_requirement")
                 && prompt.contains("toggle_requirement")
                 && prompt.contains("toggle_acceptance_criterion")
+                && prompt.contains("toggle_requirement_auto_judge")
                 && prompt.contains("set_repo_url")
                 && prompt.contains("create_run")
                 && prompt.contains("propose_custom_panel")
@@ -967,7 +987,7 @@ mod tests {
                 && prompt.contains("propose_stage")
                 && prompt.contains("propose_issue")
                 && prompt.contains("propose_next_step"),
-            "all fifteen real action types must be documented"
+            "all sixteen real action types must be documented"
         );
         assert!(
             prompt.contains("state.paused is true") && prompt.contains("2-3 SEPARATE"),
@@ -1054,8 +1074,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_actions_parses_all_fifteen_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"}]\n```";
+    fn extract_actions_parses_all_sixteen_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -1071,6 +1091,7 @@ mod tests {
                 },
                 Action::ToggleRequirement { index: 1 },
                 Action::ToggleAcceptanceCriterion { requirement_index: 1, criterion_index: 0 },
+                Action::ToggleRequirementAutoJudge { requirement_index: 1 },
                 Action::SetRepoUrl { repo_url: "https://github.com/scimbe/CADS-webconference-android".to_string() },
                 Action::CreateRun { new_run_id: "my-new-project".to_string() },
                 Action::ProposeCustomPanel { title: "Burndown".to_string(), html: "<h2>hi</h2>".to_string() },
@@ -1261,6 +1282,20 @@ mod tests {
     }
 
     #[test]
+    /// Real gap closed (#382 goal doc §7.2, gap #4): a human could already toggle
+    /// a requirement's auto_judge flag directly in the Requirements panel; the
+    /// assistant had no matching action until now.
+    fn apply_action_posts_the_real_toggle_requirement_auto_judge_request() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let result = apply_action(&client, &addr, "my-run", &Action::ToggleRequirementAutoJudge { requirement_index: 3 });
+        assert!(result.starts_with("done:"));
+        let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/requirements/3/auto-judge/toggle");
+    }
+
+    #[test]
     fn apply_action_posts_the_real_set_repo_url_request() {
         let (addr, rx) = spawn_capturing_server();
         let client = reqwest::blocking::Client::new();
@@ -1410,13 +1445,14 @@ mod tests {
             Action::AddMilestone { description: "unrelated".to_string() },
             Action::ToggleRequirement { index: 0 },
             Action::ToggleAcceptanceCriterion { requirement_index: 2, criterion_index: 1 },
+            Action::ToggleRequirementAutoJudge { requirement_index: 4 },
             Action::AddRequirement { statement: "WHEN x, THE SYSTEM SHALL y".to_string(), acceptance_criteria: vec!["z".to_string()] },
         ];
-        let results = vec!["done: x".to_string(), "done: x".to_string(), "done: x".to_string(), "done: x".to_string(), "done: x".to_string()];
+        let results = vec!["done: x".to_string(), "done: x".to_string(), "done: x".to_string(), "done: x".to_string(), "done: x".to_string(), "done: x".to_string()];
         assert_eq!(
             requirement_indices_touched(&actions, &results),
-            vec![0, 2],
-            "must include only ToggleRequirement/ToggleAcceptanceCriterion's real indices, deduped and sorted -- never a guessed index for AddRequirement's brand-new one"
+            vec![0, 2, 4],
+            "must include only ToggleRequirement/ToggleAcceptanceCriterion/ToggleRequirementAutoJudge's real indices, deduped and sorted -- never a guessed index for AddRequirement's brand-new one"
         );
     }
 
