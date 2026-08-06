@@ -1149,6 +1149,24 @@ real `409`, history stays at exactly the two real iterations actually accepted. 
 covers twenty real checks, 26/26 individual assertions passing locally against the real deployment.
 Forty-eight real stress-test investigations, thirty-seven real gaps found and closed.
 
+**The stress test's forty-ninth real run, 2026-08-06**: completes the honestly-named still-open
+refinement from runs 47/48 -- a milestone achieved, a run hitting its own real bound, and a
+human's own direct Pause click all set the identical `paused` flag with zero way to tell them
+apart; the GUI's own paused banner rendered the same generic text regardless of which real thing
+actually happened. `RunState.pause_reason` (a real, short sentence, not a code) is now set at all
+three real sites -- `toggle_milestone`, `run_iteration`'s own abort branch (checked in
+`should_abort`'s own order so it never contradicts the real condition that fired), and the direct
+pause API -- and cleared on resume so a later auto-pause never inherits a stale reason
+(`CADS-devsystem@cd51ccd`). Also corrected two now-stale doc comments this change made false a
+second way: `RunState.paused`'s own comment claimed it was "never set by `run_iteration` itself"
+(already stale since `toggle_milestone` existed, doubly so since run 47), and the Health & Criteria
+panel's JS comment made the identical claim. Hermetic: pipeline lib 102/102, web crate 165/165,
+clippy clean on both crates. Deployed and live-verified all three real triggers end to end against
+the actual deployment: abort ceiling, milestone, and manual pause each produce their own distinct,
+honest reason; resume genuinely clears it. Full stress-test harness re-run afterward confirmed no
+regressions elsewhere. Forty-nine real stress-test investigations, thirty-eight real gaps found and
+closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
