@@ -2637,4 +2637,34 @@ No new operator input on any of the three open `#382` checkpoints; GitHub's inci
 `major_outage`, unresolved since `15:22:49Z` -- the `baseurl` fix (firing jj) still hasn't gone
 live on the real deployed site, re-checked again.
 
+**Goal-driven-loop firing, 2026-08-06 (tt) -- the stress test's thirteenth real run, closing out
+the entire bidi-control-character class**: no new operator input on any of the three open `#382`
+checkpoints; GitHub's incident still `major_outage`; issue #14 unchanged, no scimbe-authored PRs.
+
+Picked up the class's last remaining candidate: stage-proposal `rationale`. Live-confirmed the gap
+at the more consequential of its two real entry points first (`validate_proposals`, reached by the
+embedded-proposal path that applies immediately with no human review gate at all) -- a rationale
+reading "Needed for real testing" + a real U+202E + reversed text sailed through untouched,
+visually hiding "This is a dangerous stage -- exposes actual data extraction". This fix needed real
+plumbing, not just another call site: `rationale` has two real entry points across two different
+crates (`validate_proposals` in `pipeline/src/lib.rs`, reached by both `devsystem-web` and
+`devsystem_iterate`'s local non-HTTP CLI path; `propose_stage` in `web/src/main.rs`, the
+assistant-facing pending-review path), so the bidi-check helper itself moved from `web/src/main.rs`
+into `pipeline/src/lib.rs` -- the same "single source of truth" discipline `MAX_ROLE_UNITS` already
+established for this exact pair of crates, rather than a second, separately-maintained copy.
+
+Fixed at both real entry points (`CADS-devsystem@4ffd4e7`). 2 new regression tests, 112/112
+pipeline-lib tests (was 111), 187/187 web tests (was 186), hermetic clippy clean on both crates.
+Deployed and live-verified against the real redeployed container: the exact bidi-laced rationale
+that sailed through before now gets a real `400`, clean text still gets `200`.
+
+**Thirteen real stress-test runs, thirteen real gaps found and closed -- this specific class
+(Trojan Source / CVE-2021-42574 bidi-control-character spoofing) is now genuinely closed across
+every real free-text field a human reads and trusts for a decision in this codebase**: requirement
+statement/criteria, milestones, backlog items, custom-panel title, and stage-proposal rationale.
+Deliberately left `html` (custom panels) untouched throughout, since that field is
+untrusted-by-design and sandboxed -- adding the same rule there would contradict its own existing
+security model, not close a gap. No further candidates identified; future firings should look
+toward a genuinely different class rather than re-sweeping this one.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
