@@ -2674,13 +2674,17 @@ async fn approve_stage_proposal(
     let outcome = apply_proposal(&mut spec, &pending.proposal);
     if outcome == ProposalOutcome::Added {
         run_state.added_stages.push(pending.proposal.stage_id.clone());
-        // Real gap found live by the stress test, twenty-fifth run, 2026-08-06
-        // (see RunState::approved_stage_proposals' own doc comment): this path
-        // used to discard `pending.proposal` here, permanently losing its real
-        // price_ceiling the moment it was approved -- `no_price_ceiling` could
-        // never see it, since this path never touches `history` either.
-        run_state.approved_stage_proposals.push(pending.proposal.clone());
     }
+    // Real gap found live by the stress test, twenty-fifth run, 2026-08-06 (see
+    // RunState::approved_stage_proposals' own doc comment): this path used to
+    // discard `pending.proposal` here entirely, permanently losing its real
+    // price_ceiling the moment it was approved. Pushed unconditionally (not
+    // gated on `Added`) since the twenty-seventh run: a real re-proposal of an
+    // already-live role (a human trying to *fix* an unbounded one) correctly
+    // gets `AlreadyPresent` here, but that real, newer price_ceiling
+    // information must not be silently discarded either -- see
+    // `no_price_ceiling`'s own doc comment for the "latest entry wins" read side.
+    run_state.approved_stage_proposals.push(pending.proposal.clone());
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({
             "stage_id": pending.proposal.stage_id,

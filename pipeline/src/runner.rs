@@ -272,9 +272,26 @@ pub struct RunState {
     /// points, one bug class" shape already found and fixed this session for
     /// `validate_proposals`/markdown-fencing/`valid_run_id`/signing-key permissions.
     /// Both real call sites (`run_iteration` here, `approve_stage_proposal` in
-    /// `web/src/main.rs`) now push here whenever `apply_proposal` returns `Added`, so
-    /// this is the one complete, honest record regardless of which path a proposal
-    /// took -- `#[serde(default)]` so pre-existing `state.json` files still load.
+    /// `web/src/main.rs`) push here whenever `apply_proposal` runs, so this is the
+    /// one complete, honest record regardless of which path a proposal took --
+    /// `#[serde(default)]` so pre-existing `state.json` files still load.
+    ///
+    /// **Real gap found live by the stress test, twenty-seventh run, 2026-08-06**:
+    /// this used to only push on `ProposalOutcome::Added`, matching `added_stages`'
+    /// own (correct, for a different reason) growth rule -- but that meant a human
+    /// trying to *fix* an already-live unbounded role by re-proposing the exact same
+    /// `stage_id` with a real `price_ceiling` this time got a genuine `200`
+    /// (`AlreadyPresent` -- the role's own service/tag really is unchanged) while
+    /// the fix itself was silently discarded: no_price_ceiling kept citing the
+    /// *first* matching entry, so the risk stayed flagged with stale evidence
+    /// forever, with no way to ever resolve it through the real proposal mechanism.
+    /// Now pushed on every real `apply_proposal` call regardless of outcome --
+    /// `no_price_ceiling` reads the *last* matching entry per `stage_id`, so a
+    /// later, better proposal actually supersedes an earlier bad one, the same
+    /// "latest real state wins" discipline this project already applies elsewhere
+    /// (`preflight.rs`'s own doc comment on why several checks scan all of history,
+    /// not just the newest entry, for a *different* reason -- this is its mirror:
+    /// here the newest real statement of intent is the one that should win).
     #[serde(default)]
     pub approved_stage_proposals: Vec<crate::StageProposal>,
     /// This run's own bounded-loop criteria -- starts at [`AbortCriteria::default`] but
@@ -849,10 +866,21 @@ pub fn run_iteration(
     criteria: &AbortCriteria,
 ) -> RunOutcome {
     for proposal in &record.proposals {
-        if apply_proposal(spec, proposal) == ProposalOutcome::Added {
+        let outcome = apply_proposal(spec, proposal);
+        if outcome == ProposalOutcome::Added {
             state.added_stages.push(proposal.stage_id.clone());
-            state.approved_stage_proposals.push(proposal.clone());
         }
+        // Real gap found live by the stress test, twenty-seventh run,
+        // 2026-08-06 (see RunState::approved_stage_proposals' own doc
+        // comment): pushed here regardless of Added vs AlreadyPresent, not
+        // just on Added -- a human/filler trying to *fix* an already-live
+        // unbounded role by re-proposing the same stage_id with a real
+        // price_ceiling this time correctly gets AlreadyPresent from
+        // apply_proposal (the role's own service/tag genuinely didn't
+        // change), but that must not also silently discard the real, newer
+        // price_ceiling information -- see no_price_ceiling's own doc
+        // comment for how the "latest wins" read side makes this real.
+        state.approved_stage_proposals.push(proposal.clone());
     }
 
     if record.succeeded {

@@ -300,11 +300,31 @@ fn no_price_ceiling(state: &RunState) -> Option<RiskAnnotation> {
     // but `history.proposals` still holds the only record of everything
     // approved before it existed -- a real proposal is unbounded either way,
     // so this scans the union of both, not a replacement of one by the other.
+    //
+    // **Real gap found live, twenty-seventh run, 2026-08-06**: a human trying
+    // to *fix* an already-live unbounded role by re-proposing the exact same
+    // `stage_id` with a real `price_ceiling` got a genuine `200`
+    // (`apply_proposal` correctly reports `AlreadyPresent` -- the role's own
+    // service/tag really is unchanged) but the "fix" was silently ignored:
+    // this used to take the *first* matching entry, which is always the
+    // original, bad proposal. Now takes the *last* matching entry per real
+    // `stage_id` -- `approved_stage_proposals` first (complete and real going
+    // forward, including every re-proposal attempt now), falling back to
+    // `history.proposals` only for a `stage_id` with no entry there at all
+    // (pre-existing data from before that field existed) -- so a later, real,
+    // better proposal actually supersedes an earlier bad one.
     let unbounded = state
-        .approved_stage_proposals
+        .added_stages
         .iter()
-        .chain(state.history.iter().flat_map(|h| &h.proposals))
-        .find(|p| p.use_existing_service.is_none() && p.price_ceiling.unwrap_or(0) == 0 && state.added_stages.iter().any(|s| s == &p.stage_id))?;
+        .filter_map(|stage_id| {
+            state
+                .approved_stage_proposals
+                .iter()
+                .rev()
+                .find(|p| &p.stage_id == stage_id)
+                .or_else(|| state.history.iter().rev().flat_map(|h| h.proposals.iter().rev()).find(|p| &p.stage_id == stage_id))
+        })
+        .find(|p| p.use_existing_service.is_none() && p.price_ceiling.unwrap_or(0) == 0)?;
     Some(RiskAnnotation {
         label: "no price ceiling set".into(),
         evidence: format!(
@@ -606,6 +626,34 @@ mod tests {
         state.approved_stage_proposals.push(proposal(None, Some(100)));
         state.added_stages.push("devsystem.some_new_role".into());
         assert!(preflight_annotations(&state).is_empty());
+    }
+
+    #[test]
+    /// Real gap found live by the stress test, twenty-seventh run, 2026-08-06:
+    /// a human trying to *fix* an already-live unbounded role by re-proposing
+    /// the exact same stage_id with a real price_ceiling gets a genuine `200`
+    /// (apply_proposal correctly reports AlreadyPresent -- the role's own
+    /// service/tag really is unchanged), but the fix itself used to be
+    /// silently discarded: the check took the *first* matching entry, always
+    /// the original bad proposal. Proves the real fix: the latest real
+    /// proposal for a given stage_id wins.
+    fn a_later_bounded_re_proposal_for_the_same_stage_id_clears_the_earlier_unbounded_one() {
+        let mut state = RunState::new("run-preflight");
+        state.added_stages.push("devsystem.some_new_role".into());
+        // The original, bad proposal -- approved first, real price_ceiling never set.
+        state.approved_stage_proposals.push(proposal(None, None));
+        assert!(
+            preflight_annotations(&state).iter().any(|f| f.label == "no price ceiling set"),
+            "the original unbounded proposal must be flagged before any fix attempt"
+        );
+        // The real "fix" attempt: same stage_id, this time with a real ceiling.
+        // apply_proposal itself would report AlreadyPresent for this (the role's
+        // own service/tag is unchanged) -- both real call sites still push it here.
+        state.approved_stage_proposals.push(proposal(None, Some(100)));
+        assert!(
+            preflight_annotations(&state).is_empty(),
+            "the later, real, bounded re-proposal must actually clear the risk, not be silently ignored"
+        );
     }
 
     #[test]
