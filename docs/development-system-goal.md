@@ -887,7 +887,8 @@ real stress-test investigations, twenty-two real gaps found and closed.
    cumulative cost + a token breakdown instead of raw JSON. Confirmed live: deployed in 14s (only
    the static file changed, no rebuild needed) and the panel's real markers verified present in the
    served page.
-6. **A unified decision-basis view** (§4.2) — **first slice done** (`CADS-devsystem@cfaac7d`): each
+6. ~~**A unified decision-basis view**~~ (§4.2) — **done**, four slices. **First slice**
+   (`CADS-devsystem@cfaac7d`): each
    requirement's Requirements-panel entry now expands into a real "decision basis" -- the actual
    feedback and real constraints from every iteration that claimed to address it, right there,
    instead of sending someone to piece it together from the separate History/Memory Log panels.
@@ -912,6 +913,26 @@ real stress-test investigations, twenty-two real gaps found and closed.
    browser against the exact run persistence was proven on last firing: the real section renders
    both real exchanges with their real timestamps and text. Still open: true per-requirement
    attribution -- the honest, harder version of this gap -- remains unbuilt, named as such.
+   **Fourth slice done, 2026-08-06** (`CADS-devsystem@e70827d`): built the "honest, harder version"
+   after all -- re-examining the third slice's own stated risk ("a fragile text-match heuristic or a
+   real schema change... both risk showing a WRONG decision basis") found that neither risk actually
+   applies to what's real and available: `devsystem_assistant.rs`'s own `ask()` already holds the
+   real, structured `Action`s it dispatched at the exact moment it renders a reply.
+   `requirement_indices_touched()` collects only `ToggleRequirement`/`ToggleAcceptanceCriterion`'s
+   real indices (the two variants that carry an *existing* requirement's real position) -- not a
+   guess, not a parse of free-form prose. `AddRequirement` deliberately contributes nothing: its new
+   requirement's final index is a server-assigned append the bridge can't know without a second
+   round-trip, and guessing would reintroduce exactly the wrong-attribution risk being avoided.
+   Threaded through all three affected crates (`ChatExchange.requirement_indices`, the bridge's own
+   `/ask` response, `web/src/main.rs`'s persistence) and wired into the actual GUI -- the
+   per-requirement "decision basis" section now shows any chat exchange the assistant's own real
+   action dispatch attributed to it, not just iteration history. Hermetic: pipeline lib 93/93,
+   `devsystem_assistant` bin 41/41, web 153/153. Live end-to-end verified against the real deployed
+   LLM, not a mock: asked the actual assistant to toggle a real acceptance criterion, confirmed
+   `requirement_indices:[0]` came back for real, confirmed persistence, confirmed via a real
+   Playwright screenshot that the Requirements panel renders it correctly attributed. Gap #6 is now
+   genuinely closed on both halves -- iteration history (slice 1) and chat, both panel-level (slice
+   3) and per-requirement (this slice).
 7. ~~**A real requirements export**~~ — **done** (`CADS-devsystem@950931a`): `GET
    /api/runs/{id}/requirements/export` renders a real Markdown document (statement, a real
    verified checklist per acceptance criterion, provenance from gap #1), real `Content-Disposition`
