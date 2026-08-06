@@ -3486,4 +3486,33 @@ genuinely selected text is left alone so a real copy is never intercepted. Live-
 directions via Playwright against the real redeployed container. 190/190 web tests unchanged; full
 regression pass (New Project, Keyboard Shortcuts, bubble click, Escape) stayed clean.
 
+**Goal-driven-loop firing, 2026-08-06 -- mutation-tested a second check, and the investigation itself
+found a real process gap**: no new operator input on any of the three open `#382` checkpoints; issue
+#14 unchanged; no scimbe-authored open PRs. Continuing the reusable technique from the previous
+mutation-testing firing (check `[37]`), this time against check `[36]` (the paused-run gate).
+
+Neutered `iterate_run`'s own `if run_state.paused` check (`web/src/main.rs`) to a real
+`if false && run_state.paused`, built an isolated scratch image, and ran the real harness against it.
+First attempt gave a confusing, untrustworthy result: check `[37]` (completely unrelated to this
+firing's own mutation) also failed. Investigated rather than accepted at face value -- `strings`-
+checking the deployed binary showed it was missing `duplicate_of_last_iteration` entirely, a real
+feature merged days earlier. The real cause, found and fixed at the process level, not just noted:
+`web/Dockerfile`'s BuildKit cache mounts are shared by *every* real `docker build -f web/Dockerfile`
+on this host, not just real deploys -- an ad-hoc scratch/mutation-test build shares the exact same
+cache a real deploy would use, completely outside `deploy-devsystem-web.sh`'s own `flock` (which only
+serializes concurrent invocations of *itself*). Two plain sequential scratch builds hit this for
+real, no concurrency needed. Fixed with a real, prominent comment at the cache mount declaration
+(`CADS-devsystem@33ac944`): any non-deploy build of this Dockerfile must pass `--no-cache`. Verified
+the Dockerfile itself still builds cleanly with the comment added.
+
+Rebuilt properly with `--no-cache` and re-ran the harness: check `[37]` now correctly passes (the
+earlier failure was conclusively a tooling artifact, not a real gap), and check `[36]` fails exactly
+as intended -- with a genuinely instructive twist. Its own second assertion ("the identical
+submission succeeds once resumed") also failed, but for the right reason: the neutered paused-check
+let the while-paused submission through for real, landing in history -- so the still-intact
+`duplicate_of_last_iteration` check correctly caught the "resumed" resubmission as a real duplicate
+of what had just wrongly landed. Both gates working exactly as designed, cross-confirming each
+other. Mutated image, container, and volumes torn down each time; the source mutation was never
+committed (`git checkout --` reverted it, confirmed clean).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
