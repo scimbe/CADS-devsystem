@@ -286,6 +286,20 @@ check "a post-resume draft is still genuinely actionable (removes for real)" "20
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$orphan_run"
 
 echo
+echo "[20] real succeeded work with no substantive review must be flagged as a real risk"
+review_run="${RUN}-review-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$review_run\"}"
+has_risk_before=$(curl -s "$BASE/api/runs/$review_run" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(r["label"]=="no review stage for real, succeeded work" for r in d["risks"]))' 2>/dev/null)
+check "a genuinely empty run has no such risk yet (nothing succeeded)" "False" "$has_risk_before"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$review_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.implement","feedback":"shipped a real feature with real content, no review yet","succeeded":true}'
+has_risk_after=$(curl -s "$BASE/api/runs/$review_run" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(r["label"]=="no review stage for real, succeeded work" for r in d["risks"]))' 2>/dev/null)
+check "real succeeded work with no review anywhere in history is flagged" "True" "$has_risk_after"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$review_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.review","feedback":"reviewed the diff line by line, confirmed the edge cases are covered and the naming is clear","succeeded":true}'
+has_risk_cleared=$(curl -s "$BASE/api/runs/$review_run" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(r["label"]=="no review stage for real, succeeded work" for r in d["risks"]))' 2>/dev/null)
+check "a real, substantive review iteration clears the risk" "False" "$has_risk_cleared"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$review_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
