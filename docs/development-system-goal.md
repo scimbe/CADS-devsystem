@@ -1754,4 +1754,16 @@ by design, needing periodic live re-verification like this instead of a fast boo
     a behavior change affecting every existing run's iteration flow needs more than one firing's own
     judgment call).
 
+**Goal-driven-loop firing, 2026-08-06 (e)**: two real, bounded pieces closing the loop on the
+previous firing's `no_review_for_succeeded_work` risk annotation. First, live-verified via a real
+Playwright run against the actual deployed GUI (not just reasoned about) that the new risk renders
+cleanly in the Risks & Stalled panel against the real `webconference-android` flagship run -- no
+overflow, no truncation, the generic `risks.map(...)` rendering path handles it correctly with zero
+code change needed. Second, closed a real gap in the harness itself: this new check had zero
+regression coverage despite every other recent finding this session getting one. Added check [20]
+(`CADS-devsystem@d45c8ca`): a clean new run has no such risk, real succeeded work with no review
+anywhere in history gets flagged, and a real, substantive `devsystem.review` iteration genuinely
+clears it. 45/45 assertions passing, confirmed green in the real GitHub Actions run against the
+deployed Docker image.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
