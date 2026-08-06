@@ -141,9 +141,19 @@ fn mime_type_for(path: &std::path::Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()).map(str::to_lowercase).as_deref() {
         Some("pdf") => "application/pdf",
         Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        // Real gap, found stress-testing issue #14's PR #17 end to end: the
+        // handler grew real legacy-`.doc` support (`DOC_MIME`), but this client's
+        // own mime detection was never updated to match -- a real `.doc` file
+        // used to fall through to `application/octet-stream` and get rejected by
+        // the handler as unsupported, even though the handler side genuinely
+        // supports it. `.md` corrected too (was lumped in with `.txt` as
+        // `text/plain`, which happened to work since the handler treats both
+        // identically, but named the wrong thing).
+        Some("doc") => "application/msword",
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("txt") | Some("md") => "text/plain",
+        Some("txt") => "text/plain",
+        Some("md") => "text/markdown",
         _ => "application/octet-stream",
     }
 }
@@ -287,8 +297,11 @@ echo '{"status":"error","error":"unsupported document format"}'"#);
     fn mime_type_for_recognizes_the_real_formats_this_service_is_for() {
         assert_eq!(mime_type_for(std::path::Path::new("spec.pdf")), "application/pdf");
         assert_eq!(mime_type_for(std::path::Path::new("report.DOCX")), "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        assert_eq!(mime_type_for(std::path::Path::new("legacy.doc")), "application/msword");
+        assert_eq!(mime_type_for(std::path::Path::new("legacy.DOC")), "application/msword");
         assert_eq!(mime_type_for(std::path::Path::new("photo.jpg")), "image/jpeg");
         assert_eq!(mime_type_for(std::path::Path::new("notes.txt")), "text/plain");
+        assert_eq!(mime_type_for(std::path::Path::new("readme.md")), "text/markdown");
         assert_eq!(mime_type_for(std::path::Path::new("unknown.xyz")), "application/octet-stream");
     }
 
