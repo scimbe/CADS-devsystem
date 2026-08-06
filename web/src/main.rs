@@ -7968,6 +7968,27 @@ exit 1"#);
         assert_eq!(points[1]["kind"], "panel_proposal");
     }
 
+    #[test]
+    /// Real gap found live 2026-08-06 (#382 goal doc §8): `webconference-android` itself
+    /// has `paused: true` with `pause_reason: None` (data older than the field's own
+    /// instrumentation), and every real code path that sets `paused = true` today
+    /// correctly sets a reason too -- so this exact state has no real HTTP entry point
+    /// to reach in a fresh test run, only old on-disk data. `open_points()`'s own
+    /// `unwrap_or_else` fallback for this case had zero test coverage despite being the
+    /// one server-side behavior the GUI's own honest-disclosure fix (a599dd9) depends
+    /// on. Unit-tested directly against a hand-built `RunState`, the only way to reach
+    /// this state without waiting for a real run to predate the field again.
+    fn open_points_falls_back_honestly_when_a_paused_run_has_no_recorded_reason() {
+        let mut run_state = devsystem_pipeline::runner::RunState::new("old-paused-run");
+        run_state.paused = true;
+        run_state.pause_reason = None;
+
+        let points = open_points(&run_state);
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0].kind, "paused_checkpoint");
+        assert_eq!(points[0].summary, "paused, no reason recorded", "must disclose the gap honestly, not silently show nothing");
+    }
+
     #[tokio::test]
     async fn open_points_nests_a_next_step_draft_under_the_paused_checkpoint_while_paused_but_never_loses_it_after_resume() {
         let (state, _dir) = test_state();
