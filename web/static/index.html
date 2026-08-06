@@ -2143,7 +2143,16 @@ function renderBacklogPanel(id, data) {
           <span>${escapeHtml(item.text)}</span>
         </label>`).join('')
     : '<span class="lede">No backlog items yet.</span>';
+  // Same real DAU-lens gap as Requirements' own empty state (#382 goal doc
+  // §7.1, gap #3, still-open "context-relevant panels" piece): a plain muted
+  // "No backlog items yet." line is easy to skim past. Reusing the exact
+  // start-here-banner treatment already verified live for Requirements rather
+  // than inventing a second pattern for the same real problem.
+  const startHere = backlog.length ? '' : `
+    <div class="start-here-banner">👋 Start here: this run has no backlog yet.
+    Add your first item below.</div>`;
   body.innerHTML = `
+    ${startHere}
     <div class="backlog-list">${items}</div>
     <form class="inline" id="backlog-form" style="margin-top:.6rem">
       <input id="backlog-text" placeholder="Add a backlog item…">
@@ -2151,6 +2160,12 @@ function renderBacklogPanel(id, data) {
     </form>
     <div id="backlog-status" class="status-line"></div>
   `;
+  // Same visibility guard Requirements' own auto-focus uses -- never steal
+  // focus into a panel the user has hidden.
+  if (!backlog.length && panelRect('backlog').visible) {
+    const backlogInput = document.getElementById('backlog-text');
+    if (backlogInput) backlogInput.focus();
+  }
   for (const cb of body.querySelectorAll('.backlog-toggle')) {
     cb.onchange = () => toggleBacklogItem(id, parseInt(cb.dataset.index, 10));
   }
@@ -2195,7 +2210,14 @@ function renderMilestonesPanel(id, data) {
           <span>${escapeHtml(m.description)}</span>
         </label>`).join('')
     : '<span class="lede">No milestones yet.</span>';
+  // Same real DAU-lens gap as Requirements' own empty state (#382 goal doc
+  // §7.1, gap #3, still-open "context-relevant panels" piece) -- reusing the
+  // exact start-here-banner treatment already verified live for Requirements.
+  const startHere = milestones.length ? '' : `
+    <div class="start-here-banner">👋 Start here: this run has no milestones yet.
+    Add your first one below -- a real completion/abort checkpoint, not just a checklist item.</div>`;
   body.innerHTML = `
+    ${startHere}
     <div class="backlog-list">${items}</div>
     <div class="lede" style="font-size:.72rem;margin-top:.4rem">Checking one off pauses the run for review.</div>
     <form class="inline" id="milestone-form" style="margin-top:.6rem">
@@ -2204,6 +2226,12 @@ function renderMilestonesPanel(id, data) {
     </form>
     <div id="milestone-status" class="status-line"></div>
   `;
+  // Same visibility guard Requirements' own auto-focus uses -- never steal
+  // focus into a panel the user has hidden.
+  if (!milestones.length && panelRect('milestones').visible) {
+    const milestoneInput = document.getElementById('milestone-text');
+    if (milestoneInput) milestoneInput.focus();
+  }
   for (const cb of body.querySelectorAll('.milestone-toggle')) {
     cb.onchange = () => toggleMilestone(id, parseInt(cb.dataset.index, 10));
   }
