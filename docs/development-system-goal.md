@@ -3357,4 +3357,26 @@ This closes the DAU/accessibility thread opened by firings (vvv)/(www)/(xxx)/(yy
 custom modal and every real status-line element. No further candidate identified in this specific
 thread; a future firing should look toward a genuinely different lens.
 
+**Goal-driven-loop firing, 2026-08-06 (aaaa) -- a genuinely different lens per firing (zzz)'s own
+closing note: harness coverage, not another GUI sweep**: no new operator input on any of the three
+open `#382` checkpoints; GitHub's incident still `major_outage` though recent CI runs continue
+completing `success`; no scimbe-authored open PRs on any of the three repos.
+
+Checked `scripts/incompetent-agent-stress-test.sh` directly against the two most recent shared-
+validator fixes this session (firing ttt's paused-run gate, firing uuu's idempotency guard) --
+confirmed by grep, not assumption: neither had a regression check, unlike every other real gap found
+this session. Added `[36]` (a paused run refuses further iterations with a real `409`, then
+genuinely succeeds once resumed) and `[37]` (a byte-identical resubmission is refused with a real
+`409`, but a genuinely different submission right after still succeeds -- not a blanket same-stage
+block), matching the harness's own existing conventions exactly (`CADS-devsystem@4ba8d1c`).
+
+Live-run against the real deployment: **73/73 passing**. Worth recording plainly (matching this
+session's own "correct a wrong number before it compounds" discipline, applied to firing zzz's own
+84-instance miscount): the first commit's own message claimed "was 71" for the baseline without
+actually checking it -- the real, verified baseline (checked out the pre-firing harness and actually
+ran it) was **68**, and 68 + 5 new PASS assertions (2 from `[36]`, 3 from `[37]`) = the real 73.
+Corrected with a follow-up commit (`CADS-devsystem@6c0415e`) rather than amending, per this session's
+own standing git-history discipline -- caught before this wrong number could compound into this very
+entry.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
