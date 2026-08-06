@@ -322,6 +322,16 @@ check "both genuinely vague criteria are flagged, not just the first" "2" "$vagu
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$vague_run"
 
 echo
+echo "[23] EVERY distinct admitted defect must be flagged, not just the most recent"
+defect_run="${RUN}-multi-defect-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$defect_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$defect_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.implement","feedback":"Shipped the login flow. Known issue: session tokens never expire, a real security gap not fixed yet.","succeeded":true}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$defect_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.implement","feedback":"Shipped the message search feature. Known bug: search crashes on empty query, not implemented a guard for it yet.","succeeded":true}'
+defect_count=$(curl -s "$BASE/api/runs/$defect_run" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for r in d["risks"] if r["label"]=="succeeded iteration admits a known defect"))' 2>/dev/null)
+check "both distinct admitted defects are flagged, not just the most recent" "2" "$defect_count"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$defect_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
