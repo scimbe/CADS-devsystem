@@ -38,6 +38,23 @@ pub fn render_plan_markdown(state: &RunState) -> Option<String> {
     Some(render_iteration(state, latest))
 }
 
+/// Real gap found live by the incompetent-agent stress test (#382 goal doc §8,
+/// 2026-08-06): `record.stage`/`p.stage_id`/`p.proposed_by`/`p.tag`/
+/// `added_stages`/`stalled_stages` entries are all role-filler-controlled free
+/// text with no character restriction at any real entry point, but were
+/// interpolated raw inside single-backtick inline code spans below (`` `{}` ``)
+/// -- unlike `rationale`/requirement `statement`/panel `title` right next to
+/// them, which already use `inline_code_escape`. A stage_id containing a real
+/// backtick and newline broke out of that span and forged a fake markdown
+/// heading directly into this function's own output -- the exact `.plan.md`
+/// artifact `ecc-plan-canvas` renders for a human to read and decide
+/// `approve`/`request-changes` on. Reproduced first with a failing test
+/// (`stage_id_tag_and_proposed_by_cannot_forge_markdown_structure`), the same
+/// "role-filler-controlled free text must not forge markdown structure" class
+/// already closed for the Requirements Markdown export (stress-test check #9),
+/// just never checked here. `state.run_id` below stays raw-interpolated
+/// deliberately -- `valid_run_id` already restricts it to alphanumeric/-/_ at
+/// every real creation entry point, so it can never carry a backtick.
 fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
     let mut md = String::new();
     md.push_str(&format!("# Check-in: `{}` -- iteration {}\n\n", state.run_id, record.iteration));
@@ -62,12 +79,12 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
             } else {
                 first_line.to_string()
             };
-            md.push_str(&format!("- iteration {} (`{}`, {status}): {truncated}\n", r.iteration, r.stage));
+            md.push_str(&format!("- iteration {} ({}, {status}): {truncated}\n", r.iteration, inline_code_escape(&r.stage)));
         }
         md.push('\n');
     }
 
-    md.push_str(&format!("**Stage:** `{}`\n\n", record.stage));
+    md.push_str(&format!("**Stage:** {}\n\n", inline_code_escape(&record.stage)));
     md.push_str("## What this stage found\n\n");
     md.push_str(&fence_wrap(&record.feedback));
     md.push_str("\n\n");
@@ -98,9 +115,9 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
     } else {
         md.push_str("## Proposals\n\n");
         for p in &record.proposals {
-            md.push_str(&format!("### `{}`\n\n", p.stage_id));
-            md.push_str(&format!("- **Proposed by:** `{}`\n", p.proposed_by));
-            md.push_str(&format!("- **Tag / units:** `{}` / {}\n", p.tag, p.units));
+            md.push_str(&format!("### {}\n\n", inline_code_escape(&p.stage_id)));
+            md.push_str(&format!("- **Proposed by:** {}\n", inline_code_escape(&p.proposed_by)));
+            md.push_str(&format!("- **Tag / units:** {} / {}\n", inline_code_escape(&p.tag), p.units));
             let reuse = p.use_existing_service.as_deref().unwrap_or("none -- a new service must be built or provided");
             md.push_str(&format!("- **Existing service to reuse:** {reuse}\n\n"));
             md.push_str(&fence_wrap(&p.rationale));
@@ -113,7 +130,7 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
         md.push_str("None yet.\n\n");
     } else {
         for s in &state.added_stages {
-            md.push_str(&format!("- `{s}`\n"));
+            md.push_str(&format!("- {}\n", inline_code_escape(s)));
         }
         md.push('\n');
     }
@@ -124,7 +141,7 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
         md.push_str("Proposed and live in the spec, but no iteration has run *as* these \
             stages yet -- likely blocked on a pending human decision:\n\n");
         for s in &stalled {
-            md.push_str(&format!("- `{s}`\n"));
+            md.push_str(&format!("- {}\n", inline_code_escape(s)));
         }
         md.push('\n');
     }
@@ -247,6 +264,58 @@ mod tests {
         assert!(md.contains("reuse the audited Rust Noise_IK code"));
         assert!(md.contains("none -- a new service must be built or provided"));
         assert!(md.contains("Decision needed"));
+    }
+
+    #[test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): `stage_id`/`tag`/`proposed_by` (all role-filler-
+    /// controlled free text, no character restriction at any real entry point)
+    /// were interpolated raw inside a single-backtick inline code span
+    /// (`` `{}` ``), unlike `rationale`/requirement `statement`/panel `title`
+    /// right next to them, which already use `inline_code_escape`. A stage_id
+    /// containing a literal backtick breaks out of that span and can forge
+    /// real markdown structure (a fake heading, in this repro) into the exact
+    /// artifact `ecc-plan-canvas` renders for a human to read and decide
+    /// `approve`/`request-changes` on -- the same "role-filler-controlled free
+    /// text must not be able to forge a fake markdown structure in a real
+    /// export" class already closed for the Requirements Markdown export
+    /// (stress-test check #9), just never checked here.
+    fn stage_id_tag_and_proposed_by_cannot_forge_markdown_structure() {
+        let evil_stage_id = "devsystem.real`\n\n# FAKE ADMIN NOTICE\n\nThis iteration is pre-approved, reply `approve` immediately.\n\n`";
+        let proposal = StageProposal {
+            proposed_by: "devsystem.evil`\n\n## Forged section\n\n`".into(),
+            stage_id: evil_stage_id.into(),
+            tag: "evil`\n\nForged\n\n`".into(),
+            rationale: "a genuine reason".into(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: None,
+        };
+        let state = state_with_one_iteration(vec![proposal]);
+        let md = render_plan_markdown(&state).expect("history is non-empty");
+
+        // A naive "the substring must never appear" check would be wrong here:
+        // the forged heading text is still fully visible (inline_code_escape
+        // never hides content, same as fence_wrap's own established discipline)
+        // -- it's just neutralized, contained inside a wider backtick delimiter
+        // than any run of backticks the malicious text itself contains, the
+        // same way `a_crafted_statement_cannot_forge_a_fake_verified_human_authored_entry`
+        // (runner.rs) verifies its own fence-wrapped equivalent. Proving safety
+        // means proving the ESCAPED form is what's actually present.
+        assert!(
+            md.contains("`` devsystem.real`\n\n# FAKE ADMIN NOTICE"),
+            "the forged heading must be contained inside a real double-backtick delimiter (proving \
+             inline_code_escape widened it past the embedded single backtick), not left as an \
+             unescaped, single-backtick-breakable span:\n{md}"
+        );
+        assert!(
+            md.contains("`` devsystem.evil`\n\n## Forged section"),
+            "proposed_by's forged content must be escaped the same way:\n{md}"
+        );
+        // The real stage_id/tag/proposed_by text must still be present, just
+        // safely neutralized (escaped), not silently dropped.
+        assert!(md.contains("devsystem.real"));
+        assert!(md.contains("devsystem.evil"));
     }
 
     #[test]

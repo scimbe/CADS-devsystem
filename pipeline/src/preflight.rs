@@ -5,7 +5,7 @@
 //! LLM judgment call, just pattern checks a human reviewer would otherwise have to
 //! do by hand.
 
-use crate::runner::{distinct_word_count, RunState};
+use crate::runner::{distinct_word_count, inline_code_escape, RunState};
 use crate::{contains_bidi_control_char, STAGE_IMPLEMENT, STAGE_REVIEW, STAGE_TEST};
 use ct_common::pipeline::PipelineSpec;
 
@@ -220,6 +220,17 @@ fn checkin_cadence_effectively_disabled(state: &RunState) -> Option<RiskAnnotati
 
 /// "touches auth" (proposal §5's own example): the latest iteration's feedback, or
 /// any proposal it carries, mentions a security-relevant keyword.
+///
+/// `p.stage_id` below is `inline_code_escape`d, not raw-interpolated -- a real gap
+/// found live by the incompetent-agent stress test (#382 goal doc §8, 2026-08-06),
+/// same "role-filler-controlled free text must not forge markdown structure" class
+/// already closed for the Requirements Markdown export (stress-test check #9), just
+/// never checked for `RiskAnnotation.evidence` until this run: `stage_id` has no
+/// character restriction at any real entry point, and this evidence string flows
+/// straight into `checkin.rs`'s own `.plan.md` artifact -- a real backtick-plus-
+/// newline in a proposed `stage_id` broke out of the single-backtick span and
+/// forged a fake markdown heading into the exact file `ecc-plan-canvas` renders for
+/// a human to read and decide `approve`/`request-changes` on.
 fn security_keyword_hit(state: &RunState) -> Option<RiskAnnotation> {
     let latest = state.history.last()?;
     let feedback_lower = latest.feedback.to_lowercase();
@@ -234,7 +245,7 @@ fn security_keyword_hit(state: &RunState) -> Option<RiskAnnotation> {
         if let Some(kw) = SECURITY_KEYWORDS.iter().find(|kw| text.contains(**kw)) {
             return Some(RiskAnnotation {
                 label: "touches auth/security".into(),
-                evidence: format!("proposal `{}`'s rationale mentions \"{kw}\"", p.stage_id),
+                evidence: format!("proposal {}'s rationale mentions \"{kw}\"", inline_code_escape(&p.stage_id)),
             });
         }
     }
@@ -416,6 +427,12 @@ fn no_review_for_succeeded_work(state: &RunState) -> Option<RiskAnnotation> {
 /// human reviewing this run a false "this is bounded" signal for a role that's
 /// exactly as unbounded as one with no ceiling at all. `unwrap_or(0) == 0`
 /// below treats both the same, honestly.
+///
+/// `p.stage_id` in the evidence string below is `inline_code_escape`d for the
+/// same reason as `security_keyword_hit`'s own doc comment above -- this is the
+/// exact evidence line whose raw, unescaped `stage_id` first proved the markdown-
+/// forgery gap live (a stage_id containing a backtick and a newline injected a
+/// real fake heading into `checkin.rs`'s `.plan.md` artifact through this line).
 fn no_price_ceiling(state: &RunState) -> Vec<RiskAnnotation> {
     // Real regression found live, same day as approved_stage_proposals was
     // introduced: scanning *only* the new field silently dropped every real,
@@ -470,8 +487,8 @@ fn no_price_ceiling(state: &RunState) -> Vec<RiskAnnotation> {
         .map(|p| RiskAnnotation {
             label: "no price ceiling set".into(),
             evidence: format!(
-                "role `{}` is live in this run's own spec, was proposed needing a new service (no use_existing_service) with no real price_ceiling ({}), and nothing since has bounded what filling it could cost -- price_ceiling is never actually enforced against a real bid's price, so 0 is exactly as unbounded as unset",
-                p.stage_id,
+                "role {} is live in this run's own spec, was proposed needing a new service (no use_existing_service) with no real price_ceiling ({}), and nothing since has bounded what filling it could cost -- price_ceiling is never actually enforced against a real bid's price, so 0 is exactly as unbounded as unset",
+                inline_code_escape(&p.stage_id),
                 p.price_ceiling.map(|v| v.to_string()).unwrap_or_else(|| "none set".to_string())
             ),
         })
