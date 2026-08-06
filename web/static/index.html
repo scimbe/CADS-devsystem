@@ -2250,6 +2250,7 @@ const OPEN_POINT_KIND_LABELS = {
   panel_edit_proposal: 'Panel edit proposal',
   stage_proposal: 'New pipeline stage proposal',
   issue_proposal: 'GitHub issue proposal',
+  next_step_draft: 'Draft next-step option (unresolved)',
 };
 const OPEN_POINT_APPROVE_PATHS = {
   panel_proposal: 'panels/proposals',
@@ -2297,25 +2298,43 @@ async function renderOpenPointsPanel(id, data) {
   if (openPointIndex < 0) openPointIndex = 0;
   const p = points[openPointIndex];
 
-  const actionsHtml = p.kind === 'paused_checkpoint'
-    ? `<button type="button" id="op-act-resume">Resume run</button>`
-    : `<button type="button" id="op-act-approve">Approve</button>
-       <button type="button" class="secondary" id="op-act-reject">Reject</button>`;
+  // Real gap, live-found 2026-08-06: a next-step draft used to only ever
+  // appear nested under the paused_checkpoint entry -- resuming the run made
+  // it vanish from open-points entirely, with no remaining way to see, edit,
+  // or delete it (still real in RunState, just orphaned in the GUI). Fixed at
+  // the data source (open_points, web/src/main.rs): once not paused, a
+  // leftover draft now surfaces as its own real open point, kind
+  // "next_step_draft" -- rendered here as the same editable draft card, no
+  // separate Approve/Reject/Resume actions (Save/Delete live inside it).
+  const isDraft = p.kind === 'next_step_draft';
+  const draft = isDraft ? { id: p.id, text: p.summary } : null;
+
+  const actionsHtml = isDraft
+    ? ''
+    : p.kind === 'paused_checkpoint'
+      ? `<button type="button" id="op-act-resume">Resume run</button>`
+      : `<button type="button" id="op-act-approve">Approve</button>
+         <button type="button" class="secondary" id="op-act-reject">Reject</button>`;
+
+  const mainContentHtml = isDraft
+    ? renderNextStepDraftsHtml([draft])
+    : `<div class="role-card">
+         <div class="role-card-head"><span class="role">${escapeHtml(OPEN_POINT_KIND_LABELS[p.kind] || p.kind)}</span></div>
+         <div class="role-meta">${escapeHtml(p.summary)}</div>
+       </div>`;
 
   // "Stack mode" slice 3 (operator ask, 2026-08-06): at a paused checkpoint,
   // show devsystem.assistant's own real draft next-step options right
   // alongside it -- editable/deletable directly, never applied on their own.
   // See RunState::pending_next_step_drafts's own doc comment for the
   // trust-model reasoning (no approve/apply step, unlike the proposal kinds
-  // above).
+  // above). Not shown here for a standalone next_step_draft item -- that's
+  // already the item's own main content, not a nested extra.
   const draftsHtml = p.kind === 'paused_checkpoint' ? renderNextStepDraftsHtml(data.state.pending_next_step_drafts || []) : '';
 
   body.innerHTML = `
     <div class="lede" style="margin-bottom:.4rem">open point <b>${openPointIndex + 1}</b> of <b>${points.length}</b></div>
-    <div class="role-card">
-      <div class="role-card-head"><span class="role">${escapeHtml(OPEN_POINT_KIND_LABELS[p.kind] || p.kind)}</span></div>
-      <div class="role-meta">${escapeHtml(p.summary)}</div>
-    </div>
+    ${mainContentHtml}
     <div style="margin-top:.4rem;display:flex;gap:.4rem;flex-wrap:wrap">${actionsHtml}</div>
     <div id="op-status" class="status-line"></div>
     ${draftsHtml}
@@ -2326,24 +2345,6 @@ async function renderOpenPointsPanel(id, data) {
   `;
   document.getElementById('op-prev').onclick = () => { openPointIndex--; renderOpenPointsPanel(id, data); };
   document.getElementById('op-next').onclick = () => { openPointIndex++; renderOpenPointsPanel(id, data); };
-
-  if (p.kind === 'paused_checkpoint') {
-    for (const btn of body.querySelectorAll('.op-draft-save-btn')) {
-      btn.onclick = () => {
-        const card = btn.closest('.op-draft-card');
-        const text = card.querySelector('.op-draft-text').value;
-        runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/next-steps/${encodeURIComponent(btn.dataset.id)}/update`, {
-          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }),
-        }));
-      };
-    }
-    for (const btn of body.querySelectorAll('.op-draft-remove-btn')) {
-      btn.onclick = () => {
-        if (!confirm('Delete this draft next-step option? This is real -- there\'s no undo.')) return;
-        runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/next-steps/${encodeURIComponent(btn.dataset.id)}/remove`, { method: 'POST' }));
-      };
-    }
-  }
 
   const statusEl = document.getElementById('op-status');
   async function runOpenPointAction(fn) {
@@ -2362,9 +2363,31 @@ async function renderOpenPointsPanel(id, data) {
     }
   }
 
+  // Draft Save/Delete wiring -- covers BOTH shapes a draft can appear in: the
+  // paused_checkpoint's own nested list (draftsHtml above), and a standalone
+  // next_step_draft item post-resume (mainContentHtml above). Same markup,
+  // same endpoints, either way.
+  if (p.kind === 'paused_checkpoint' || isDraft) {
+    for (const btn of body.querySelectorAll('.op-draft-save-btn')) {
+      btn.onclick = () => {
+        const card = btn.closest('.op-draft-card');
+        const text = card.querySelector('.op-draft-text').value;
+        runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/next-steps/${encodeURIComponent(btn.dataset.id)}/update`, {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }),
+        }));
+      };
+    }
+    for (const btn of body.querySelectorAll('.op-draft-remove-btn')) {
+      btn.onclick = () => {
+        if (!confirm('Delete this draft next-step option? This is real -- there\'s no undo.')) return;
+        runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/next-steps/${encodeURIComponent(btn.dataset.id)}/remove`, { method: 'POST' }));
+      };
+    }
+  }
+
   if (p.kind === 'paused_checkpoint') {
     document.getElementById('op-act-resume').onclick = () => runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/resume`, { method: 'POST' }));
-  } else {
+  } else if (!isDraft) {
     const base = OPEN_POINT_APPROVE_PATHS[p.kind];
     document.getElementById('op-act-approve').onclick = () =>
       runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/${base}/${encodeURIComponent(p.id)}/approve`, { method: 'POST' }));

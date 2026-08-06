@@ -764,6 +764,25 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
     for p in &run_state.pending_issue_proposals {
         points.push(OpenPoint { kind: "issue_proposal", id: p.id.clone(), summary: format!("file issue on {}: {}", p.repo, p.title), proposed_at: Some(p.proposed_at) });
     }
+    // Real gap, live-found 2026-08-06: while paused, a next-step draft is
+    // shown nested under the paused_checkpoint entry above (see the GUI's own
+    // renderOpenPointsPanel) -- but resuming the run makes that entry vanish
+    // from this list entirely, and nothing else ever surfaces
+    // pending_next_step_drafts. Live-confirmed before fixing: a draft added
+    // while paused silently survived a resume in the real backend state, with
+    // zero remaining GUI path to see, edit, or delete it -- exactly the
+    // "declared but not accessible" pattern this project keeps finding and
+    // closing elsewhere. Not deleting the draft on resume -- the operator's
+    // own explicit ask was "the user can delete, change and manipulate" a
+    // draft directly, never that resuming should silently discard one. Only
+    // added here when NOT paused, so a paused run's drafts still nest under
+    // its one checkpoint card (comparing 2-3 options together) rather than
+    // also appearing as separate entries -- no duplication either way.
+    if !run_state.paused {
+        for d in &run_state.pending_next_step_drafts {
+            points.push(OpenPoint { kind: "next_step_draft", id: d.id.clone(), summary: d.text.clone(), proposed_at: Some(d.proposed_at) });
+        }
+    }
     points
 }
 
@@ -7848,6 +7867,54 @@ exit 1"#);
         assert_eq!(points[0]["kind"], "paused_checkpoint");
         assert_eq!(points[0]["summary"], "paused manually");
         assert_eq!(points[1]["kind"], "panel_proposal");
+    }
+
+    #[tokio::test]
+    async fn open_points_nests_a_next_step_draft_under_the_paused_checkpoint_while_paused_but_never_loses_it_after_resume() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "draft-orphan-run"}))).await.unwrap();
+        app.clone().oneshot(Request::builder().method("POST").uri("/api/runs/draft-orphan-run/pause").body(Body::empty()).unwrap()).await.unwrap();
+        let created = body_json(
+            app.clone()
+                .oneshot(json_request("POST", "/api/runs/draft-orphan-run/next-steps/propose", serde_json::json!({"text": "Option A: a real draft"})))
+                .await
+                .unwrap(),
+        )
+        .await;
+        let draft_id = created["id"].as_str().unwrap();
+
+        // While paused: nested under the one paused_checkpoint entry, not a separate item --
+        // comparing 2-3 real options together is the whole point, not stepping through them one at a time.
+        let while_paused = body_json(
+            app.clone().oneshot(Request::builder().uri("/api/runs/draft-orphan-run/open-points").body(Body::empty()).unwrap()).await.unwrap(),
+        )
+        .await;
+        let while_paused = while_paused.as_array().unwrap();
+        assert_eq!(while_paused.len(), 1, "the draft must not ALSO appear as its own separate open point while still nested under the checkpoint");
+        assert_eq!(while_paused[0]["kind"], "paused_checkpoint");
+
+        // Real gap, live-found 2026-08-06: resuming used to make the draft vanish from
+        // open-points entirely -- still real in RunState, but with no remaining GUI path to
+        // see, edit, or delete it. Now it must surface as its own real open point instead.
+        app.clone().oneshot(Request::builder().method("POST").uri("/api/runs/draft-orphan-run/resume").body(Body::empty()).unwrap()).await.unwrap();
+        let after_resume = body_json(
+            app.clone().oneshot(Request::builder().uri("/api/runs/draft-orphan-run/open-points").body(Body::empty()).unwrap()).await.unwrap(),
+        )
+        .await;
+        let after_resume = after_resume.as_array().unwrap();
+        assert_eq!(after_resume.len(), 1, "an unresolved draft must survive a resume as its own real open point, not silently disappear");
+        assert_eq!(after_resume[0]["kind"], "next_step_draft");
+        assert_eq!(after_resume[0]["id"], draft_id);
+        assert_eq!(after_resume[0]["summary"], "Option A: a real draft");
+
+        // And it must still be genuinely actionable post-resume -- update/remove work the same
+        // whether the run is paused or not (RunState::pending_next_step_drafts's own doc comment).
+        let remove_response = app
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/draft-orphan-run/next-steps/{draft_id}/remove")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(remove_response.status(), SC::NO_CONTENT);
     }
 
     #[tokio::test]
