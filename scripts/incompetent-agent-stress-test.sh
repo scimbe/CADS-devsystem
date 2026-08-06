@@ -312,6 +312,16 @@ check "both real unbounded roles are flagged, not just the first added" "2" "$un
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$multi_run"
 
 echo
+echo "[22] EVERY genuinely vague acceptance criterion must be flagged, not just the first"
+vague_run="${RUN}-multi-vague-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$vague_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$vague_run/requirements" -H 'content-type: application/json' -d '{"statement":"WHEN x, THE SYSTEM SHALL y","acceptance_criteria":["works"]}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$vague_run/requirements" -H 'content-type: application/json' -d '{"statement":"WHEN a, THE SYSTEM SHALL b","acceptance_criteria":["is fast"]}'
+vague_count=$(curl -s "$BASE/api/runs/$vague_run" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for r in d["risks"] if r["label"]=="acceptance criteria too vague to be deterministic"))' 2>/dev/null)
+check "both genuinely vague criteria are flagged, not just the first" "2" "$vague_count"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$vague_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
