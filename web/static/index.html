@@ -1293,8 +1293,19 @@ async function fetchJSON(url, opts) {
   return body;
 }
 
+// DAU-lens gap found live 2026-08-06 (#382 goal doc §8): plain s.slice(0, n) indexes by
+// UTF-16 code unit, not real character -- real feedback/rationale text containing an
+// emoji or any other supplementary-plane character (e.g. "😀") that straddles
+// the cut point gets sliced in half, leaving a lone unpaired surrogate in the rendered
+// string. Reproduced directly (node -e, not assumed): truncate("x".repeat(219) + "😀" +
+// "y".repeat(50), 220) returned a string ending in the bare high surrogate \ud83d with no
+// low surrogate -- a real, if minor, "…" preview corrupted into a broken glyph for content
+// nobody actually did anything wrong to produce. Array.from() iterates by real Unicode
+// code point, so a surrogate pair is never split.
 function truncate(s, n) {
-  return s.length > n ? s.slice(0, n) + '…' : s;
+  if (s.length <= n) return s;
+  const chars = Array.from(s);
+  return chars.length > n ? chars.slice(0, n).join('') + '…' : s;
 }
 
 // Real bid freshness (#382): a compact "Ns/Nm/Nh" duration -- used both for
