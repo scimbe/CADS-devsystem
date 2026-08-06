@@ -3120,7 +3120,7 @@ iteration via `devsystem_iterate`, appended it to `history`, left `paused` untou
 `iteration_outcome=Continue` -- the pause was only ever displayed, never enforced, on this path.
 
 Fixed with a direct `if state.paused { ... FAILURE }` check in `run_local`
-(`pipeline/src/bin/devsystem_iterate.rs`, `CADS-devsystem@<pending>`) placed before any write, same
+(`pipeline/src/bin/devsystem_iterate.rs`, `CADS-devsystem@7f09ae3`) placed before any write, same
 position as the three validators beneath it -- no new shared function was needed since
 `RunState::paused` is already a public field read directly by both real entry points. Re-ran the
 exact same scratch reproduction after the fix: real `rejected: run is paused ...`, exit code 1, and
@@ -3136,5 +3136,48 @@ retried or overlapping-instance duplicate submission) is *also* absent from `run
 for a future firing -- it protects a different, less severe failure mode (a harmless-if-rare
 duplicate row, not a bypassed human review gate) and this firing's own increment was already real
 and bounded.
+
+**Docs-loop firing, 2026-08-06 -- documented the local-CLI paused-run gate fix**:
+`CADS-devsystem-docs` extended `why-did-my-run-pause.md` with the live reproduction and fix, right
+next to the existing explanation of the GUI/HTTP-level `409` it was missing from, plus a short
+cross-reference in `submit-an-iteration.md` alongside the other two local-CLI-only gaps
+(`CADS-devsystem-docs@537e703`). Hermetically built clean, both new cross-links resolve correctly in
+the built site. No new operator input on any of the three open `#382` checkpoints; GitHub's incident
+still `major_outage` though CI is intermittently clearing (a recent run completed `success`); no
+scimbe-authored open PRs on either target repo; issue #14 unchanged.
+
+**Goal-driven-loop firing, 2026-08-06 (uuu) -- closed the deferred idempotency-guard gap, the fourth
+of this shape found this session**: no new operator input on any of the three open `#382`
+checkpoints (all three most recent comments on the issue are still my own); CI intermittently
+clearing but not yet confirmable green across several consecutive commits; issue #14 unchanged. Per
+the previous firing's own explicit deferral note, picked up exactly where it left off.
+
+`iterate_run`'s idempotency guard (rejects a submission byte-identical to the run's own immediately-
+preceding history entry, closing a real 2026-08-05 gap where overlapping `devsystem-web` container
+instances during a redeploy let two functionally-identical iterations land with the same computed
+iteration number) lived entirely inline in the HTTP handler. `run_local` had no equivalent -- a
+retried or accidentally-rerun `record.json` would silently append a second, indistinguishable
+history entry rather than being refused. Live-confirmed the fix works: a scratch run's first real
+iteration, resubmitted byte-identical via the local CLI, now gets a real `rejected: this submission
+is byte-identical to iteration 1, ...` and no partial write (confirmed via the persisted
+`state.json`/`memory.jsonl`).
+
+Fixed with a new shared `duplicate_of_last_iteration` (`pipeline/src/runner.rs`,
+`CADS-devsystem@3afdbd2`) -- takes the individual comparison fields rather than a shared
+record/request type, since the HTTP handler's own check runs *before* it constructs its
+`IterationRecord` (only has the raw request-body fields at that point) while the local CLI's
+`record` already exists in full by then; a bare-fields signature lets both real call sites share the
+identical comparison without either reshaping its own control flow. `web/src/main.rs`'s inline
+comparison now calls it instead of keeping a second, separately-maintained copy.
+
+1 new regression test (`duplicate_of_last_iteration_flags_a_byte_identical_resubmission_and_only_that`,
+covering the duplicate case, a genuinely-different-feedback case, an empty-history case, and a
+now-superseded-earlier-entry case in one function, matching this project's own convention for a
+single multi-assertion test over a pure function), 119/119 pipeline-lib tests (was 118), 190/190 web
+tests unchanged, hermetic clippy clean on both crates, 0 warnings. This closes the fourth and, on the current re-enumeration of every `iterate_run` check
+against `run_local`, last known instance of this specific "two real entry points, one bug class"
+shape (`valid_run_id`/`owner_authorized`'s HTTP-only half is a correct, non-gap difference -- see
+firing ttt) -- the next firing should re-scan for a genuinely different kind of gap rather than a
+fifth pass over the same two functions.
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).
