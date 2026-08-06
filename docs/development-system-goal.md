@@ -1989,4 +1989,18 @@ badge now reads `"paused (no reason recorded)"`. Pure frontend change (`web/stat
 automated test harness in this repo, and the stress-harness only exercises JSON APIs, not rendered
 HTML) -- the live screenshot before/after is the real regression evidence for this one.
 
+**Operational note for the operator, 2026-08-06**: real GitHub Actions CI on `scimbe/CADS-devsystem`
+has been stuck in GitHub's own runner queue (`status: queued`, zero progress) for well over ten
+minutes across several consecutive commits/pushes this session, including plain docs-only pushes.
+Confirmed this isn't caused by anything on our side: the repo is public (free, effectively unlimited
+GitHub-hosted runner minutes, no billing/quota wall applies), Actions are enabled with all actions
+allowed, no other run is genuinely blocking the same concurrency group, and the API rate limit is
+nowhere near exhausted. This looks like a transient GitHub-hosted-runner availability issue at the
+platform level, outside anything this loop can fix. Every fix landed during this delay was still
+real, hermetically tested locally (`cargo test`/`cargo clippy` in the same Docker images CI itself
+uses), and live-verified against the actual redeployed container before being recorded here -- CI is
+this project's *third* verification layer (after local hermetic tests and live redeploy checks), not
+the only one, so work did not stop for it. But several entries in this log are now recorded without
+the usual "confirmed green in real GitHub Actions CI" close-out, honestly, until the queue clears.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
