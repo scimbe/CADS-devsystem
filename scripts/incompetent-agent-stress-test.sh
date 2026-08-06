@@ -271,6 +271,21 @@ check "remove_next_step_draft removes a real draft for real" "204" "$status"
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$draft_run"
 
 echo
+echo "[19] a next-step draft must survive resuming the run, not become invisible/orphaned"
+orphan_run="${RUN}-orphan-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$orphan_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$orphan_run/pause"
+orphan_draft_id=$(curl -s -X POST "$BASE/api/runs/$orphan_run/next-steps/propose" -H 'content-type: application/json' -d '{"text":"a real draft that must survive resume"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' 2>/dev/null)
+before_count=$(curl -s "$BASE/api/runs/$orphan_run/open-points" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null)
+check "while paused, the draft is nested under the one paused_checkpoint entry, not counted separately" "1" "$before_count"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$orphan_run/resume"
+after_kind=$(curl -s "$BASE/api/runs/$orphan_run/open-points" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["kind"] if d else "MISSING")' 2>/dev/null)
+check "after resume, the draft surfaces as its own real open point instead of vanishing" "next_step_draft" "$after_kind"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$orphan_run/next-steps/$orphan_draft_id/remove")
+check "a post-resume draft is still genuinely actionable (removes for real)" "204" "$status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$orphan_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
