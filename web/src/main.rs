@@ -1084,7 +1084,22 @@ async fn add_requirement(
     // variants), so checking for it alone is a safe, low-false-positive proxy,
     // same crude-but-honest mechanical convention as every other check in this
     // codebase -- not real NLP, just "did you even attempt the format."
-    if !statement.to_lowercase().contains("shall") {
+    //
+    // The stress test's thirteenth real run (2026-08-06) found this exact
+    // check had the SAME false-positive shape as a plain substring search
+    // always has: `.contains("shall")` matches inside completely unrelated
+    // words -- "shallow", "Marshall", "installshall" -- not just the real
+    // EARS keyword. Live-verified before this fix: "Do a shallow
+    // implementation of the login flow for now" (zero trigger/behavior
+    // clause, not remotely EARS-shaped) got a real 200, purely because
+    // "shallow" contains "shall" as a raw substring. Fixed by splitting on
+    // non-alphanumeric boundaries and requiring "shall" as an exact WORD,
+    // same word-splitting convention `distinct_word_count` already
+    // established elsewhere in this codebase (case-insensitive,
+    // punctuation-collapsing) -- "shallow"/"marshall" no longer match,
+    // "SHALL," / "shall." / "shall/could" still correctly do.
+    let has_shall_as_a_real_word = statement.to_lowercase().split(|c: char| !c.is_alphanumeric()).any(|w| w == "shall");
+    if !has_shall_as_a_real_word {
         return (
             StatusCode::BAD_REQUEST,
             "statement doesn't look like a real EARS requirement -- expected something containing \
@@ -4262,6 +4277,45 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::OK, "a real ubiquitous EARS requirement (no WHEN clause) must still be accepted");
+    }
+
+    #[tokio::test]
+    /// The stress test's thirteenth real run (#382 goal doc §8, 2026-08-06): a
+    /// plain `.contains("shall")` matches inside completely unrelated words,
+    /// not just the real EARS keyword -- "shallow", "Marshall", etc.
+    async fn add_requirement_rejects_shall_only_as_a_substring_of_an_unrelated_word() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-ears-substring-run"}))).await.unwrap();
+
+        for garbage in [
+            "Do a shallow implementation of the login flow for now",
+            "Ask Marshall to review this before merging",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/runs/req-ears-substring-run/requirements",
+                    serde_json::json!({"statement": garbage, "acceptance_criteria": ["a real criterion"]}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::BAD_REQUEST, "\"{garbage}\" contains \"shall\" only as a substring of an unrelated word, not the real EARS keyword");
+        }
+
+        // A real EARS statement with trailing punctuation directly against
+        // "SHALL" must still be accepted -- the word-boundary fix must not
+        // become too strict in the other direction.
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-ears-substring-run/requirements",
+                serde_json::json!({"statement": "WHEN a user logs in, THE SYSTEM SHALL, at minimum, record the timestamp", "acceptance_criteria": ["a real criterion"]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "\"SHALL,\" with trailing punctuation must still count as the real word");
     }
 
     #[tokio::test]
