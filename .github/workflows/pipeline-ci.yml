@@ -121,3 +121,30 @@ jobs:
 
       - name: docker build (the actual image deployed live behind devsystem-demo.bunsenbrenner.org)
         run: docker build -f web/Dockerfile -t devsystem-web:ci .
+
+      # Real gap closed 2026-08-06 (#382 goal doc §8, stress-test run 35 -> 36):
+      # scripts/incompetent-agent-stress-test.sh existed as a real, live-verified
+      # tool a human had to remember to run by hand -- exactly the "soft,
+      # ignorable" pattern this project's own governing principle exists to
+      # close everywhere else. Runs it for real against the actual image built
+      # above (not a mock, not the hermetic cargo tests -- a genuine live HTTP
+      # regression guard for the real lazy-shortcut gaps this session already
+      # found and fixed), so a future PR that reintroduces one of them fails CI
+      # instead of waiting for the next manual stress-test firing to notice.
+      - name: incompetent-agent stress test (real regression guard, #382 goal doc §8)
+        run: |
+          docker run -d --name devsystem-web-ci -p 8790:8790 devsystem-web:ci
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8790/api/runs > /dev/null; then break; fi
+            sleep 1
+          done
+          chmod +x scripts/incompetent-agent-stress-test.sh
+          scripts/incompetent-agent-stress-test.sh http://127.0.0.1:8790
+
+      - name: incompetent-agent stress test -- container logs (always shown, for debugging a real failure above)
+        if: always()
+        run: docker logs devsystem-web-ci || true
+
+      - name: incompetent-agent stress test -- stop the real container
+        if: always()
+        run: docker stop devsystem-web-ci || true
