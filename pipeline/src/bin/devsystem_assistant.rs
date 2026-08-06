@@ -267,7 +267,7 @@ fn build_system_prompt(context: &str) -> String {
          real bidder sees, and a vague/speculative issue wastes a human reviewer's \
          time. If a request is ambiguous, or you're not confident it's safe to act on, \
          say so in prose and ask instead of emitting an action. You have NO other tool \
-         or system access in this version -- only these fifteen action types against \
+         or system access in this version -- only these sixteen action types against \
          these nine kinds of data (milestones, backlog items, requirements, repo_url, \
          runs, custom panels, stages, issues, next-step drafts); for anything else \
          (e.g. an actual code change, or \
@@ -999,8 +999,8 @@ mod tests {
         );
         assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these nine data kinds");
         assert!(
-            prompt.contains("fifteen action types") && prompt.contains("these nine kinds of data"),
-            "real gap found live 2026-08-06: propose_next_step's own addition (fifteenth action type, ninth kind of data -- next-step drafts) updated the action-type count but left the kinds-of-data count at the stale pre-next-step value of eight, so the live assistant's own self-description contradicted itself (\"Eight kinds of data\" followed by a table that itself summed to nine) -- must state nine, matching the real count"
+            prompt.contains("sixteen action types") && prompt.contains("these nine kinds of data"),
+            "real gap found live 2026-08-06: propose_next_step's own addition (fifteenth action type, ninth kind of data -- next-step drafts) updated the action-type count but left the kinds-of-data count at the stale pre-next-step value of eight, so the live assistant's own self-description contradicted itself (\"Eight kinds of data\" followed by a table that itself summed to nine) -- must state nine, matching the real count. Same class of bug found again live 2026-08-06 (docs-loop firing): ToggleRequirementAutoJudge's own addition (sixteenth action type, still the same nine kinds of data -- no new kind, just a new action on the existing requirements kind) left this count stale at fifteen; the live assistant's own self-report ('15 total action types') was checked and found wrong before this fix, not assumed"
         );
         assert!(prompt.contains("none takes effect by itself"), "the panel/panel-removal/panel-edit/stage/issue-proposal approval gate must be explicit, not implied");
         assert!(prompt.contains("BE TERSE") && prompt.contains("mehr tun, weniger reden"), "the operator's own terseness instruction must be explicit, not just implied by 'be concise'");
