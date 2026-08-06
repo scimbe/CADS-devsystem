@@ -482,7 +482,16 @@ smaller cost than silently hiding one nobody ever said was fixed. Re-verified li
 run already used to prove the gap: the same run that lost the finding now correctly re-surfaces it.
 Ten real stress-test runs, ten real gaps found and closed.
 
-## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
+**Real production confirmation, not just synthetic examples, 2026-08-06**: checked the actual
+`webconference-android` run's own current risks after all ten fixes landed, rather than assuming
+they only matter on scratch test runs. `no_price_ceiling`'s fix (`077c6e4`) is doing real work on the
+real flagship project right now -- `devsystem.document_extraction` was proposed at iteration 1 with
+`price_ceiling: null` (checked directly against the real history, not assumed), and ten real
+iterations later, across everything else that's happened on this run since, it's still `[]`
+unceilinged. The pre-fix version of this check would have silently hidden this the moment iteration
+2 happened, regardless of stage. It's real, live-verified evidence: the same run's `risks` array,
+fetched fresh, currently shows exactly this and `touches auth/security` -- two honest, currently-true
+findings, not zero.
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
