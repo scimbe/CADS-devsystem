@@ -468,6 +468,20 @@ with an invented resolution signal. Re-verified live against the exact run alrea
 gap: the same run that showed zero risks now correctly re-surfaces the still-live cost risk, no
 resubmission needed. Nine real stress-test runs, nine real gaps found and closed.
 
+**The stress test's tenth real run, 2026-08-06**: the identical "only checks the latest iteration"
+bug shape, found in `succeeded_iteration_admits_a_defect` this time. Live-verified before the fix: a
+real, unfixed "Known issue: ... not fixed yet, workaround needed" admission got correctly flagged,
+then silently vanished the moment one unrelated iteration followed it -- never fixed, just
+unmentioned. Different resolution than `no_price_ceiling`'s, though: there's no structural "was this
+fixed" signal for a defect the way `added_stages` membership works for a role's price ceiling, so
+scanning-for-still-live isn't available here. Matched `no_review_role_despite_real_progress`'s own
+established pattern instead: scan all of history, keep flagging as long as ANY successful iteration
+ever admitted a defect (`CADS-devsystem@5565049`). Named the real cost honestly, in the code and in
+the risk evidence text itself: this can false-flag an actually-fixed defect, but that's a far
+smaller cost than silently hiding one nobody ever said was fixed. Re-verified live against the exact
+run already used to prove the gap: the same run that lost the finding now correctly re-surfaces it.
+Ten real stress-test runs, ten real gaps found and closed.
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
