@@ -820,6 +820,21 @@ proved the bug: the "fix" now genuinely clears the risk, and the actual flagship
 risks stayed correctly intact through this further change. Twenty-seven real stress-test
 investigations, twenty-seven real gaps found and closed.
 
+**The stress test's twenty-eighth real run, 2026-08-06**: a DAU-lens gap in the New Iteration
+form's own embedded-proposal fields, following directly from runs 25-27's own real `price_ceiling`
+work. The real `<input type="number" min="0">` had a plain "optional" placeholder and a label only
+warning about leaving it *blank* -- a careless human reading "leave blank for none" could very
+plausibly type `0` thinking it's a deliberate, conservative choice ("no budget allowed"), the
+opposite of the truth: `price_ceiling` is never actually enforced against a real bid anywhere in
+this codebase, so a real `0` is exactly as unbounded as leaving the field empty, and `preflight`
+already flags both identically -- nothing in the form said so. Fixed with an explicit label addition
+and a real `title` tooltip on the input itself, matching this project's own established
+honest-tooltip convention (the "automode flag" fix earlier this session) (`CADS-devsystem@26ec6af`).
+Live-verified against the actual deployed JS in a real browser: both the label text and the input's
+real title attribute render correctly. Confirmed this is the only `price_ceiling` input anywhere in
+the GUI -- no other site needed the same fix. Twenty-eight real stress-test investigations,
+twenty-eight real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
