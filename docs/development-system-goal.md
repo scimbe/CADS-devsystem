@@ -947,6 +947,30 @@ open chat session the way a second tab would, sent a message, confirmed the real
 confirmed the GUI recovers to another real run, confirmed the backend itself now returns a clean 404
 directly. Thirty-four real stress-test investigations, thirty-four real gaps found and closed.
 
+**The stress test's thirty-fifth real run, 2026-08-06**: a different kind of increment -- not
+another gap, a real gap in the stress test *itself*. Thirty-four rounds in, this section was still a
+narrative record of one-off manual investigation; §8's own standing mandate says "build the
+incompetent-agent stress test," and no actual reusable tool existed yet. Built
+`scripts/incompetent-agent-stress-test.sh`: thirteen real checks reproducing lazy/careless shortcuts
+already found and fixed live this session (duplicate `run_id` silently clobbering, an
+unbounded/zero `AbortCriteria`, whitespace-only fields, "shallow" matching a SHALL-substring check,
+a near-empty acceptance criterion, an unbounded `price_ceiling` not getting flagged, cross-account
+access, a "deleted" run not actually being gone) -- run against the REAL live deployment, creating
+and cleaning up its own real scratch runs via the actual `DELETE /api/runs/{id}` endpoint (run 31)
+on every invocation, not mocked. Honestly scoped in the script's own header: only mechanical,
+deterministic gates are covered in this v1 -- the LLM-dependent findings (prompt-injection
+resistance, the assistant's milestone-pause disclosure, its requirement-verification evidentiary
+gate) need a slower live pass a human can judge, not a fast boolean check, so they're deliberately
+left for a future v2 rather than faked. Live-verified both directions, not just the happy path: ran
+against the real deployment, 13/13 pass; ran against a deliberately unreachable URL, correctly
+reported a real `FAIL` and exited non-zero -- proving the failure path isn't silently swallowed
+(`CADS-devsystem@be6cc76`). Also checked, while investigating why `runs/` shows a wall of untracked
+scratch directories in `git status`: confirmed this is the project's own deliberate design (the
+comment in `.gitignore` says real run history is meant to be committed, and the flagship
+`webconference-android` run genuinely is, with real commit history) -- scratch/stress-test runs are
+correctly left uncommitted, not a gap. Thirty-five real stress-test investigations; this one
+produced infrastructure rather than a fixed bug, so the gap tally stays at thirty-four closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
