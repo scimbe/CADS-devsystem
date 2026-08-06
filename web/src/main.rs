@@ -21,8 +21,8 @@ use devsystem_pipeline::preflight::{preflight_annotations, process_annotations};
 use devsystem_pipeline::runner::{
     load_or_init_run, persist_run, push_chat_exchange, qualifying_review_evidence, render_requirements_markdown, run_iteration, toggle_acceptance_criterion,
     toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, valid_run_id, BacklogItem, CustomPanel,
-    Milestone, PendingIssueProposal, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal, Requirement, RoleFillMode,
-    RunOutcome, RunState,
+    Milestone, PendingIssueProposal, PendingNextStepDraft, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal, Requirement,
+    RoleFillMode, RunOutcome, RunState,
 };
 use devsystem_pipeline::{apply_proposal, validate_feedback, validate_proposals, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal, MAX_ROLE_UNITS};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
@@ -231,6 +231,9 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/panels", post(add_custom_panel))
         .route("/api/runs/{id}/panels/{panel_id}/remove", post(remove_custom_panel))
         .route("/api/runs/{id}/panels/{panel_id}/update", post(update_custom_panel))
+        .route("/api/runs/{id}/next-steps/propose", post(propose_next_step))
+        .route("/api/runs/{id}/next-steps/{draft_id}/update", post(update_next_step_draft))
+        .route("/api/runs/{id}/next-steps/{draft_id}/remove", post(remove_next_step_draft))
         .route("/api/runs/{id}/panels/propose", post(propose_custom_panel))
         .route("/api/runs/{id}/panels/proposals/{proposal_id}/approve", post(approve_panel_proposal))
         .route("/api/runs/{id}/panels/proposals/{proposal_id}/reject", post(reject_panel_proposal))
@@ -2464,6 +2467,133 @@ async fn propose_custom_panel(
     run_state.pending_panel_proposals.push(proposal.clone());
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(proposal).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+const MAX_NEXT_STEP_DRAFT_BYTES: usize = 4_000;
+
+#[derive(Deserialize)]
+struct ProposeNextStepRequest {
+    text: String,
+}
+
+/// `POST /api/runs/{id}/next-steps/propose` -- "stack mode" slice 3
+/// (`RunState::pending_next_step_drafts`'s own doc comment): `devsystem.assistant`
+/// drafts one concrete next-iteration-plan option as plain, editable text.
+/// Deliberately no approve/apply step -- see that field's own doc comment for
+/// why a draft has nothing to "install." Same headless-caller-unrestricted
+/// `owner_authorized` as every other assistant-driven write (#35).
+async fn propose_next_step(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap, Json(body): Json<ProposeNextStepRequest>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let text = body.text.trim().to_string();
+    if text.is_empty() {
+        return (StatusCode::BAD_REQUEST, "text must not be empty").into_response();
+    }
+    if text.len() > MAX_NEXT_STEP_DRAFT_BYTES {
+        return (StatusCode::BAD_REQUEST, format!("text must be under {MAX_NEXT_STEP_DRAFT_BYTES} bytes")).into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    if run_state.pending_next_step_drafts.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("pending_next_step_drafts is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
+    }
+    let draft = PendingNextStepDraft { id: format!("{:016x}", rand::random::<u64>()), text, proposed_at: unix_now() };
+    run_state.pending_next_step_drafts.push(draft.clone());
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(draft).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateNextStepDraftRequest {
+    text: String,
+}
+
+/// `POST /api/runs/{id}/next-steps/{draft_id}/update` -- the operator's own
+/// explicit ask, verbatim: a human can "change" a draft directly, no approval
+/// step needed (it was never live to begin with). Same validation as
+/// proposing one.
+async fn update_next_step_draft(
+    State(state): State<AppState>,
+    AxPath((id, draft_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<UpdateNextStepDraftRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let text = body.text.trim().to_string();
+    if text.is_empty() {
+        return (StatusCode::BAD_REQUEST, "text must not be empty").into_response();
+    }
+    if text.len() > MAX_NEXT_STEP_DRAFT_BYTES {
+        return (StatusCode::BAD_REQUEST, format!("text must be under {MAX_NEXT_STEP_DRAFT_BYTES} bytes")).into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let Some(draft) = run_state.pending_next_step_drafts.iter_mut().find(|d| d.id == draft_id) else {
+        return (StatusCode::NOT_FOUND, format!("no next-step draft with id {draft_id:?}")).into_response();
+    };
+    draft.text = text;
+    let updated = draft.clone();
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(updated).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/next-steps/{draft_id}/remove` -- the operator's own
+/// explicit ask, verbatim: a human can "delete" a draft directly. Same real,
+/// permanent, no-undo shape as `remove_custom_panel` -- no server-side
+/// confirmation param, the GUI's own `confirm()` is the real gate, same
+/// existing precedent.
+async fn remove_next_step_draft(State(state): State<AppState>, AxPath((id, draft_id)): AxPath<(String, String)>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let before = run_state.pending_next_step_drafts.len();
+    run_state.pending_next_step_drafts.retain(|d| d.id != draft_id);
+    if run_state.pending_next_step_drafts.len() == before {
+        return (StatusCode::NOT_FOUND, format!("no next-step draft with id {draft_id:?}")).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
     }
 }
@@ -7762,5 +7892,148 @@ exit 1"#);
         request.headers_mut().insert("x-gate-email", "someone-else@example.com".parse().unwrap());
         let forbidden = app.oneshot(request).await.unwrap();
         assert_eq!(forbidden.status(), SC::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn propose_next_step_adds_a_real_draft_and_rejects_empty_or_oversized_text() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "next-step-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/next-step-run/next-steps/propose", serde_json::json!({"text": "  "})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "empty/whitespace-only text must be rejected");
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/next-step-run/next-steps/propose", serde_json::json!({"text": "x".repeat(MAX_NEXT_STEP_DRAFT_BYTES + 1)})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "oversized text must be rejected");
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/next-step-run/next-steps/propose",
+                serde_json::json!({"text": "Option A: resume and expand M1 with group chat."}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let draft = body_json(response).await;
+        assert_eq!(draft["text"], "Option A: resume and expand M1 with group chat.");
+        assert!(draft["id"].as_str().is_some());
+
+        let get_response = app.oneshot(Request::builder().uri("/api/runs/next-step-run").body(Body::empty()).unwrap()).await.unwrap();
+        let full = body_json(get_response).await;
+        assert_eq!(full["state"]["pending_next_step_drafts"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn update_next_step_draft_edits_it_in_place_and_404s_for_an_unknown_id() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "edit-next-step-run"}))).await.unwrap();
+        let created = body_json(
+            app.clone()
+                .oneshot(json_request("POST", "/api/runs/edit-next-step-run/next-steps/propose", serde_json::json!({"text": "original draft text"})))
+                .await
+                .unwrap(),
+        )
+        .await;
+        let id = created["id"].as_str().unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", &format!("/api/runs/edit-next-step-run/next-steps/{id}/update"), serde_json::json!({"text": "a human's edited version"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let updated = body_json(response).await;
+        assert_eq!(updated["text"], "a human's edited version");
+
+        let missing = app
+            .oneshot(json_request("POST", "/api/runs/edit-next-step-run/next-steps/never-existed/update", serde_json::json!({"text": "x"})))
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn remove_next_step_draft_removes_it_for_real_and_404s_for_an_unknown_id() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "remove-next-step-run"}))).await.unwrap();
+        let created = body_json(
+            app.clone()
+                .oneshot(json_request("POST", "/api/runs/remove-next-step-run/next-steps/propose", serde_json::json!({"text": "a draft to discard"})))
+                .await
+                .unwrap(),
+        )
+        .await;
+        let id = created["id"].as_str().unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/remove-next-step-run/next-steps/{id}/remove")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NO_CONTENT);
+
+        let get_response = app
+            .clone()
+            .oneshot(Request::builder().uri("/api/runs/remove-next-step-run").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let full = body_json(get_response).await;
+        assert_eq!(full["state"]["pending_next_step_drafts"].as_array().unwrap().len(), 0);
+
+        let missing = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/remove-next-step-run/next-steps/never-existed/remove").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_different_account_cannot_propose_edit_or_remove_someone_elses_next_step_draft() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "owner@example.com", Some(serde_json::json!({"run_id": "owned-next-step-run"}))))
+            .await
+            .unwrap();
+
+        let mut propose_req = json_request("POST", "/api/runs/owned-next-step-run/next-steps/propose", serde_json::json!({"text": "a draft"}));
+        propose_req.headers_mut().insert("x-gate-email", "someone-else@example.com".parse().unwrap());
+        let response = app.clone().oneshot(propose_req).await.unwrap();
+        assert_eq!(response.status(), SC::FORBIDDEN);
+
+        // A real draft from the actual owner, to prove edit/remove are gated too, not just propose.
+        let created = body_json(
+            app.clone()
+                .oneshot(gate_request(
+                    "POST",
+                    "/api/runs/owned-next-step-run/next-steps/propose",
+                    "owner@example.com",
+                    Some(serde_json::json!({"text": "owner's real draft"})),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        let id = created["id"].as_str().unwrap();
+
+        let mut update_req = json_request("POST", &format!("/api/runs/owned-next-step-run/next-steps/{id}/update"), serde_json::json!({"text": "hijacked"}));
+        update_req.headers_mut().insert("x-gate-email", "someone-else@example.com".parse().unwrap());
+        assert_eq!(app.clone().oneshot(update_req).await.unwrap().status(), SC::FORBIDDEN);
+
+        let mut remove_req = Request::builder().method("POST").uri(format!("/api/runs/owned-next-step-run/next-steps/{id}/remove")).body(Body::empty()).unwrap();
+        remove_req.headers_mut().insert("x-gate-email", "someone-else@example.com".parse().unwrap());
+        assert_eq!(app.oneshot(remove_req).await.unwrap().status(), SC::FORBIDDEN);
     }
 }

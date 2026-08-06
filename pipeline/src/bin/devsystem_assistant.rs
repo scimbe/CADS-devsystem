@@ -185,7 +185,7 @@ fn build_system_prompt(context: &str) -> String {
          you are actually taking action; omit it entirely otherwise -- never emit an \
          empty or placeholder block):\n\
          {ACTIONS_FENCE_OPEN}\n\
-         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"...\"}},{{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"...\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}}]\n\
+         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"...\"}},{{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"...\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}},{{\"type\":\"propose_next_step\",\"text\":\"...\"}}]\n\
          {ACTIONS_FENCE_CLOSE}\n\
          Indices refer to the real state.milestones/state.backlog/state.requirements \
          arrays already shown to you below -- never guess an index you can't see \
@@ -241,13 +241,25 @@ fn build_system_prompt(context: &str) -> String {
          without the operator's own explicit approval, no matter how confident you \
          are. Use any of these five only when the operator actually asks for a new \
          panel/dashboard/stage, an edit to an existing panel, or you've found a \
-         genuine, concrete gap worth a real issue -- not speculatively. This is the \
+         genuine, concrete gap worth a real issue -- not speculatively. `propose_next_step` \
+         is different again: it queues a real, plain-text draft next-iteration-plan \
+         option in the Open Points panel, which the operator can edit or delete \
+         directly (no approve/reject gate -- a draft is not itself an action, just \
+         advice they may or may not act on). Use it specifically when the run is \
+         genuinely paused at a real checkpoint (state.paused is true) and the operator \
+         asks what to do next: propose 2-3 SEPARATE, concrete, real options as \
+         SEPARATE `propose_next_step` actions -- never pick one for them and never \
+         collapse several options into one draft's text. This mirrors the exact \
+         \"surface real choices, don't guess\" discipline this project's own operator \
+         already applies by hand at every real checkpoint; you must apply it too, not \
+         silently decide the run's direction yourself. Never emit this action on a run \
+         that isn't paused -- there is no checkpoint to plan past yet. This is the \
          real self-optimizing-pipeline \
          mechanism (#382), not a toy: an unwanted role clutters the real auction every \
          real bidder sees, and a vague/speculative issue wastes a human reviewer's \
          time. If a request is ambiguous, or you're not confident it's safe to act on, \
          say so in prose and ask instead of emitting an action. You have NO other tool \
-         or system access in this version -- only these fourteen action types against \
+         or system access in this version -- only these fifteen action types against \
          these eight kinds of data; for anything else (e.g. an actual code change, or \
          submitting an iteration) tell the operator what you'd want to do and let them \
          decide.\n\n\
@@ -334,6 +346,13 @@ enum Action {
     /// doc comment. Real self-healing (operator ask): the assistant notices a
     /// gap/error and drafts a real GitHub issue, but never posts it itself.
     ProposeIssue { repo: String, title: String, body: String },
+    /// "Stack mode" slice 3 (operator ask, 2026-08-06) -- see
+    /// `RunState::pending_next_step_drafts`'s own doc comment. One concrete
+    /// next-iteration-plan option, plain editable text -- the system prompt
+    /// below tells the model to use this at a real checkpoint (a paused run)
+    /// to surface 2-3 real options rather than silently picking one in its
+    /// own reply text.
+    ProposeNextStep { text: String },
 }
 
 fn default_stage_units() -> u64 {
@@ -466,6 +485,17 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
             format!("propose GitHub issue \"{title}\" on {repo} (awaiting your approval in the Pipeline panel)"),
             format!("{base}/api/runs/{run_id}/issues/propose"),
             serde_json::json!({"repo": repo, "title": title, "body": issue_body}),
+            "proposed",
+        ),
+        // "proposed" here too, even though there's no approve step (see
+        // RunState::pending_next_step_drafts's own doc comment for why) -- the
+        // word still communicates the real thing that happened: a draft was
+        // added for a human to read/edit/discard, not that anything was
+        // actually done on the run's behalf.
+        Action::ProposeNextStep { text } => (
+            "propose a next-step draft (visible in the Open Points panel)".to_string(),
+            format!("{base}/api/runs/{run_id}/next-steps/propose"),
+            serde_json::json!({"text": text}),
             "proposed",
         ),
     };
@@ -894,8 +924,13 @@ mod tests {
                 && prompt.contains("propose_remove_custom_panel")
                 && prompt.contains("propose_edit_custom_panel")
                 && prompt.contains("propose_stage")
-                && prompt.contains("propose_issue"),
-            "all fourteen real action types must be documented"
+                && prompt.contains("propose_issue")
+                && prompt.contains("propose_next_step"),
+            "all fifteen real action types must be documented"
+        );
+        assert!(
+            prompt.contains("state.paused is true") && prompt.contains("2-3 SEPARATE"),
+            "propose_next_step's own real guardrails (only at a real checkpoint, never collapse options into one draft) must be explicit"
         );
         assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these eight data kinds");
         assert!(prompt.contains("none takes effect by itself"), "the panel/panel-removal/panel-edit/stage/issue-proposal approval gate must be explicit, not implied");
@@ -970,8 +1005,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_actions_parses_all_fourteen_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"}]\n```";
+    fn extract_actions_parses_all_fifteen_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -1005,6 +1040,7 @@ mod tests {
                     title: "Missing retry on flaky upload".to_string(),
                     body: "Observed 3 consecutive timeouts.".to_string(),
                 },
+                Action::ProposeNextStep { text: "Resume and expand M1 with group chat support.".to_string() },
             ]
         );
     }
@@ -1267,6 +1303,20 @@ mod tests {
         assert_eq!(parsed["repo"], "scimbe/CADS-webconference-demo");
         assert_eq!(parsed["title"], "Missing retry on flaky upload");
         assert_eq!(parsed["body"], "Observed 3 consecutive timeouts.");
+    }
+
+    #[test]
+    fn apply_action_posts_the_real_propose_next_step_request_and_reports_proposed_not_done() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let action = Action::ProposeNextStep { text: "Resume and expand M1 with group chat support.".to_string() };
+        let result = apply_action(&client, &addr, "my-run", &action);
+        assert!(result.starts_with("proposed:"), "a next-step draft must never be reported as \"done\" -- there's nothing to apply, but it's still just a draft: {result}");
+        let (method, url, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/next-steps/propose");
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
+        assert_eq!(parsed["text"], "Resume and expand M1 with group chat support.");
     }
 
     #[test]

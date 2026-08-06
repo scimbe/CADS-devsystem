@@ -431,6 +431,20 @@ pub struct RunState {
     /// `state.json` files (none proposed yet) still load.
     #[serde(default)]
     pub pending_issue_proposals: Vec<PendingIssueProposal>,
+    /// "Stack mode" slice 3 (operator ask, 2026-08-06): a real, editable draft
+    /// next-iteration-plan option `devsystem.assistant` proposed at a
+    /// checkpoint -- the operator's own explicit ask, verbatim intent: "the
+    /// devsystem.assistant should be asked to add first drafts, that the user
+    /// can delete, change and manipulate. I must be guided what is changed."
+    /// Deliberately NOT a propose-then-approve queue like
+    /// `pending_stage_proposals`/`pending_panel_proposals` -- a draft doesn't
+    /// itself DO anything to live state, it's advisory text a human reads,
+    /// edits, or discards, so there is no "apply" step to gate; edit/remove
+    /// are direct human actions, the same trust level `ToggleBacklogItem`
+    /// already gets. `#[serde(default)]` so pre-existing `state.json` files
+    /// (none proposed yet) still load.
+    #[serde(default)]
+    pub pending_next_step_drafts: Vec<PendingNextStepDraft>,
     /// This run's real, structured requirements -- see [`Requirement`].
     /// `#[serde(default)]` so pre-existing `state.json` files (none defined
     /// yet) still load.
@@ -568,6 +582,17 @@ pub struct PendingIssueProposal {
     pub proposed_at: u64,
 }
 
+/// See [`RunState::pending_next_step_drafts`]'s doc comment. No `approved`
+/// flag and no separate live-vs-pending type split like
+/// [`PendingPanelProposal`] -- there's nothing to "install," a draft is
+/// exactly what it says: text a human can edit or remove, kept in one place.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingNextStepDraft {
+    pub id: String,
+    pub text: String,
+    pub proposed_at: u64,
+}
+
 /// See [`RunState::pending_panel_proposals`]'s doc comment for why this is a
 /// separate, non-live shape from [`CustomPanel`] rather than just adding an
 /// `approved: bool` flag to it -- a pending proposal never renders in the GUI at
@@ -630,6 +655,7 @@ impl RunState {
             pending_panel_edit_proposals: Vec::new(),
             pending_stage_proposals: Vec::new(),
             pending_issue_proposals: Vec::new(),
+            pending_next_step_drafts: Vec::new(),
             requirements: Vec::new(),
             assistant_usage: AssistantUsageTotals::default(),
             chat_history: Vec::new(),

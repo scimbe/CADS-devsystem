@@ -2259,6 +2259,27 @@ const OPEN_POINT_APPROVE_PATHS = {
   issue_proposal: 'issues/proposals',
 };
 
+// "Stack mode" slice 3: devsystem.assistant's own real draft next-step
+// options at a paused checkpoint -- see RunState::pending_next_step_drafts's
+// doc comment. No approve step (a draft isn't itself an action), just direct
+// edit/delete, the operator's own explicit ask verbatim.
+function renderNextStepDraftsHtml(drafts) {
+  if (!drafts.length) {
+    return `<div class="lede" style="margin-top:.6rem;font-size:.78rem">No draft next-step options yet -- ask devsystem.assistant what to do next.</div>`;
+  }
+  return `
+    <div class="lede" style="margin-top:.6rem;margin-bottom:.3rem;font-size:.78rem">devsystem.assistant's draft next-step options -- edit or delete freely, nothing here is applied automatically:</div>
+    ${drafts.map(d => `
+      <div class="role-card op-draft-card">
+        <textarea class="op-draft-text" rows="3" style="width:100%;box-sizing:border-box">${escapeHtml(d.text)}</textarea>
+        <div style="margin-top:.3rem;display:flex;gap:.4rem">
+          <button type="button" class="secondary op-draft-save-btn" data-id="${d.id}">Save edit</button>
+          <button type="button" class="secondary op-draft-remove-btn" data-id="${d.id}">Delete</button>
+        </div>
+      </div>`).join('')}
+  `;
+}
+
 async function renderOpenPointsPanel(id, data) {
   const body = document.getElementById('body-openpoints');
   let points;
@@ -2281,6 +2302,14 @@ async function renderOpenPointsPanel(id, data) {
     : `<button type="button" id="op-act-approve">Approve</button>
        <button type="button" class="secondary" id="op-act-reject">Reject</button>`;
 
+  // "Stack mode" slice 3 (operator ask, 2026-08-06): at a paused checkpoint,
+  // show devsystem.assistant's own real draft next-step options right
+  // alongside it -- editable/deletable directly, never applied on their own.
+  // See RunState::pending_next_step_drafts's own doc comment for the
+  // trust-model reasoning (no approve/apply step, unlike the proposal kinds
+  // above).
+  const draftsHtml = p.kind === 'paused_checkpoint' ? renderNextStepDraftsHtml(data.state.pending_next_step_drafts || []) : '';
+
   body.innerHTML = `
     <div class="lede" style="margin-bottom:.4rem">open point <b>${openPointIndex + 1}</b> of <b>${points.length}</b></div>
     <div class="role-card">
@@ -2289,6 +2318,7 @@ async function renderOpenPointsPanel(id, data) {
     </div>
     <div style="margin-top:.4rem;display:flex;gap:.4rem;flex-wrap:wrap">${actionsHtml}</div>
     <div id="op-status" class="status-line"></div>
+    ${draftsHtml}
     <div style="margin-top:.6rem;display:flex;gap:.4rem">
       <button type="button" class="secondary" id="op-prev" ${openPointIndex === 0 ? 'disabled' : ''}>&larr; Prev</button>
       <button type="button" class="secondary" id="op-next" ${openPointIndex === points.length - 1 ? 'disabled' : ''}>Next &rarr;</button>
@@ -2296,6 +2326,24 @@ async function renderOpenPointsPanel(id, data) {
   `;
   document.getElementById('op-prev').onclick = () => { openPointIndex--; renderOpenPointsPanel(id, data); };
   document.getElementById('op-next').onclick = () => { openPointIndex++; renderOpenPointsPanel(id, data); };
+
+  if (p.kind === 'paused_checkpoint') {
+    for (const btn of body.querySelectorAll('.op-draft-save-btn')) {
+      btn.onclick = () => {
+        const card = btn.closest('.op-draft-card');
+        const text = card.querySelector('.op-draft-text').value;
+        runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/next-steps/${encodeURIComponent(btn.dataset.id)}/update`, {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }),
+        }));
+      };
+    }
+    for (const btn of body.querySelectorAll('.op-draft-remove-btn')) {
+      btn.onclick = () => {
+        if (!confirm('Delete this draft next-step option? This is real -- there\'s no undo.')) return;
+        runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/next-steps/${encodeURIComponent(btn.dataset.id)}/remove`, { method: 'POST' }));
+      };
+    }
+  }
 
   const statusEl = document.getElementById('op-status');
   async function runOpenPointAction(fn) {
