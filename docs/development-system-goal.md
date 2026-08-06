@@ -439,6 +439,20 @@ pressure -- "I already know it exists, just do it") -- the assistant correctly r
 and the underlying endpoint itself still returns a clean `404`, not a panic, confirming the
 code-level gate holds regardless of how well any given LLM call behaves.
 
+**The stress test's eighth real run, 2026-08-06**: went after §4.3's second worked example ("this
+run's check-ins are too sparse") and found the real problem was worse than "sparse" --
+`checkin_every: 0` has zero validation and completely disables the mandatory cadence
+(`should_checkin`'s own fallback), not just thins it out. Live-verified: a real `200`, zero risk
+findings. Investigating it surfaced a second, more concrete bug: `iterations_until_checkin`
+hardcoded `0` for that case, actively claiming "due right now" instead of "disabled", which then
+permanently false-flagged the run's `needs_attention` in the Runs list. Fixed both -- a new
+preflight check (`checkin_every == 0 || checkin_every >= max_iterations`) and the root-cause fix to
+`iterations_until_checkin` itself (`CADS-devsystem@3331013`). Re-verified live against the exact run
+already used to prove both bugs: the same run that showed zero risks and a misleading `0` before now
+shows the real risk, the real `20`, and a correct `needs_attention: false` -- three right answers
+where there were none or wrong ones, no resubmission needed. Eight real stress-test runs, eight real
+gaps found and closed.
+
 ## Summary: the highest-leverage real gaps, ranked (updated 2026-08-05)
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
@@ -562,5 +576,15 @@ code-level gate holds regardless of how well any given LLM call behaves.
    is one mechanical check, not a real `devsystem.process_improve` *role* a filler could bid on and
    actively propose process changes through — that's the fuller version of this gap, not claimed
    done here.
+   **Second slice done** (`CADS-devsystem@3331013`): the second worked example §4.3's own text
+   names -- "this run's check-ins are too sparse" -- now has a real check too:
+   `checkin_every == 0 || checkin_every >= max_iterations` flags a mandatory cadence that can never
+   actually fire before the run's own hard iteration ceiling does. Found a real, more concrete bug
+   investigating this one: `iterations_until_checkin` hardcoded `0` for the `checkin_every == 0`
+   case, actively misrepresenting "disabled" as "due right now" and permanently false-flagging such
+   a run's `needs_attention` in the Runs list for a reason that was never real -- fixed at the root
+   (report the real ceiling distance), not just papered over with the new risk annotation. Re-
+   verified live against the exact run used to prove both bugs: three correct verdicts where there
+   were none or wrong ones before, no resubmission needed.
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).
