@@ -926,6 +926,27 @@ now reads "Milestone 0 (...) marked achieved -- this pauses the whole run; no ne
 accepted until you explicitly resume it." Thirty-three real stress-test investigations, thirty-three
 real gaps found and closed.
 
+**The stress test's thirty-fourth real run, 2026-08-06**: continuing to work the "gone run" gap
+class runs 31/32 opened -- checked whether `ask_assistant` (the chat SEND path, distinct from
+`refreshTick`'s background poll fixed in run 32) handled a run genuinely not existing at all.
+Live-confirmed the real, live gap before touching anything: `POST /api/runs/definitely-does-not-
+exist-xyz/assistant` returned a real `502` wrapping `"could not fetch run context from
+...: HTTP 404 Not Found"` -- `ask_assistant` was the one per-run handler in this whole file that
+didn't 404 immediately for a nonexistent run, instead falling through to a wasted real round-trip to
+the assistant bridge, which made its OWN round-trip back to the identical `GET /api/runs/{id}` (also
+a 404) before finally surfacing that confusing wrapped error. A real, reachable case now that a run
+can genuinely disappear mid-session (run 31): a chat message sent to a run deleted from another tab
+got exactly this confusing error, and unlike `refreshTick`'s own recovery, the GUI never cleared
+`currentRun` or fell back to the runs list -- the operator was left stuck retyping into a chat for a
+run that no longer exists. Fixed both ends (`CADS-devsystem@e75bd45`): the backend now matches every
+other per-run handler's own convention (immediate 404, no wasted round-trip), and `askAssistant`'s
+catch block now treats a genuine 404 the same way `refreshTick` already does -- clear `currentRun`,
+tell the operator plainly, fall back to the runs list. Hermetic: web crate 161/161 (one new test),
+clippy clean. Deployed and live-verified end-to-end via Playwright: deleted a run out from under an
+open chat session the way a second tab would, sent a message, confirmed the real alert fires,
+confirmed the GUI recovers to another real run, confirmed the backend itself now returns a clean 404
+directly. Thirty-four real stress-test investigations, thirty-four real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
