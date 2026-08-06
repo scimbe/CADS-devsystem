@@ -50,11 +50,16 @@ check-in flow — see [Review a mandatory check-in](https://scimbe.github.io/CAD
 ships a real skills catalog (`~/.npm-global/lib/node_modules/ecc-universal/skills/`) beyond
 plan-canvas: `architecture-decision-records`, `api-design`, `blueprint` (construction-plan
 generation with per-step self-contained context briefs and an adversarial review gate — the same
-shape this goal wants for spec→fragment steps), and others. **Real gap**: this project uses exactly
-one ECC surface (`ecc-plan-canvas`, for human review) and has never evaluated the rest of the
-catalog for the spec-authoring and step-decomposition side of the pipeline. First concrete step:
-audit the catalog against each pipeline stage (`plan`, `implement`, `test`, `review`, ...) for a
-real fit, not a blanket "use everything".
+shape this goal wants for spec→fragment steps), and others. **Corrected, 2026-08-06**: this entry's
+own "real gap... never evaluated" framing went stale without being updated here when the audit
+happened — the ranked list below (item 8) already marks this **audited**
+(`docs/ecc-skills-audit.md`, 2026-08-05): real per-stage fits found (`architecture-decision-records`
+for `plan`, `android-clean-architecture` for `implement`, and more), one deliberate decline
+(`remember`, since the zylos envelope already solves a different problem), and one high-value
+unadopted skill found beyond the original stage-by-stage scope (`loop-design-check`, built for
+exactly this project's own autonomous-loop failure class). **Still genuinely open**: this was audit
+only — none of these are actually wired into the pipeline yet, real separate follow-up work sized by
+the operator, not claimed done here.
 
 ## 3. LLM fills the spec at a high level; the user controls when/where
 
@@ -62,10 +67,12 @@ real fit, not a blanket "use everything".
   acceptance criteria) — filling in the "first draft" of details the user hasn't specified yet.
 - The user's job: know, explicitly, which details were LLM-authored vs. user-authored, and freely
   override any of them in later iterations.
-- **Real gap**: `Requirement` (`pipeline/src/runner.rs:137`) has no provenance field — no way to
-  tell, today, whether a requirement or acceptance criterion was written by a human or proposed by
-  an LLM role-filler. This blocks §4.2 and §4.4 outright and is the single highest-leverage schema
-  change this goal implies.
+- **Corrected, 2026-08-06**: this entry's own "real gap" framing went stale without being updated
+  here when the work closed — the ranked list below (item 1) already marks this **done**
+  (`CADS-devsystem@b58aef4`): `Requirement.proposed_by` is real provenance, human vs. LLM-proposed,
+  and the requirements export (§4.4, also closed — see below) surfaces it. Left as a pointer rather
+  than duplicated prose, so this section doesn't drift out of sync with the ranked list a second
+  time.
 
 ## 4. User support
 
@@ -76,26 +83,35 @@ the History panel. Matches the goal as-is.
 ### 4.2 The LLM's own decision basis, in SE terms
 > Requirements, Milestones, Constraints — with all docs, all chat extracts.
 
-**Real gap.** Today these live in *separate* panels (Requirements, Milestones, Backlog, History,
-the assistant's own chat) with no single "here is everything that led to this decision" view. The
-`zylos envelope`'s `constraints` field (`docs/role-contracts.md`) is the closest existing primitive
-— it already threads "what the next stage must respect" between stages — but nothing surfaces it
-alongside the actual chat/assistant exchange that produced it, in one place, for the user.
+**Corrected, 2026-08-06**: this entry's own "real gap" framing went stale without being updated
+here when the work closed — the ranked list below (item 6) already marks this **done**, four real
+slices, giving each requirement's own card a real decision-basis view: both the iteration history
+that touched it AND the real chat exchanges the assistant's own action-dispatch actually attributed
+to it, not the separate, disconnected panels this paragraph originally described. Left as a pointer
+rather than duplicated prose, so this section doesn't drift out of sync with the ranked list a
+second time.
 
 ### 4.3 The user always leads
 Structurally already true (every stage proposal needs approval or lands in a reviewable queue —
 see [How the pipeline proposes and grows its own stages](https://scimbe.github.io/CADS-devsystem-docs/explanation/self-optimizing-pipeline/)).
-What's *not* yet true: LLM agents "self-optimizing... the process itself, every iteration" — today
-`devsystem.improve` proposes new *stages*, but nothing proposes improvements to the *process*
-(e.g., "this run's check-ins are too sparse", "this role's acceptance criteria are too vague to be
-deterministic per §1"). That's a real, distinct role this goal implies and none exists yet.
+**Corrected, 2026-08-06**: this section's own "that's a real, distinct role... and none exists yet"
+framing went stale without being updated here when the work closed — the ranked list below (item 9)
+already marks this **done**, four real slices: both worked examples this paragraph originally named
+(sparse check-ins, vague acceptance criteria) now have real mechanical checks, and a real
+`devsystem.process_improve` role was demonstrated live end to end -- declared, won a real signed
+auction, and a real iteration under it reviewed a live risk and proposed a concrete fix, with real
+traceability back to the requirement it touched. Left as a pointer rather than duplicated prose, so
+this section doesn't drift out of sync with the ranked list a second time.
 
 ### 4.4 Requirements: always downloadable, always extensible toward determinism
 - **Downloadable**: `GET /api/runs/{id}` already returns requirements as JSON (see
   [REST API reference](https://scimbe.github.io/CADS-devsystem-docs/reference/rest-api/)) — real,
-  but not a *document* a non-technical stakeholder would want. Real gap: no
-  `GET /api/runs/{id}/requirements/export` producing a real, human-readable spec document
-  (Markdown/PDF) a user actually downloads and reads.
+  and now also as a genuine downloadable document. **Corrected, 2026-08-06**: this entry's own "real
+  gap" framing went stale without being updated here when the work closed — the ranked list below
+  (item 7) already marks this **done** (`CADS-devsystem@950931a`): `GET
+  /api/runs/{id}/requirements/export` produces a real, human-readable Markdown document (statement,
+  a real checklist per acceptance criterion, provenance) with a real `Content-Disposition:
+  attachment` header, not JSON someone has to reformat themselves.
 - **Always extensible without changing what's already there**: `Requirement.acceptance_criteria`
   is an unstructured `Vec<String>` today — appending detail is already non-breaking (the vector
   just grows), so this half of §4.4 already holds structurally. What's missing is §3's provenance
