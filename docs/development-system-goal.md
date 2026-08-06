@@ -3010,4 +3010,28 @@ stayed empty). No code change -- another genuine, clean security verification. B
 previous firing, the sandbox has now been live-attacked across all three of its meaningfully
 different escape classes (state access, top navigation, popups) and held every time.
 
+**Goal-driven-loop firing, 2026-08-06 (ooo) -- the most consequential sandbox attack vector yet:
+can a malicious panel still mutate real run data via a blind `fetch()`, even unable to read the
+response?**: no new operator input on any of the three open `#382` checkpoints; CI still not
+confirmable green; issue #14 unchanged. This is a real, distinct concern from firings (mmm)/(nnn) --
+DOM/cookie/storage access and top-navigation/popups are about the panel attacking the *page*; this
+is about the panel attacking the *API* directly, which an opaque sandboxed origin's script can still
+technically attempt regardless of same-origin restrictions. The existing
+`no_cors_headers_leak_to_a_cross_origin_request` test already proved the *response* can't be read
+cross-origin -- it never proved the *request* (a real mutating POST) couldn't still be sent and
+processed server-side, the classic blind-CSRF shape.
+
+Built a real, live attack: a custom panel whose script attempts a real `fetch()` POST to this run's
+own `/milestones` endpoint with a planted description, submitted through the real API, opened
+through the real GUI, inspected via Playwright -- **and then independently re-queried the real
+server's own state directly**, not just trusted the client-side outcome. Three-way confirmation, all
+agreeing: the malicious script's own catch block (`"blocked by browser before reaching server:
+Failed to fetch"`), the real browser's own console error (`"blocked by CORS policy: Response to
+preflight request doesn't pass access control check"` -- confirming the *preflight itself* failed,
+so the actual POST body was never sent at all), and the real server's own `GET /api/runs/{id}`
+afterward showing `milestones: []` -- the planted description was never written, genuinely never
+reached the server. No code change -- a third genuine, clean security verification. Between these
+last three firings, the custom-panel sandbox has now been live-attacked across every meaningfully
+different real risk (page state, navigation, and now direct API mutation) and held every time.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
