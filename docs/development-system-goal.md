@@ -1822,4 +1822,23 @@ named LLM-dependent gaps (injection resistance, pause disclosure) are now freshl
 the current, grown system prompt, not left resting on an older proof that predates significant later
 changes to the same prompt.
 
+**Goal-driven-loop firing, 2026-08-06 (h) -- a real gap found inside one of this file's own already-
+audited checks**: investigating why the real `webconference-android` run's `devsystem.review` role
+is stalled with no bidder (a routine live check, not idle curiosity) found `devsystem.review` has the
+exact same unbounded shape as `devsystem.document_extraction` (`use_existing_service: None`,
+`price_ceiling: None`, confirmed against the run's own real history) -- but only
+`document_extraction` was ever surfaced as a real risk. Root cause: `no_price_ceiling` was
+`Option<RiskAnnotation>` built on `Iterator::find`, which stops at the first unbounded role in
+`added_stages` order and never even looks at the rest -- the exact "a real risk exists but nothing
+surfaces it" bug class this whole file exists to catch, found this time inside one of its own
+checks. Fixed (`CADS-devsystem@9fe343b`): now `Vec<RiskAnnotation>`, collecting every real unbounded
+role via `filter` instead of stopping at the first `find`. Live-verified against the real flagship
+run after redeploy: it now shows **three** unbounded roles, not one --
+`devsystem.document_extraction`, `devsystem.android_emulator_test`, AND `devsystem.review`, the last
+two genuinely invisible until this fix. New regression test (two simultaneously-unbounded roles both
+flagged), all 35 pre-existing tests pass unchanged (no prior test happened to exercise the
+two-unbounded-roles case, so this is a real behavior fix, not a rewrite). Stress-harness check [21]
+added (`CADS-devsystem@40edd09`), 46/46 assertions, confirmed green in the real GitHub Actions run
+against the deployed Docker image.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
