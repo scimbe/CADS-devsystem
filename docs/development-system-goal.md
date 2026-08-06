@@ -2606,4 +2606,26 @@ stress-test runs, eleven real gaps found and closed. Panel titles and stage-prop
 remain the last open candidates for this specific class, noted in the code comment for whichever
 firing picks them up next.
 
+**Goal-driven-loop firing, 2026-08-06 (rr) -- the stress test's twelfth real run, closing out this
+class's last-but-one candidate**: no new operator input on any of the three open `#382` checkpoints;
+GitHub's incident still `major_outage`, unresolved since `15:22:49Z`. Issue #14 still open,
+operator-only OIDC credential still the blocker; no scimbe-authored PRs open on either repo.
+
+Picked up firing (qq)'s own remaining candidate: custom-panel `title`. Live-confirmed the gap first
+at the highest-stakes entry point (a title sailed through untouched via direct add), then checked
+all four real title entry points before fixing any -- `add_custom_panel`, `update_custom_panel`,
+`propose_custom_panel` (the assistant-facing path, arguably the most consequential: a human
+approving from the review queue trusts exactly this title at face value), and `propose_panel_edit`
+(shows an old/new title diff a reviewer compares against). Deliberately did NOT touch `html` --
+that field is untrusted-by-design and rendered only inside a sandboxed iframe, so the same rule
+would be inconsistent with its own existing security model, not an oversight to fix.
+
+Fixed at all four in one sweep (`CADS-devsystem@17d042a`), matching the html-empty-check fix's own
+precedent for this exact panel-title/html distinction. 1 new regression test covering all four
+entry points (4 assertions), 186/186 web tests (was 185), hermetic clippy clean. Deployed and
+live-verified against the real redeployed container at two of the four paths (direct-add,
+assistant-propose): the exact bidi-laced title that sailed through before now gets a real `400`,
+clean titles still get `200`. Twelve real stress-test runs, twelve real gaps found and closed.
+Stage-proposal rationale is now the one remaining open candidate for this specific class.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
