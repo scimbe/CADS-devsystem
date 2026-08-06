@@ -1967,4 +1967,26 @@ hermetic suite, hermetic clippy, live redeploy verification, and the local stres
 yet a confirmed-green CI run. Will confirm CI explicitly once it clears the queue rather than assume
 it matches the others.
 
+**Main-dev-loop firing, 2026-08-06 (n) -- a real, live gap found by simply looking at the flagship
+run's own current state, not another `.find(` sweep**: checked the real `webconference-android` run
+directly (`GET /api/runs/webconference-android`) to see where the last iteration left off, per this
+loop's own standing instruction. Found: `paused: true`, `pause_reason: null` -- on disk, right now.
+Traced every real code path that sets `paused = true` (`toggle_milestone`, the abort-criteria path in
+`run_iteration`, the manual pause endpoint) and confirmed all three correctly set `pause_reason` in
+the current code, so this is very likely old data predating the field's own instrumentation (the
+field is `#[serde(default)]` precisely for this reason) -- not an active bug in how pausing happens
+today. But the GUI's three real renderings of `pause_reason` (the runs-list badge, and both
+`paused-banner` variants) all silently omitted the reason clause entirely when it's `null`, giving
+zero indication anything was missing -- inconsistent with `open_points()`'s own already-honest
+`"paused, no reason recorded"` fallback for the identical case. Live-confirmed via a real headless-
+browser (Playwright) screenshot against the actual flagship run before fixing: the paused badge read
+bare `"paused"`, matching the bug. Fixed all three spots (`CADS-devsystem@a599dd9`) to use the same
+honest fallback. Deliberately did **not** backfill a guessed historical reason onto the real run's
+own data -- inventing a specific unverified claim (e.g. assuming it was the M1 milestone pause, which
+is plausible but not provable from the data alone) would be worse than honestly disclosing the gap.
+Re-verified live with a second Playwright screenshot after redeploy: the flagship run's own paused
+badge now reads `"paused (no reason recorded)"`. Pure frontend change (`web/static/index.html` has no
+automated test harness in this repo, and the stress-harness only exercises JSON APIs, not rendered
+HTML) -- the live screenshot before/after is the real regression evidence for this one.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
