@@ -1147,11 +1147,21 @@ function wireResize(win, id) {
 // already renders (state.pending_stage_proposals/pending_panel_proposals/
 // pending_issue_proposals) -- not a new signal, just surfaced where a user
 // browsing the toggle bar can actually see it.
+//
+// Real gap found live by the stress test (#382 goal doc §8, 2026-08-06): two
+// more real pending-proposal queues (panel removal, panel edit) shipped in
+// later increments and were never added here -- a run with a real pending
+// removal or edit proposal showed a badge count of 0, silently hiding
+// exactly the "something needs your decision" signal this badge exists for.
+// Confirmed live before this fix: a real pending removal proposal, this
+// function still returned 0. All five real proposal queues now count.
 function pendingApprovalCountFor(id) {
   if (id !== 'architecture' || !currentRunData || !currentRunData.state) return 0;
   const s = currentRunData.state;
   return (s.pending_stage_proposals || []).length
     + (s.pending_panel_proposals || []).length
+    + (s.pending_panel_removal_proposals || []).length
+    + (s.pending_panel_edit_proposals || []).length
     + (s.pending_issue_proposals || []).length;
 }
 
