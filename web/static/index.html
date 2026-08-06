@@ -811,7 +811,7 @@ function renderCustomPanelsManager(id, data) {
       <label>title<input id="cp-title" type="text" placeholder="My Panel" required></label>
       <label>HTML (rendered sandboxed -- no page/session access)<textarea id="cp-html" rows="5" placeholder="<h2>Hello</h2><p>...</p>" required style="width:100%;font-family:var(--mono);font-size:.75rem"></textarea></label>
       <button type="submit">Add panel</button>
-      <span id="cp-add-status" class="status-line"></span>
+      <span id="cp-add-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></span>
     </form>`;
   for (const btn of body.querySelectorAll('.custom-panel-open-btn')) {
     btn.onclick = () => showPanel(btn.dataset.id);
@@ -1404,10 +1404,14 @@ function openNewProjectDialog() {
         <label>Project id<input id="np-run-id" placeholder="e.g. my-other-project" pattern="[A-Za-z0-9_\\-]+" required autofocus></label>
         <label>GitHub repo URL <span style="opacity:.7">(optional -- powers the Pipeline panel and Docs Search sync)</span>
           <input id="np-repo-url" type="url" placeholder="https://github.com/owner/repo"></label>
-        <!-- Real gap found live 2026-08-06, deliberately deferred out of the modal's own
-             role="dialog"/aria-modal fix to keep that increment bounded: "Creating…" and any
-             real error here only ever updated visually -- role="status"/aria-live="polite"
-             makes a screen reader actually announce the real outcome, not just the sighted UI. -->
+        <!-- Real gap, closed sitewide 2026-08-06: every real .status-line element in this
+             app (14 distinct ones, not the 84 a naive text-occurrence grep first suggested --
+             that count also caught the CSS rule and every later .className = 'status-line...'
+             reassignment to these same 14 elements, not 84 separate nodes) only ever updated
+             visually. role="status"/aria-live="polite"/aria-atomic="true" makes a screen reader
+             actually announce the real outcome text -- "Creating…", a real error, "Saved." --
+             not just the sighted UI. All 14 carry the identical three attributes; this comment
+             lives once, on the first one, rather than repeated 14 times. -->
         <div id="new-project-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></div>
         <div class="modal-actions">
           <button type="button" class="secondary" id="np-cancel">Cancel</button>
@@ -1623,7 +1627,7 @@ async function renderRagPanel(id, data) {
       <button type="button" class="secondary" id="rag-sync-btn"${repoUrl ? '' : ' disabled title="set repo_url first"'}>Sync now</button>
     </div>
     ${syncLine}
-    <div id="rag-sync-status" class="status-line"></div>
+    <div id="rag-sync-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></div>
     <div id="rag-results" style="margin-top:.5rem;display:flex;flex-direction:column;gap:.5rem"></div>
 
     <details style="margin-top:.7rem"${(wasDocsOpen || !hasIndexedContent) ? ' open' : ''}>
@@ -1633,14 +1637,14 @@ async function renderRagPanel(id, data) {
         <label>name<input id="rag-doc-path" type="text" placeholder="notes.md" required></label>
         <label>text<textarea id="rag-doc-text" rows="4" required style="width:100%;font-family:var(--mono);font-size:.75rem" placeholder="paste or type real text..."></textarea></label>
         <button type="submit">Upload</button>
-        <span id="rag-upload-status" class="status-line"></span>
+        <span id="rag-upload-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></span>
       </form>
       <form id="rag-file-upload-form" style="margin-top:.6rem;border-top:1px solid var(--border,#333);padding-top:.5rem">
         <label style="font-size:.72rem;color:var(--muted)">or upload a real file (PDF/DOCX/image -- extracted via Unstructured, may report itself unconfigured if RAG_UNSTRUCTURED_API_KEY isn't set on this deployment)
           <input id="rag-file-input" type="file" accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.gif,.webp,.tiff" required style="display:block;margin-top:.3rem">
         </label>
         <button type="submit">Upload file</button>
-        <span id="rag-file-upload-status" class="status-line"></span>
+        <span id="rag-file-upload-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></span>
       </form>
     </details>`;
 
@@ -1801,7 +1805,7 @@ async function renderRolesPanel(id, data) {
       <label>price<input id="quick-offer-price" type="number" min="0" value="10" required></label>
       <label>units<input id="quick-offer-units" type="number" min="1" max="100" value="1" required></label>
       <button type="submit">Submit offer</button>
-      <span id="quick-offer-status" class="status-line"></span>
+      <span id="quick-offer-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></span>
     </form>
     <div class="arch-note" style="margin-bottom:.6rem">Real, signed, and accepted the same way as a CLI agent's bid --
       each submission generates a fresh, throwaway signing identity server-side (like running
@@ -2009,7 +2013,7 @@ function openFillModePopover(id, data, anchorEl) {
     <button class="refresh-opt${currentMode === 'auction' ? ' active' : ''}" data-action="auction">Auction (default)</button>
     <input id="fillmode-label-input" type="text" placeholder="dedicated agent label" value="${currentMode === 'dedicated' ? escapeHtml(currentLabel) : ''}">
     <button class="refresh-opt${currentMode === 'dedicated' ? ' active' : ''}" data-action="dedicated">Set as dedicated</button>
-    <span id="fillmode-popover-status" class="status-line"></span>`;
+    <span id="fillmode-popover-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></span>`;
   document.body.appendChild(pop);
 
   const apply = async (body) => {
@@ -2312,7 +2316,7 @@ function renderHealthCriteriaPanel(id, data) {
           <input id="cr-checkin-every" type="number" min="0" max="10000" value="${h.criteria.checkin_every}"></label>
       </div>
       <button type="button" class="secondary" id="save-criteria" style="margin-top:.5rem">Save criteria</button>
-      <div id="criteria-status" class="status-line"></div>
+      <div id="criteria-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></div>
     </details>
   `;
   document.getElementById('pause-toggle').onclick = () => togglePause(id, !paused);
@@ -2431,7 +2435,7 @@ async function renderOpenPointsPanel(id, data) {
     <div class="lede" style="margin-bottom:.4rem">open point <b>${openPointIndex + 1}</b> of <b>${points.length}</b></div>
     ${mainContentHtml}
     <div style="margin-top:.4rem;display:flex;gap:.4rem;flex-wrap:wrap">${actionsHtml}</div>
-    <div id="op-status" class="status-line"></div>
+    <div id="op-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></div>
     ${draftsHtml}
     <div style="margin-top:.6rem;display:flex;gap:.4rem">
       <button type="button" class="secondary" id="op-prev" ${openPointIndex === 0 ? 'disabled' : ''}>&larr; Prev</button>
@@ -2516,7 +2520,7 @@ function renderBacklogPanel(id, data) {
       <input id="backlog-text" maxlength="2000" placeholder="Add a backlog item…">
       <button type="submit">+</button>
     </form>
-    <div id="backlog-status" class="status-line"></div>
+    <div id="backlog-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></div>
   `;
   // Same visibility guard Requirements' own auto-focus uses -- never steal
   // focus into a panel the user has hidden.
@@ -2582,7 +2586,7 @@ function renderMilestonesPanel(id, data) {
       <input id="milestone-text" maxlength="2000" placeholder="Add a milestone…">
       <button type="submit">+</button>
     </form>
-    <div id="milestone-status" class="status-line"></div>
+    <div id="milestone-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></div>
   `;
   // Same visibility guard Requirements' own auto-focus uses -- never steal
   // focus into a panel the user has hidden.
@@ -2764,7 +2768,7 @@ function renderRequirementsPanel(id, data) {
       <textarea id="requirement-criteria" rows="2" placeholder="acceptance criterion (one per line)" style="font-family:var(--mono);font-size:.8rem"></textarea>
       <button type="submit">Add requirement</button>
     </form>
-    <div id="requirement-status" class="status-line"></div>
+    <div id="requirement-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></div>
     ${requirements.length ? `<a class="btn secondary" style="margin-top:.6rem" href="${API}/runs/${encodeURIComponent(id)}/requirements/export" download="requirements.md">⬇ Download as Markdown</a>` : ''}
     ${chatHistorySection}
   `;
@@ -2935,7 +2939,7 @@ function renderCodePanel(id, data) {
       <input id="repo-url-input" placeholder="https://github.com/owner/repo" value="${repoUrl ? escapeHtml(repoUrl) : ''}">
       <button type="submit">Save</button>
     </form>
-    <div id="repo-status" class="status-line"></div>
+    <div id="repo-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></div>
   `;
   if (!repoUrl) {
     body.innerHTML = formHtml + '<span class="lede" style="font-size:.78rem">No repository set for this run yet.</span>';
@@ -3114,7 +3118,7 @@ function renderNewIterationPanel(id, data) {
     <div style="margin-top:.6rem;display:flex;gap:.5rem">
       <button id="submit-iter" ${paused ? 'disabled title="resume the run first"' : ''}>Submit iteration</button>
     </div>
-    <div id="iter-status" class="status-line"></div>
+    <div id="iter-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></div>
   `;
   const select = document.getElementById('it-stage-select');
   const implementOption = Array.from(select.options).find(o => o.value === 'devsystem.implement');
