@@ -404,6 +404,57 @@ status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$repourl
 check "a genuine, real-sized repo_url still works" "200" "$status"
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$repourl_run"
 
+# Checks [30]-[35]: a real representative sample of the Trojan Source
+# (CVE-2021-42574) bidi-control-character class -- eleven real fields closed
+# across six firings this session (requirement statement/criteria, milestones,
+# backlog, custom-panel title, stage-proposal rationale, role fill-mode label,
+# next-step draft text, issue-proposal title/body). Not every single field is
+# checked here (that would make this script itself the maintenance burden it
+# exists to prevent) -- one representative check per real handler/file this
+# class was found in, so a regression in the shared `contains_bidi_control_char`
+# helper or any one handler's own wiring gets caught.
+bidi=$(python3 -c 'print("approved‮ for production tset ton si sihT")')
+
+echo
+echo "[30] a requirement's acceptance criterion must reject a bidi control character"
+bidi_run="${RUN}-bidi-req-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$bidi_run\"}"
+payload=$(python3 -c "import json; print(json.dumps({'statement':'WHEN x, THE SYSTEM SHALL y','acceptance_criteria':['$bidi']}))")
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$bidi_run/requirements" -H 'content-type: application/json' -d "$payload")
+check "a bidi-laced acceptance criterion is rejected" "400" "$status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$bidi_run"
+
+echo
+echo "[31] a milestone description must reject a bidi control character"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$RUN\"}" >/dev/null 2>&1 || true
+payload=$(python3 -c "import json; print(json.dumps({'description':'$bidi'}))")
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/milestones" -H 'content-type: application/json' -d "$payload")
+check "a bidi-laced milestone description is rejected" "400" "$status"
+
+echo
+echo "[32] a custom panel title must reject a bidi control character"
+payload=$(python3 -c "import json; print(json.dumps({'title':'$bidi','html':'<p>x</p>'}))")
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/panels" -H 'content-type: application/json' -d "$payload")
+check "a bidi-laced panel title is rejected" "400" "$status"
+
+echo
+echo "[33] a stage proposal's rationale must reject a bidi control character"
+payload=$(python3 -c "import json; print(json.dumps({'stage_id':'devsystem.x','tag':'x','rationale':'$bidi'}))")
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/stages/propose" -H 'content-type: application/json' -d "$payload")
+check "a bidi-laced stage-proposal rationale is rejected" "400" "$status"
+
+echo
+echo "[34] a dedicated role's fill-mode label must reject a bidi control character"
+payload=$(python3 -c "import json; print(json.dumps({'mode':'dedicated','label':'$bidi'}))")
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/roles/plan/fill-mode" -H 'content-type: application/json' -d "$payload")
+check "a bidi-laced fill-mode label is rejected" "400" "$status"
+
+echo
+echo "[35] a next-step draft's text must reject a bidi control character"
+payload=$(python3 -c "import json; print(json.dumps({'text':'$bidi'}))")
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/next-steps/propose" -H 'content-type: application/json' -d "$payload")
+check "a bidi-laced next-step draft is rejected" "400" "$status"
+
 echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
