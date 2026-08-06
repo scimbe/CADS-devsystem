@@ -3379,4 +3379,35 @@ Corrected with a follow-up commit (`CADS-devsystem@6c0415e`) rather than amendin
 own standing git-history discipline -- caught before this wrong number could compound into this very
 entry.
 
+**Main-dev-loop + goal-driven-loop firing, 2026-08-06 (bbbb) -- closed one of §7's own three real,
+not-operator-blocked gaps**: no new operator input on any of the three open `#382` checkpoints;
+issue #14 unchanged (checked the last two comments directly -- both mine, no labor-setup.com
+activity); no new commits on `webconference-android`; no scimbe-authored open PRs on any of the
+three repos.
+
+§7 item 2 names a real, still-open architectural gap: no *general* "assistant can edit whatever a
+human can edit" capability exists -- every editable field needs its own hand-written `Action`
+variant. Unlike the three `#382` checkpoints, this one isn't blocked on the operator. Cross-checked
+every real human-editable GUI field against the current 15-variant `Action` enum and found three
+genuinely uncovered: `update_criteria` (`AbortCriteria`), `toggle_requirement_auto_judge`
+(Requirements panel), and `set_role_fill_mode` (Roles panel). Picked the simplest and safest for
+this bounded increment -- a plain, fully-reversible index toggle, the identical shape
+`ToggleAcceptanceCriterion` already established, no approval gate needed.
+
+Added `Action::ToggleRequirementAutoJudge` (`pipeline/src/bin/devsystem_assistant.rs`,
+`CADS-devsystem@44f0b8f`), wired through `apply_action`, `requirement_indices_touched` (so chat
+attribution works identically to its siblings), and the system prompt's own documentation/example.
+2 new/extended regression tests, 48/48 `devsystem_assistant` tests, hermetic clippy clean.
+
+**Live-verified end to end against the real, redeployed `devsystem_assistant --serve` process, not
+just the hermetic tests**: created a real scratch run with a real requirement
+(`auto_judge: false`), asked the real assistant in plain English to toggle it, confirmed the real
+action fired, the real `requirement_indices` attribution was correct, and the actual persisted state
+flipped to `true`. Scratch run cleaned up afterward.
+
+Two real gaps of the identical shape remain, deliberately deferred: `update_criteria` and
+`set_role_fill_mode`. Left open for a future firing -- `update_criteria` in particular deserves more
+thought before treating it as a safe direct action (it governs the run's own abort/pause safety
+bounds, not just inert metadata).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
