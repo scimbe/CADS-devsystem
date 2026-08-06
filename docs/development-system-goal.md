@@ -1683,4 +1683,22 @@ update/remove, a real draft removes for real
 (`CADS-devsystem@361634b`). 39/39 assertions passing, confirmed both locally and in the real GitHub
 Actions run against the actual deployed Docker image, not just locally.
 
+**Goal-driven-loop firing, 2026-08-06 (c)**: auditing stack-mode slice 3's own design for a real
+DAU-lens gap (not just re-testing the validation already built) found one: a next-step draft only
+ever rendered nested under the Open Points panel's `paused_checkpoint` entry -- but resuming the run
+removes that entry from `open-points` entirely, and nothing else ever surfaced
+`pending_next_step_drafts`. Live-confirmed before touching anything: a draft added while paused
+stayed genuinely real in `RunState` after a resume, with zero remaining GUI path to see, edit, or
+delete it -- the same "declared but not accessible" bug class this project's stress-test
+methodology keeps finding elsewhere, this time in a feature barely a day old. Not fixed by deleting
+the draft on resume -- the operator's own explicit ask was that a draft is something the user "can
+delete, change and manipulate," never that resuming should silently discard one. Fixed at the data
+source (`CADS-devsystem@2717c79`): `open_points()` now includes any leftover draft as its own real
+open point once the run isn't paused, alongside the existing nested display while it still is (no
+duplication either way). New hermetic backend test, full 177-test web suite green, live-verified end
+to end via a real Playwright run (a draft survives resume, is editable/deletable from its new
+standalone view, the queue genuinely empties after deleting it). Stress-harness check [19] added
+(`CADS-devsystem@7144b1f`) as a permanent regression guard -- 42/42 assertions, confirmed green in
+the real GitHub Actions run against the deployed Docker image.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
