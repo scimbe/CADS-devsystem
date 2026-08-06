@@ -2135,4 +2135,16 @@ against the live deployment as a broad regression check after this session's man
 57/57. No new gap found this firing; reported honestly as a verification pass rather than
 manufacturing a change to fill the slot.
 
+**Combined docs/main-dev/goal-driven firing, 2026-08-06 (w)**: no new operator input on any of the
+three open `CADS-Tunnel#382` checkpoints; issues #13/#14, `webconference-android`, and the open
+dependabot PRs all unchanged. Confirmed no other stale reference to the old "eight kinds of data"
+count survived anywhere else in the codebase after firing (u)'s fix (`grep` across both crates and
+this doc -- the only remaining hits are this file's own historical narrative of what the bug *was*,
+not a live claim). This cycle's real, shipped increment was on the docs side:
+`_how-to/ask-the-assistant.md` documented firing (u)'s fix with a live before/after exchange
+(`CADS-devsystem-docs@d5238e8`), matching the page's own established pattern for the sibling
+category-3 self-description fix already documented above it. Not manufacturing a second, separate
+code change this same cycle just to have one on the CADS-devsystem side -- the docs increment is
+real, real work, and a legitimate outcome of this loop on its own.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
