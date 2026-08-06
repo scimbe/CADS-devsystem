@@ -3057,4 +3057,12 @@ claims this codebase makes about itself, don't just trust the comments" vein. Gi
 clean audits now, the next firing should likely pivot to a different kind of increment (a real fix,
 or checking the three still-open decision points again) rather than a fifth audit in the same vein.
 
+**Docs-loop firing, 2026-08-06 (qqq) -- documented firings (mmm)/(nnn)/(ooo)/(ppp)'s live attack
+verifications**: `CADS-devsystem-docs` extended `manage-custom-panels.md` with all three real sandbox
+attacks (page/session access, navigation/popups, blind API mutation) and `ask-the-assistant.md` with
+the real two-request rate-limit test, both framed honestly as "verified live, not just read from the
+source" (`CADS-devsystem-docs@44927a1`). Hermetically built clean. No new operator input on any of
+the three open `#382` checkpoints; GitHub's incident still `major_outage`; live docs site continues
+serving correctly.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
