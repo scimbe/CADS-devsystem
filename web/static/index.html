@@ -180,11 +180,13 @@
              border-right:2px solid var(--border);border-bottom:2px solid var(--border)}
  h2{font-size:.95rem;margin:0 0 .6rem;font-family:var(--mono)}
  .runs{display:flex;flex-direction:column;gap:.5rem;margin-bottom:.8rem}
- .run-item{display:block;width:100%;text-align:left;background:transparent;border:1px solid var(--border);
+ .run-row{display:flex;align-items:stretch;gap:.35rem}
+ .run-item{display:block;flex:1;min-width:0;text-align:left;background:transparent;border:1px solid var(--border);
            border-radius:8px;padding:.6rem .8rem;color:var(--text);cursor:pointer;font-family:var(--mono);font-size:.85rem}
  .run-item:hover{border-color:var(--accent)}
  .run-item.active{border-color:var(--accent2);background:rgba(95,184,171,.08)}
  .run-item .meta{color:var(--muted);font-size:.75rem;margin-top:.2rem}
+ .run-delete-btn{flex:0 0 auto;align-self:center}
  .stalled-badge{float:right;font-size:.68rem;color:var(--accent);border:1px solid var(--accent);
                 border-radius:5px;padding:.05rem .35rem;font-weight:700}
  .attention-badge{float:right;font-size:.68rem;color:var(--danger);border:1px solid var(--danger);
@@ -1360,7 +1362,37 @@ async function refreshRunsList() {
       const ownerLine = r.owner_email ? ` · created by ${escapeHtml(r.owner_email)}` : ' · no recorded owner';
       btn.innerHTML = `${r.run_id}${badge}<div class="meta">${r.iterations} iteration(s) · ${r.roles} role(s)${ownerLine}</div>`;
       btn.onclick = () => selectRun(r.run_id);
-      el.appendChild(btn);
+
+      // Real gap found live 2026-08-06: 112 real runs had accumulated on this
+      // deployment, almost all throwaway scratch/verification runs this
+      // project's own stress-test methodology creates, with no way to ever
+      // remove one. A separate button, not nested inside the run-item button
+      // (invalid HTML -- a <button> can't contain another <button>), guarded
+      // by the same real confirm() convention every other permanent-delete
+      // action in this GUI already uses.
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'secondary run-delete-btn';
+      delBtn.title = `Delete run "${r.run_id}" permanently`;
+      delBtn.textContent = '🗑';
+      delBtn.style.cssText = 'font-size:.8rem;padding:.1rem .5rem';
+      delBtn.onclick = async (e) => {
+        e.stopPropagation();
+        if (!confirm(`Delete run "${r.run_id}" permanently? This removes it and all its real state for good -- there's no undo.`)) return;
+        try {
+          await fetchJSON(`${API}/runs/${encodeURIComponent(r.run_id)}`, { method: 'DELETE' });
+          if (currentRun === r.run_id) currentRun = null;
+          await refreshRunsList();
+        } catch (err) {
+          alert(err.message);
+        }
+      };
+
+      const row = document.createElement('div');
+      row.className = 'run-row';
+      row.appendChild(btn);
+      row.appendChild(delBtn);
+      el.appendChild(row);
     }
     // First load, nothing picked yet: load the first run automatically so the
     // dashboard isn't a wall of "select a run" placeholders on open.

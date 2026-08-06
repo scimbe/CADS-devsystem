@@ -202,7 +202,7 @@ fn nonempty_env(name: &str) -> Option<Arc<str>> {
 fn api_router(state: AppState) -> Router {
     Router::new()
         .route("/api/runs", get(list_runs).post(create_run))
-        .route("/api/runs/{id}", get(get_run))
+        .route("/api/runs/{id}", get(get_run).delete(delete_run))
         .route("/api/runs/{id}/iterate", post(iterate_run))
         .route("/api/runs/{id}/checkin", get(checkin_run))
         .route("/api/runs/{id}/criteria", post(update_criteria))
@@ -618,6 +618,44 @@ async fn get_run(State(state): State<AppState>, AxPath(id): AxPath<String>, head
             .into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    }
+}
+
+/// Real gap, found live 2026-08-06: the Runs list has grown to 112 real entries on
+/// this actual deployment -- almost all of them throwaway scratch/verification runs
+/// this project's own stress-test methodology creates on every firing -- with no way
+/// to ever remove one. `run_dir`'s own storage model is a plain directory per run, so
+/// deleting one is a real, permanent `fs::remove_dir_all`, not a soft "hide" flag --
+/// matching the honesty of this codebase's other "this deletes it for real" actions
+/// (custom panels, RAG documents), not a fabricated undo. No server-side confirmation
+/// param, matching every other destructive endpoint here (`remove_custom_panel`,
+/// `remove_rag_document`) -- the GUI's own `confirm()` dialog is the real gate, kept
+/// consistent with existing precedent rather than inventing a second mechanism.
+async fn delete_run(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    // Re-check existence under the lock -- a concurrent delete could have already won
+    // the race between the check above and acquiring it.
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let dir = run_dir(&state, &id);
+    match load_or_init_run(&dir, &id) {
+        Ok((_spec, run_state)) => {
+            if !owner_authorized(&headers, &run_state) {
+                return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+            }
+        }
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    }
+    match fs::remove_dir_all(&dir) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to remove run directory: {e}")).into_response(),
     }
 }
 
@@ -7106,5 +7144,59 @@ exit 1"#);
         let body = body_json(response).await;
         let text = body.to_string();
         assert!(!text.contains("127.0.0.1"), "the bridge's internal address must not be exposed to any logged-in caller: {body}");
+    }
+
+    #[tokio::test]
+    async fn delete_run_removes_it_for_real_and_it_stops_listing() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "throwaway-run"}))).await.unwrap();
+
+        let list_before = body_json(app.clone().oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap()).await;
+        assert_eq!(list_before.as_array().unwrap().len(), 1);
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("DELETE").uri("/api/runs/throwaway-run").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NO_CONTENT);
+
+        let list_after = body_json(app.clone().oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap()).await;
+        assert_eq!(list_after.as_array().unwrap().len(), 0, "a deleted run must not still be listed");
+
+        // And genuinely gone, not just hidden from the list -- GET on the same id 404s.
+        let get_response = app.oneshot(Request::builder().uri("/api/runs/throwaway-run").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(get_response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn delete_run_404s_for_a_run_that_never_existed() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        let response = app
+            .oneshot(Request::builder().method("DELETE").uri("/api/runs/never-existed").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_different_account_cannot_delete_someone_elses_run() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "owner@example.com", Some(serde_json::json!({"run_id": "owned-run"}))))
+            .await
+            .unwrap();
+
+        let mut request = Request::builder().method("DELETE").uri("/api/runs/owned-run").body(Body::empty()).unwrap();
+        request.headers_mut().insert("x-gate-email", "someone-else@example.com".parse().unwrap());
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), SC::FORBIDDEN);
+
+        // And it must genuinely still exist afterward, not partially removed.
+        let get_response = app.oneshot(gate_request("GET", "/api/runs/owned-run", "owner@example.com", None)).await.unwrap();
+        assert_eq!(get_response.status(), SC::OK);
     }
 }
