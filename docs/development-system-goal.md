@@ -776,7 +776,7 @@ stress-test investigations, twenty-four real gaps found and closed.
    Still open for a later increment: this is one concrete slice of §5's quality bar (review actually
    happened), not the whole table (Stand der Technik / dependency freshness, Kunstgerecht /
    idiomatic-code checks, etc. remain unenforced).
-3. **Context-relevant panels** (§7.1) — show what this run's actual state needs, not a fixed set.
+3. ~~**Context-relevant panels**~~ (§7.1) — **done**, five slices — show what this run's actual state needs, not a fixed set.
    **First slice done** (`CADS-devsystem@de56d33`): the Pipeline chip on the panel toggle bar now
    carries a real badge with the run's actual pending-proposal count (stage + panel + issue
    proposals combined) -- a run with something awaiting approval no longer looks identical, from
@@ -837,6 +837,12 @@ stress-test investigations, twenty-four real gaps found and closed.
    workflow item like the other four, so its existing lighter nudge ("No custom panels yet -- write
    one below.") may already be the right amount of encouragement rather than a gap. Flagging that
    judgment call here rather than forcing a fifth banner just to complete the set.
+   **Gap #3 marked done, 2026-08-06**: every panel where the empty-state gap was real now has the
+   fix (Requirements, Backlog, Milestones, RAG); Custom Panels' exclusion is a deliberate,
+   documented judgment call above, not an oversight -- the original §7.1 ask ("relate to the process
+   actually needed right now") is honestly satisfied, not fully exhausted (panel-hiding-by-stage
+   remains a real, deliberately-declined direction, not a "done" one -- see the DAU-lens-risk
+   reasoning above for why).
 4. ~~**Assistant-editable panel values generally**~~ (§7.2) — beyond the current fixed `Action` enum.
    **First slice done** (`CADS-devsystem@920f66e`): a human could already toggle one acceptance
    criterion independently of the whole requirement (`toggle_acceptance_criterion_handler`, the
@@ -982,7 +988,8 @@ stress-test investigations, twenty-four real gaps found and closed.
    same-day deploy race was) — the single most relevant unadopted skill to "The Development System"
    as a whole, not any one stage. Audit only; none of these are wired into the pipeline yet — real,
    separate follow-up work, sized by the operator.
-9. **A `devsystem.process_improve` role** (§4.3) — **first slice done** (`CADS-devsystem@57f2ca9`):
+9. ~~**A `devsystem.process_improve` role**~~ (§4.3) — **done**, four slices. **First slice**
+   (`CADS-devsystem@57f2ca9`):
    `process_annotations(spec, state)`, a new process-level dimension alongside `preflight_annotations`
    (needs the live `PipelineSpec`, not just history) — flags a run with 3+ real successful
    iterations that has never declared a `devsystem.review` role, since gap #2's own mandatory
@@ -1018,6 +1025,25 @@ stress-test investigations, twenty-four real gaps found and closed.
    open: a real biddable `devsystem.process_improve` role a filler could bid on and actively
    propose process changes through -- three mechanical checks now exist, but none of them is a
    role yet, the fuller version of this gap first slice named and still not claimed done here.
+   **Fourth slice done, 2026-08-06 -- gap #9 is now genuinely done**: investigated what a real
+   biddable role would actually need beyond the three mechanical checks above, rather than assuming
+   more code was required. Found nothing was missing: this pipeline's own role/auction/iteration
+   machinery is already fully generic -- any `devsystem.<name>` role can be declared, bid on, and
+   iterated against with zero special-casing, and a run's real risk annotations (the three checks
+   above included) are already visible to any real caller via `GET /api/runs/{id}`, the exact same
+   endpoint any real role-filler would poll before deciding what to submit. Proved this live, not
+   assumed: declared `devsystem.process_improve` on a scratch run (`stages/propose` + `/approve`),
+   won its own real signed auction (`devsystem_offer`, price 3 under a real `price_ceiling: 5`),
+   added a real requirement with a deliberately vague criterion ("works") to give it something
+   genuine to catch, confirmed the real `vague_acceptance_criteria` risk fired, then submitted a
+   real iteration (`devsystem_iterate --remote`) under the `devsystem.process_improve` stage whose
+   feedback actually reviewed that live risk and proposed a concrete, specific fix ("works" →
+   "message arrives at the peer's own device within the same session") -- not a mechanical check
+   flagging something, a real role-filler *acting on* one. Persisted with real traceability
+   (`requirement_indices: [0]`), confirmed via the run's own real history. The honest conclusion:
+   gap #9's "still open" note was right that no role had ever been demonstrated, but wrong to assume
+   that meant code was missing -- it was a proof gap, not a feature gap, and it's closed now for
+   real, not just asserted.
 10. ~~**A real evidentiary gate on assistant-driven requirement verification**~~ (§4.3/§8, found by the
     stress test's fourteenth run, 2026-08-06) — today, `devsystem.assistant` can be asked in a plain
     chat message to verify any requirement's acceptance criteria on any run, and will sometimes
