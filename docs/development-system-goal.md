@@ -2628,4 +2628,13 @@ assistant-propose): the exact bidi-laced title that sailed through before now ge
 clean titles still get `200`. Twelve real stress-test runs, twelve real gaps found and closed.
 Stage-proposal rationale is now the one remaining open candidate for this specific class.
 
+**Docs-loop firing, 2026-08-06 (ss) -- caught up docs on firings (qq)/(rr)'s bidi extensions**:
+`CADS-devsystem-docs` shipped `manage-custom-panels.md`'s full narrative on the panel-title fix
+(why `title` gets the bidi check and `html` deliberately doesn't -- untrusted-by-design, sandboxed)
+plus a short cross-reference update to `rest-api.md`'s backlog/milestone rows
+(`CADS-devsystem-docs@8cdf0b6`). Hermetically built clean; verified both new cross-links resolve.
+No new operator input on any of the three open `#382` checkpoints; GitHub's incident still
+`major_outage`, unresolved since `15:22:49Z` -- the `baseurl` fix (firing jj) still hasn't gone
+live on the real deployed site, re-checked again.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
