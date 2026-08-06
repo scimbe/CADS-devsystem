@@ -166,8 +166,10 @@ Extends §4's user-support goal with concrete GUI requirements:
    section doesn't drift out of sync with the ranked list a second time.
 2. **Panel values must be editable by the user AND by `devsystem.assistant`** — today the assistant
    can only act through its fixed `Action` enum (`AddRequirement`, `ToggleBacklogItem`, ...,
-   `pipeline/src/bin/devsystem_assistant.rs:293`, line number re-checked 2026-08-06 rather than left
-   stale after later edits shifted it), a real but narrow, pre-enumerated set. **Still a
+   `pipeline/src/bin/devsystem_assistant.rs:295`, line number re-checked live 2026-08-06 -- drifted
+   by two lines since the last time this was checked, from this same day's own "nine kinds of data"
+   system-prompt fix growing the doc comment above the enum; re-verified via `grep -n "^enum Action"`
+   rather than trusted from the last note), a real but narrow, pre-enumerated set. **Still a
    real, genuinely open gap** (re-confirmed 2026-08-06, not stale like the two siblings here): no
    *general* "the assistant can edit whatever a human could edit in this panel" capability exists —
    every new editable field still needs a new hand-written `Action` variant, fifteen of them as of
