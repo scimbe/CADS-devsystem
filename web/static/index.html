@@ -2226,11 +2226,11 @@ function renderHealthCriteriaPanel(id, data) {
       <summary>customize this run's bounded-loop criteria</summary>
       <div class="criteria-fields">
         <label>max iterations
-          <input id="cr-max-iterations" type="number" min="1" value="${h.criteria.max_iterations}"></label>
+          <input id="cr-max-iterations" type="number" min="1" max="10000" value="${h.criteria.max_iterations}"></label>
         <label>max consecutive failures
-          <input id="cr-max-failures" type="number" min="1" value="${h.criteria.max_consecutive_failures}"></label>
+          <input id="cr-max-failures" type="number" min="1" max="10000" value="${h.criteria.max_consecutive_failures}"></label>
         <label>check-in every N iterations (0 = never)
-          <input id="cr-checkin-every" type="number" min="0" value="${h.criteria.checkin_every}"></label>
+          <input id="cr-checkin-every" type="number" min="0" max="10000" value="${h.criteria.checkin_every}"></label>
       </div>
       <button type="button" class="secondary" id="save-criteria" style="margin-top:.5rem">Save criteria</button>
       <div id="criteria-status" class="status-line"></div>
@@ -3188,6 +3188,16 @@ async function saveCriteria(id) {
   const checkin_every = parseInt(document.getElementById('cr-checkin-every').value, 10);
   if (!Number.isInteger(max_iterations) || !Number.isInteger(max_consecutive_failures) || !Number.isInteger(checkin_every)) {
     status.textContent = 'All three fields must be whole numbers.'; status.className = 'status-line err'; return;
+  }
+  // DAU-lens gap found live 2026-08-06 (#382 goal doc §8): these three inputs' own
+  // `max="10000"` attribute (matching the server's real MAX_ABORT_CRITERIA_VALUE) does
+  // NOTHING on its own -- Save criteria is a plain button click, not a <form> submit, so
+  // the browser never runs native HTML5 validation against it. A careless value would
+  // silently round-trip to the server and only fail there (still a clear error, since
+  // fetchJSON's own real-message fix already covers that -- but one avoidable retry).
+  // Checking it here for real, immediate feedback, same bound the server itself enforces.
+  if (max_iterations > 10000 || max_consecutive_failures > 10000 || checkin_every > 10000) {
+    status.textContent = 'All three fields must be at most 10,000.'; status.className = 'status-line err'; return;
   }
   status.textContent = 'Saving…'; status.className = 'status-line';
   try {
