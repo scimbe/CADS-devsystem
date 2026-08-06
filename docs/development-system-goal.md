@@ -593,6 +593,23 @@ real bounded increment after all -- see gap #10's own now-**done** entry below
 (`CADS-devsystem@76facaf`) for the real fix and its live verification. Not claimed done here to
 avoid rewriting this entry's own honest state at the time it was written.
 
+**The stress test's fifteenth real run, 2026-08-06**: went back at the mandatory review gate itself
+(gap #2) rather than a new area -- a single `devsystem.review` iteration can name an arbitrary number
+of requirements at once via `requirement_indices`, but the length/distinct-word bars
+(`MIN_REVIEW_FEEDBACK_LEN`/`MIN_REVIEW_DISTINCT_WORDS`) were flat constants regardless of how many
+requirements a review claimed to cover in one shot. Live-verified before this fix: one generic
+review -- *"Reviewed all of these carefully, checked the real implementation against each one,
+everything looks correct and matches expectations on device testing today"* (22 distinct words,
+comfortably clearing the flat 8-word bar) -- named five completely unrelated requirements at once
+and satisfied the gate for all five. Fixed by scaling both bars by the count of requirements a given
+review names (the same real per-requirement bar applies that many times over, not once for the whole
+batch) (`CADS-devsystem@a3233fd`). A genuinely thorough multi-requirement review naturally clears the
+scaled bar (real per-requirement observations accumulate real distinct content); single-requirement
+reviews, the common case, are completely unaffected. Re-verified live against the exact same
+submission that previously verified all five requirements: now a real `409`, with an honest
+explanation naming the real scaled minimum. Fifteen real stress-test runs, fifteen real gaps found
+and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
