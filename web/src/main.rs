@@ -22,7 +22,7 @@ use devsystem_pipeline::runner::{
     load_or_init_run, persist_run, push_chat_exchange, qualifying_review_evidence, render_requirements_markdown, run_iteration, toggle_acceptance_criterion,
     toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, valid_run_id, BacklogItem, CustomPanel,
     Milestone, PendingIssueProposal, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal, Requirement, RoleFillMode,
-    RunOutcome,
+    RunOutcome, RunState,
 };
 use devsystem_pipeline::{apply_proposal, validate_feedback, validate_proposals, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal, MAX_ROLE_UNITS};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
@@ -203,6 +203,7 @@ fn api_router(state: AppState) -> Router {
     Router::new()
         .route("/api/runs", get(list_runs).post(create_run))
         .route("/api/runs/{id}", get(get_run).delete(delete_run))
+        .route("/api/runs/{id}/open-points", get(get_open_points))
         .route("/api/runs/{id}/iterate", post(iterate_run))
         .route("/api/runs/{id}/checkin", get(checkin_run))
         .route("/api/runs/{id}/criteria", post(update_criteria))
@@ -697,6 +698,90 @@ async fn get_run(State(state): State<AppState>, AxPath(id): AxPath<String>, head
                 "risks": risks,
             }))
             .into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    }
+}
+
+/// A single real, actionable item this run is waiting on a human to decide --
+/// the data a future guided "stack mode" (operator ask, 2026-08-06: step
+/// through every open point one at a time, guided by `devsystem.assistant`,
+/// instead of a human having to notice each one live across five separate
+/// panels) will actually consume. Deliberately a read-only projection over
+/// state that already exists elsewhere (the five real pending-proposal
+/// queues, `paused`/`pause_reason`) -- this invents no new state of its own,
+/// it only orders and summarizes what's already real. Matches
+/// `pending_reviews`'s own established definition of "needs a human
+/// decision" exactly (same five queues, same order) plus the one further
+/// case that already has its own honest "here's why, a human decides" story:
+/// a paused run, e.g. `webconference-android`'s own real M1 checkpoint.
+/// Deliberately does NOT include unverified requirements or stalled stages --
+/// both are normal, common run states on their own, not a stalled decision
+/// nothing can proceed without; folding them in would drown the real
+/// open points in noise.
+#[derive(Debug, Clone, Serialize)]
+struct OpenPoint {
+    /// A stable, GUI-switchable kind, not a user-facing label by itself.
+    kind: &'static str,
+    /// The real id needed to act on this item via its own existing endpoint
+    /// (a proposal id, or the literal `"paused"` for the one paused-checkpoint
+    /// entry a run can have at most one of).
+    id: String,
+    summary: String,
+    proposed_at: Option<u64>,
+}
+
+fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
+    let mut points = Vec::new();
+    if run_state.paused {
+        points.push(OpenPoint {
+            kind: "paused_checkpoint",
+            id: "paused".to_string(),
+            summary: run_state.pause_reason.clone().unwrap_or_else(|| "paused, no reason recorded".to_string()),
+            proposed_at: None,
+        });
+    }
+    for p in &run_state.pending_panel_proposals {
+        points.push(OpenPoint { kind: "panel_proposal", id: p.id.clone(), summary: format!("new panel \"{}\"", p.title), proposed_at: Some(p.proposed_at) });
+    }
+    for p in &run_state.pending_panel_removal_proposals {
+        points.push(OpenPoint { kind: "panel_removal_proposal", id: p.id.clone(), summary: format!("remove panel \"{}\"", p.panel_title), proposed_at: Some(p.proposed_at) });
+    }
+    for p in &run_state.pending_panel_edit_proposals {
+        points.push(OpenPoint { kind: "panel_edit_proposal", id: p.id.clone(), summary: format!("edit panel \"{}\" -> \"{}\"", p.old_title, p.new_title), proposed_at: Some(p.proposed_at) });
+    }
+    for p in &run_state.pending_stage_proposals {
+        points.push(OpenPoint {
+            kind: "stage_proposal",
+            id: p.id.clone(),
+            summary: format!("new stage \"{}\": {}", p.proposal.stage_id, p.proposal.rationale),
+            proposed_at: Some(p.proposed_at),
+        });
+    }
+    for p in &run_state.pending_issue_proposals {
+        points.push(OpenPoint { kind: "issue_proposal", id: p.id.clone(), summary: format!("file issue on {}: {}", p.repo, p.title), proposed_at: Some(p.proposed_at) });
+    }
+    points
+}
+
+/// `GET /api/runs/{id}/open-points` -- the real, ordered queue behind "stack
+/// mode": every item this run is actually waiting on a human to decide,
+/// paused-checkpoint first (the single highest-urgency real state a run can
+/// be in, matching `attention_priority`'s own precedence), then the five
+/// real pending-proposal queues in `pending_reviews`'s own established order.
+async fn get_open_points(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, run_state)) => {
+            if !owner_authorized(&headers, &run_state) {
+                return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+            }
+            Json(open_points(&run_state)).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
     }
@@ -7602,5 +7687,80 @@ exit 1"#);
         // And it must genuinely still exist afterward, not partially removed.
         let get_response = app.oneshot(gate_request("GET", "/api/runs/owned-run", "owner@example.com", None)).await.unwrap();
         assert_eq!(get_response.status(), SC::OK);
+    }
+
+    #[tokio::test]
+    async fn open_points_is_empty_for_a_genuinely_clean_run() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "clean-run"}))).await.unwrap();
+        let response = app.oneshot(Request::builder().uri("/api/runs/clean-run/open-points").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let points = body_json(response).await;
+        assert_eq!(points.as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn open_points_puts_a_paused_checkpoint_first_with_its_real_reason() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "paused-points-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/paused-points-run/panels/propose", serde_json::json!({"title": "a panel", "html": "<p>x</p>"})))
+            .await
+            .unwrap();
+        app.clone().oneshot(Request::builder().method("POST").uri("/api/runs/paused-points-run/pause").body(Body::empty()).unwrap()).await.unwrap();
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/paused-points-run/open-points").body(Body::empty()).unwrap()).await.unwrap();
+        let points = body_json(response).await;
+        let points = points.as_array().unwrap();
+        assert_eq!(points.len(), 2, "the paused checkpoint plus the one real pending panel proposal");
+        assert_eq!(points[0]["kind"], "paused_checkpoint");
+        assert_eq!(points[0]["summary"], "paused manually");
+        assert_eq!(points[1]["kind"], "panel_proposal");
+    }
+
+    #[tokio::test]
+    async fn open_points_lists_a_real_stage_proposal_with_its_own_rationale() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "stage-points-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/stage-points-run/stages/propose",
+                serde_json::json!({"stage_id": "devsystem.new_thing", "tag": "new_thing", "rationale": "a real reason"}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/stage-points-run/open-points").body(Body::empty()).unwrap()).await.unwrap();
+        let points = body_json(response).await;
+        let points = points.as_array().unwrap();
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0]["kind"], "stage_proposal");
+        assert!(points[0]["summary"].as_str().unwrap().contains("devsystem.new_thing"));
+        assert!(points[0]["summary"].as_str().unwrap().contains("a real reason"));
+    }
+
+    #[tokio::test]
+    async fn open_points_404s_for_a_nonexistent_run_and_403s_for_someone_elses() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        let missing = app
+            .clone()
+            .oneshot(Request::builder().uri("/api/runs/never-existed/open-points").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), SC::NOT_FOUND);
+
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "owner@example.com", Some(serde_json::json!({"run_id": "open-points-owned"}))))
+            .await
+            .unwrap();
+        let mut request = Request::builder().uri("/api/runs/open-points-owned/open-points").body(Body::empty()).unwrap();
+        request.headers_mut().insert("x-gate-email", "someone-else@example.com".parse().unwrap());
+        let forbidden = app.oneshot(request).await.unwrap();
+        assert_eq!(forbidden.status(), SC::FORBIDDEN);
     }
 }
