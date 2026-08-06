@@ -2712,8 +2712,10 @@ function renderNewIterationPanel(id, data) {
       <input id="pr-existing-service" placeholder="optional">
       <label>Units</label>
       <input id="pr-units" type="number" min="1" value="1">
-      <label>Price ceiling (leave blank for none -- preflight will flag that)</label>
-      <input id="pr-price-ceiling" type="number" min="0" placeholder="optional">
+      <label>Price ceiling (leave blank for none -- preflight will flag that; a real 0 is flagged
+        exactly the same way, not treated as "no budget" -- nothing here actually enforces this
+        number either way, so it's honestly just a stated intent)</label>
+      <input id="pr-price-ceiling" type="number" min="0" placeholder="optional" title="0 is flagged the same as leaving this blank -- it isn't enforced, so it doesn't mean 'no budget allowed'">
     </div>
 
     <div style="margin-top:.6rem;display:flex;gap:.5rem">
