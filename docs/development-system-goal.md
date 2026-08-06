@@ -2795,4 +2795,21 @@ tests (was 115), 187/187 web tests unchanged, hermetic clippy clean on both crat
 sweep after these fixes found no further unescaped sites -- this class is now genuinely closed, not
 just reported closed.
 
+**Goal-driven-loop firing, 2026-08-06 (bbb) -- one more bidi-spoofing field found, not yet checked**:
+no new operator input on any of the three open `#382` checkpoints; issue #14 unchanged; no
+scimbe-authored PRs; CI still not confirmable green (same outage). Investigated whether the
+markdown-forgery fix's own methodology (checking every field of a given shape) applied equally well
+to the bidi-control-character class -- checked `RoleFillMode::Dedicated`'s `label`/
+`accepted_bid.holder_label` first for markdown-forgery (clean: never rendered into `checkin.rs`'s
+artifact, and the GUI already `escapeHtml`s both) but then, applying the *other* lens, found they'd
+never been checked for bidi spoofing, despite being the exact same shape (short, human-typed,
+displayed and trusted) as every field already protected.
+
+Live-confirmed before fixing: a dedicated role's label reading "Trusted Agent" + a real U+202E sailed
+through untouched, visually hiding "This is a really malicious agent" behind an apparently-
+trustworthy label a human relies on to decide who to trust with a role. Fixed both `label` and
+`accepted_bid.holder_label` at their one real entry point (`CADS-devsystem@824e17f`). 1 new
+regression test, 188/188 web tests (was 187), hermetic clippy clean. Deployed and live-verified
+against the real redeployed container.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
