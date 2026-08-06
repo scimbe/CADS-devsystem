@@ -276,6 +276,21 @@ pub struct RunState {
     /// yet) still load.
     #[serde(default)]
     pub pending_panel_removal_proposals: Vec<PendingPanelRemovalProposal>,
+    /// The last real piece of gap #4 (#382 goal doc §7.2): a human could add and
+    /// remove a custom panel directly, and the assistant could propose either --
+    /// but EDITING an existing panel's title/HTML had no path at all for either
+    /// of them, only remove-then-re-add. A human's own direct edit
+    /// (`update_custom_panel`) applies immediately, same trust level as their
+    /// own direct Remove button (their own content, their own call) -- but the
+    /// assistant's edit needs the same propose-then-approve gate as
+    /// `pending_panel_removal_proposals`: overwriting a panel's real content is
+    /// exactly as irreversible as removing it (the old title/HTML isn't kept
+    /// anywhere once approved), so it gets the same "propose it, a human
+    /// approves the actual overwrite" trust model, not `ToggleBacklogItem`'s
+    /// safe/reversible/immediate one. `#[serde(default)]` so pre-existing
+    /// `state.json` files (none proposed yet) still load.
+    #[serde(default)]
+    pub pending_panel_edit_proposals: Vec<PendingPanelEditProposal>,
     /// A new pipeline stage/role the assistant has proposed but a human hasn't
     /// approved yet -- same trust-model pattern as `pending_panel_proposals`, applied
     /// to the OTHER thing that renders into the live system: a real role real
@@ -441,6 +456,21 @@ pub struct PendingPanelRemovalProposal {
     pub proposed_at: u64,
 }
 
+/// See [`RunState::pending_panel_edit_proposals`]'s doc comment. `old_title` is
+/// snapshotted at proposal time (same reasoning as `PendingPanelRemovalProposal`'s
+/// `panel_title`) so the GUI can render a real "X -> Y" label without a second
+/// lookup into `custom_panels`, which could itself have changed or vanished by
+/// the time a human reviews the proposal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingPanelEditProposal {
+    pub id: String,
+    pub panel_id: String,
+    pub old_title: String,
+    pub new_title: String,
+    pub new_html: String,
+    pub proposed_at: u64,
+}
+
 impl RunState {
     pub fn new(run_id: impl Into<String>) -> Self {
         RunState {
@@ -458,6 +488,7 @@ impl RunState {
             custom_panels: Vec::new(),
             pending_panel_proposals: Vec::new(),
             pending_panel_removal_proposals: Vec::new(),
+            pending_panel_edit_proposals: Vec::new(),
             pending_stage_proposals: Vec::new(),
             pending_issue_proposals: Vec::new(),
             requirements: Vec::new(),

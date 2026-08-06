@@ -385,6 +385,11 @@ const API = '/api';
 let currentRun = null;
 let currentRunData = null;
 let criteriaOpen = false;
+// Which custom panel (if any) the Custom Panels manager is currently showing an
+// inline edit form for -- gap #4's last real piece (#382 goal doc §7.2). Reset on
+// every re-render call site that isn't the edit form's own Save/Cancel, so it
+// never lingers stale across a run switch or an unrelated refresh.
+let editingCustomPanelId = null;
 
 // -------------------- panel/dock system --------------------
 // Every functional area is its own window: draggable by its header, resizable
@@ -725,19 +730,51 @@ function renderCustomPanelsManager(id, data) {
           </div>
         </div>`).join('')
     : '';
+  // The last real piece of gap #4: the assistant can already propose ADDING or
+  // REMOVING a panel above; this is the mirror for EDITING an existing one's
+  // content -- same trust model as removal, since overwriting real content is
+  // exactly as irreversible as deleting it. Shows the real old -> new title so
+  // a reviewer isn't approving a blind diff.
+  const editProposals = (data.state && data.state.pending_panel_edit_proposals) || [];
+  const editProposalsHtml = editProposals.length
+    ? `<div class="arch-note" style="margin-bottom:.4rem">devsystem.assistant proposes editing these -- the real panel keeps its current content until you decide:</div>`
+      + editProposals.map(p => `
+        <div class="role-card">
+          <div class="role-card-head"><span class="role">${escapeHtml(p.old_title)} &rarr; ${escapeHtml(p.new_title)}</span></div>
+          <div class="role-meta">edit proposed ${escapeHtml(new Date(p.proposed_at * 1000).toLocaleString())}</div>
+          <pre class="panel-proposal-html">${escapeHtml(truncate(p.new_html, 300))}</pre>
+          <div style="margin-top:.4rem;display:flex;gap:.4rem">
+            <button type="button" class="panel-edit-approve-btn" data-id="${p.id}" data-title="${escapeHtml(p.old_title)}">Approve &amp; overwrite</button>
+            <button type="button" class="secondary panel-edit-reject-btn" data-id="${p.id}">Reject (keep original)</button>
+          </div>
+        </div>`).join('')
+    : '';
   const list = panels.length
-    ? panels.map(p => `
+    ? panels.map(p => p.id === editingCustomPanelId ? `
+        <div class="role-card">
+          <div class="role-card-head"><span class="role">Editing: ${escapeHtml(p.title)}</span></div>
+          <form class="custom-panel-edit-form" data-id="${p.id}">
+            <label>title<input class="cp-edit-title" type="text" value="${escapeHtml(p.title)}" required></label>
+            <label>HTML<textarea class="cp-edit-html" rows="5" required style="width:100%;font-family:var(--mono);font-size:.75rem">${escapeHtml(p.html)}</textarea></label>
+            <div style="margin-top:.4rem;display:flex;gap:.4rem">
+              <button type="submit">Save</button>
+              <button type="button" class="secondary custom-panel-edit-cancel-btn">Cancel</button>
+            </div>
+          </form>
+        </div>` : `
         <div class="role-card">
           <div class="role-card-head"><span class="role">${escapeHtml(p.title)}</span></div>
           <div class="role-meta">${p.source ? escapeHtml(p.source) : 'hand-written'} &middot; added ${escapeHtml(new Date(p.created_at * 1000).toLocaleString())}</div>
           <div style="margin-top:.4rem;display:flex;gap:.4rem">
             <button type="button" class="secondary custom-panel-open-btn" data-id="${p.id}">Open</button>
+            <button type="button" class="secondary custom-panel-edit-btn" data-id="${p.id}">Edit</button>
           </div>
         </div>`).join('')
     : `<span class="lede">No custom panels yet -- write one below.</span>`;
   body.innerHTML = `
     ${proposalsHtml ? `<div style="margin-bottom:.6rem">${proposalsHtml}</div>` : ''}
     ${removalProposalsHtml ? `<div style="margin-bottom:.6rem">${removalProposalsHtml}</div>` : ''}
+    ${editProposalsHtml ? `<div style="margin-bottom:.6rem">${editProposalsHtml}</div>` : ''}
     <div style="margin-bottom:.6rem">${list}</div>
     <form id="add-custom-panel-form">
       <label>title<input id="cp-title" type="text" placeholder="My Panel" required></label>
@@ -820,6 +857,79 @@ function renderCustomPanelsManager(id, data) {
         alert(`Could not reject removal proposal: ${err.message}`);
       }
     };
+  }
+  for (const btn of body.querySelectorAll('.panel-edit-approve-btn')) {
+    btn.onclick = async () => {
+      // Same DAU-lens reasoning as panel-removal-approve-btn -- approving an
+      // edit proposal is the real, permanent, destructive step (it overwrites
+      // the real panel's content for good), so it gets the same confirm()
+      // the human's own hypothetical direct overwrite would need.
+      if (!confirm(`Overwrite the real panel "${btn.dataset.title}" with the proposed content? This replaces it for real -- the old content is not kept.`)) return;
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/panels/edit-proposals/${encodeURIComponent(btn.dataset.id)}/approve`, { method: 'POST' });
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        if (id === currentRun) renderPanelToggleBar();
+        renderCustomPanelsManager(id, fresh);
+        renderCustomPanels(id, fresh);
+        await refreshRunsList();
+      } catch (err) {
+        alert(`Could not apply edit: ${err.message}`);
+      }
+    };
+  }
+  for (const btn of body.querySelectorAll('.panel-edit-reject-btn')) {
+    btn.onclick = async () => {
+      // The safe direction -- the real panel's content was never touched, so
+      // rejecting an edit proposal needs no confirmation.
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/panels/edit-proposals/${encodeURIComponent(btn.dataset.id)}/reject`, { method: 'POST' });
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        renderCustomPanelsManager(id, fresh);
+        await refreshRunsList();
+      } catch (err) {
+        alert(`Could not reject edit proposal: ${err.message}`);
+      }
+    };
+  }
+  for (const btn of body.querySelectorAll('.custom-panel-edit-btn')) {
+    btn.onclick = () => {
+      editingCustomPanelId = btn.dataset.id;
+      renderCustomPanelsManager(id, data);
+    };
+  }
+  for (const btn of body.querySelectorAll('.custom-panel-edit-cancel-btn')) {
+    btn.onclick = () => {
+      editingCustomPanelId = null;
+      renderCustomPanelsManager(id, data);
+    };
+  }
+  for (const form of body.querySelectorAll('.custom-panel-edit-form')) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const panelId = form.dataset.id;
+      const title = form.querySelector('.cp-edit-title').value.trim();
+      const html = form.querySelector('.cp-edit-html').value;
+      // A human's own direct edit applies immediately (same trust level as
+      // their own direct Remove button -- their own content, their own call)
+      // but overwrites real content just like Remove deletes it, so it gets
+      // the same real confirm() dialog, not a silent save.
+      if (!confirm('Save these changes? This overwrites the panel\'s current content for real -- the old content is not kept.')) return;
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/panels/${encodeURIComponent(panelId)}/update`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title, html }),
+        });
+        editingCustomPanelId = null;
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        renderCustomPanelsManager(id, fresh);
+        renderCustomPanels(id, fresh);
+      } catch (err) {
+        alert(`Could not save panel: ${err.message}`);
+      }
+    });
   }
   document.getElementById('add-custom-panel-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1257,6 +1367,7 @@ async function selectRun(id) {
   currentRun = id;
   if (switching) {
     resetAssistantTranscript(id);
+    editingCustomPanelId = null;
     for (const pid of Object.keys(REFRESHABLE_PANELS)) lastRefreshedAt[pid] = Date.now();
   }
   await refreshRunsList();
