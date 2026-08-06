@@ -1841,4 +1841,31 @@ two-unbounded-roles case, so this is a real behavior fix, not a rewrite). Stress
 added (`CADS-devsystem@40edd09`), 46/46 assertions, confirmed green in the real GitHub Actions run
 against the deployed Docker image.
 
+**Goal-driven-loop firing, 2026-08-06 (i) -- applying last firing's own methodology systematically,
+not just once**: last firing found `no_price_ceiling` hid every unbounded role but the first
+(`Iterator::find` inside a loop, `Option<RiskAnnotation>` return). Rather than treat that as one
+isolated bug, applied the identical lens to every other check in `preflight.rs` this firing -- and
+found the same bug class **twice more**, both real, both live-confirmed before fixing:
+1. `vague_acceptance_criteria` (`CADS-devsystem@3330a9d`): an early `return Some(...)` inside a
+   nested loop over every requirement's every criterion. Live-confirmed: two separate requirements,
+   each with its own genuinely vague criterion, only ever showed one. Fixed to collect every real
+   vague criterion.
+2. `succeeded_iteration_admits_a_defect` (`CADS-devsystem@157e679`): its own EARLIER fix (scan all
+   of history so a defect "stays flagged" instead of vanishing) still only ever returned the single
+   most recent match via `Iterator::find` -- a genuine second bug layered under the first one's own
+   fix. Live-confirmed: two iterations each admitting a different, real, unfixed defect (a security
+   gap, a crash) produced exactly one finding; the security defect was completely invisible. Fixed
+   to collect every real defect-admitting iteration.
+
+Both fixed the identical way `no_price_ceiling` was: `Option<RiskAnnotation>` → `Vec<RiskAnnotation>`,
+`find`/early-return → `filter`/`filter_map`. All pre-existing tests for both checks passed unchanged
+(none of them happened to exercise the multi-instance case, confirming these are real behavior
+fixes, not rewrites). New regression tests for each, plus stress-harness checks [22] and [23]
+(`CADS-devsystem@3c032bc`, `dcd6adb`) -- 48/48 assertions, confirmed green in the real GitHub Actions
+run against the deployed Docker image. The real `webconference-android` flagship run's own risk
+count is unaffected by the defect-admission fix (it never had two distinct admitted defects to
+begin with) but was directly affected by the price-ceiling fix last firing (three unbounded roles,
+not one) -- a concrete reminder that this exact bug class had already cost real, hidden visibility
+on the project's own flagship proof before it was caught.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
