@@ -773,6 +773,23 @@ real stress-test investigations, twenty-two real gaps found and closed.
    Fixed by summing all five real queues; confirmed live via a real Playwright screenshot, the same
    run's Pipeline chip now shows a real "1". Still open: hiding panels genuinely irrelevant to the
    current stage remains the one unaddressed piece of §7.1's original ask.
+   **Fourth slice done, 2026-08-06** (`CADS-devsystem@d9868e7`): Backlog and Milestones had the exact
+   same empty-state gap Requirements had before its own second slice above -- a plain, easy-to-skim
+   "No backlog items yet."/"No milestones yet." line, no active nudge toward the form right below it.
+   Extended the identical start-here-banner + guarded-auto-focus treatment to both, rather than
+   inventing a second pattern for the same real problem. Verified live via a real Playwright browser
+   against the actual deployed devsystem-web: both banners render for a genuinely empty run, and the
+   backlog one disappears the moment a real item is added. Found and fixed a real, separate
+   infrastructure bug while setting this verification up, not assumed working from the diff: this
+   project's own Playwright screenshot tooling (`scripts/simulated-user.Dockerfile`) had silently
+   drifted -- its pinned npm `playwright` version no longer matched what the (same-tagged) base
+   image actually bundled, a live-confirmed MCR tag update in place. Fixed for real
+   (`CADS-devsystem@dcb7862`) by having the build fetch its own matching browser rather than
+   assuming a fixed pin stays true. Still open, and now more precisely scoped: not "hiding" panels at
+   all, since every attempt at that risks hiding a genuinely relevant capability from a DAU (this
+   session's own governing principle, applied to itself) -- the remaining §7.1 ask is closer to "make
+   every panel's empty state actively useful," which Backlog/Milestones/Requirements now share; RAG
+   and custom panels remain the two panels without an equivalent treatment.
 4. ~~**Assistant-editable panel values generally**~~ (§7.2) — beyond the current fixed `Action` enum.
    **First slice done** (`CADS-devsystem@920f66e`): a human could already toggle one acceptance
    criterion independently of the whole requirement (`toggle_acceptance_criterion_handler`, the
