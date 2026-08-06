@@ -1401,6 +1401,32 @@ const MAX_ACCEPTANCE_CRITERIA: usize = 20;
 const MAX_ACCEPTANCE_CRITERION_LEN: usize = 500;
 const MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS: usize = 5;
 
+/// Real DAU-lens gap found live by the incompetent-agent stress test (#382
+/// goal doc §8, 2026-08-06), extending the same zero-width-space finding
+/// (Unicode category Cf/Format sailing through `.trim()`) to a much more
+/// consequential member of the same category: bidi control characters
+/// (Trojan Source, CVE-2021-42574's own attack class). Live-confirmed before
+/// fixing: a statement/criterion containing U+202E (RIGHT-TO-LEFT OVERRIDE)
+/// stores and passes every existing check untouched, but *visually renders*
+/// with its text order scrambled -- "approved\u{202e} for production tset
+/// ton si sihT" (real alphanumeric content either side, so it clears
+/// `MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS` easily) actually displays as
+/// "approvedThis is not test noitcudorp rof" in this app's own GUI, which
+/// has no `unicode-bidi` isolation anywhere. A human reviewer relies on
+/// reading a criterion to decide whether to mark it verified -- text whose
+/// on-screen order doesn't match its real content is exactly the kind of
+/// thing that leads a good-faith reviewer to the wrong result through no
+/// fault of their own judgment, the same governing principle behind every
+/// other gate in this file. Scoped to the two fields a human actually reads
+/// and trusts to decide `toggle_requirement`/`toggle_acceptance_criterion`
+/// (the statement, each criterion) -- not a blanket sweep of every free-text
+/// field in one firing.
+const BIDI_CONTROL_CHARS: [char; 9] = ['\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}'];
+
+fn contains_bidi_control_char(s: &str) -> bool {
+    s.chars().any(|c| BIDI_CONTROL_CHARS.contains(&c))
+}
+
 /// Real, structured requirement management (2026-08-04 operator ask, grounded
 /// in researched industry practice -- EARS notation, spec-driven-development's
 /// "the spec is the prompt", traceSDD/Spec Kit-style acceptance criteria) --
@@ -1427,6 +1453,16 @@ async fn add_requirement(
     }
     if statement.len() > MAX_REQUIREMENT_STATEMENT_LEN {
         return (StatusCode::BAD_REQUEST, format!("statement must be under {MAX_REQUIREMENT_STATEMENT_LEN} characters")).into_response();
+    }
+    if contains_bidi_control_char(&statement) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "statement contains a Unicode bidi control character (e.g. a right-to-left override) \
+             -- these can make the visually displayed text not match what's actually stored, which \
+             a reviewer relies on reading correctly"
+                .to_string(),
+        )
+            .into_response();
     }
     // Real gap found live by the incompetent-agent stress test (#382 goal doc
     // §8, 2026-08-05, DAU lens): a completely non-EARS statement like "asdf"
@@ -1500,6 +1536,12 @@ async fn add_requirement(
                     "\"{c}\" doesn't have enough real content to be checkable (minimum \
                      {MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS} letters/digits) -- \"ok\", \".\", or an \
                      invisible character aren't real acceptance criteria"
+                ))
+            } else if contains_bidi_control_char(c) {
+                Some(format!(
+                    "\"{c}\" contains a Unicode bidi control character (e.g. a right-to-left \
+                     override) -- these can make the visually displayed text not match what's \
+                     actually stored, which a reviewer relies on reading correctly"
                 ))
             } else {
                 None
@@ -5292,6 +5334,59 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::OK, "a genuinely short but real criterion must not be rejected");
+    }
+
+    #[tokio::test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): a criterion/statement laced with U+202E (RIGHT-TO-LEFT
+    /// OVERRIDE) has plenty of real alphanumeric content either side of the
+    /// control character, so it clears every other check, but *visually
+    /// renders* with scrambled text order -- live-confirmed via a real headless
+    /// browser: "approved\u{202e} for production tset ton si sihT" displays as
+    /// "approvedThis is not test noitcudorp rof" in this app's own GUI, which
+    /// has no `unicode-bidi` isolation anywhere. Same Trojan Source (CVE-2021-
+    /// 42574) attack class the zero-width-space fix above already established
+    /// this codebase treats as a real DAU-lens gap, not just an XSS concern.
+    async fn add_requirement_rejects_bidi_control_characters_in_statement_or_criteria() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-bidi-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-bidi-run/requirements",
+                serde_json::json!({"statement": "WHEN a user does X\u{202e}, THE SYSTEM SHALL do Y", "acceptance_criteria": ["a real criterion"]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a statement containing a bidi override character must be rejected");
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-bidi-run/requirements",
+                serde_json::json!({
+                    "statement": "WHEN a user does X, THE SYSTEM SHALL do Y (a real statement)",
+                    "acceptance_criteria": ["approved\u{202e} for production tset ton si sihT"]
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a criterion containing a bidi override character must be rejected, even with plenty of real alphanumeric content either side");
+
+        // A genuinely clean statement/criterion pair must still be accepted.
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-bidi-run/requirements",
+                serde_json::json!({"statement": "WHEN a user does X, THE SYSTEM SHALL do Y (a real statement)", "acceptance_criteria": ["a real, clean criterion"]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "a clean statement/criterion with no bidi control characters must not be rejected");
     }
 
     #[tokio::test]
