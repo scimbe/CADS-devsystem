@@ -1332,13 +1332,67 @@ async function loadRuns() {
 // the run-id-only inline form this replaced. create_run then set_repo_url in
 // sequence -- the same two real API calls a human would otherwise make
 // separately (create, then find the Pipeline panel, then set the repo).
+//
+// DAU/accessibility lens, found live 2026-08-06 while checking this modal for
+// the focus-trap gap flagged as a candidate in the previous firing's own
+// closing note: this is the app's ONLY real modal, so a genuinely severe
+// double gap. First, `autofocus` on `#np-run-id` never actually took effect --
+// confirmed live via Playwright, `document.activeElement` after opening was
+// still the trigger button, not the input, even though the `autofocus`
+// attribute was genuinely present in the DOM. This is a real, if obscure,
+// browser behavior: the HTML autofocus algorithm only runs for elements
+// present during initial parsing/insertion in specific ways, and does not
+// reliably fire for markup inserted via `innerHTML` into an
+// already-connected node. Second, and more severe: with no explicit focus
+// management at all, `Tab` from the trigger button walked straight through
+// the entire page BEHIND the overlay (confirmed live: reached
+// `requirement-statement`/`requirement-criteria` input fields that are
+// completely hidden under the modal) -- a keyboard-only user tabbing through
+// this dialog had no way to know they were editing background state, not the
+// dialog. Fixed with the standard accessible-modal pattern: explicit
+// `.focus()` on the first real field after insertion, a real Tab/Shift+Tab
+// trap confined to the modal's own focusable elements while it's open, and
+// focus restored to whatever triggered the dialog (keyboard or mouse) on
+// every real close path (Cancel, outside click, Escape, successful submit)
+// since they all already converge on this one function.
+let newProjectTriggerEl = null;
+
+function trapNewProjectFocus(e) {
+  if (e.key !== 'Tab') return;
+  const overlay = document.getElementById('new-project-overlay');
+  if (!overlay) return;
+  const focusable = Array.from(overlay.querySelectorAll('input, button, [href], select, textarea, [tabindex]:not([tabindex="-1"])')).filter(
+    (el) => !el.disabled && el.offsetParent !== null,
+  );
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (e.shiftKey) {
+    if (active === first || !overlay.contains(active)) {
+      e.preventDefault();
+      last.focus();
+    }
+  } else if (active === last || !overlay.contains(active)) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
 function closeNewProjectDialog() {
   const overlay = document.getElementById('new-project-overlay');
   if (overlay) overlay.remove();
+  document.removeEventListener('keydown', trapNewProjectFocus);
+  if (newProjectTriggerEl) {
+    newProjectTriggerEl.focus();
+    newProjectTriggerEl = null;
+  }
 }
 
 function openNewProjectDialog() {
+  const trigger = document.activeElement;
   closeNewProjectDialog();
+  newProjectTriggerEl = trigger;
   const overlay = document.createElement('div');
   overlay.id = 'new-project-overlay';
   overlay.className = 'modal-overlay';
@@ -1358,6 +1412,8 @@ function openNewProjectDialog() {
       </form>
     </div>`;
   document.body.appendChild(overlay);
+  document.getElementById('np-run-id').focus();
+  document.addEventListener('keydown', trapNewProjectFocus);
   overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeNewProjectDialog(); });
   document.getElementById('np-cancel').onclick = closeNewProjectDialog;
   document.getElementById('new-project-form').addEventListener('submit', async (e) => {
