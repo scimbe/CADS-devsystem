@@ -386,13 +386,44 @@ fn extract_actions(reply_text: &str) -> (String, Vec<Action>, Option<String>) {
         return (reply_text.to_string(), Vec::new(), Some("a devsystem-actions block was opened but never closed -- no actions were taken".to_string()));
     };
     let json_block = after_open[..close_rel].trim();
-    match serde_json::from_str::<Vec<Action>>(json_block) {
-        Ok(actions) => {
-            let display = format!("{}{}", &reply_text[..start], &after_open[close_rel + ACTIONS_FENCE_CLOSE.len()..]);
-            (display.trim().to_string(), actions, None)
+    // Real bug found live by the incompetent-agent stress test (#382 goal doc
+    // §8/§9, 2026-08-06): parsing straight into `Vec<Action>` is all-or-nothing
+    // at the array level -- one hallucinated/malformed action anywhere in the
+    // LLM's reply used to silently discard every other, perfectly valid action
+    // in the same batch. Parse element-by-element instead so one bad action
+    // never costs the good ones, matching every other "collect all, report
+    // all" gate fixed this session.
+    let values: Vec<serde_json::Value> = match serde_json::from_str(json_block) {
+        Ok(v) => v,
+        Err(e) => return (reply_text.to_string(), Vec::new(), Some(format!("the devsystem-actions block did not parse as valid JSON ({e}) -- no actions were taken"))),
+    };
+    let mut actions = Vec::new();
+    let mut bad: Vec<String> = Vec::new();
+    for (i, v) in values.into_iter().enumerate() {
+        match serde_json::from_value::<Action>(v) {
+            Ok(a) => actions.push(a),
+            Err(e) => bad.push(format!("action #{} ({e})", i + 1)),
         }
-        Err(e) => (reply_text.to_string(), Vec::new(), Some(format!("the devsystem-actions block did not parse as valid JSON ({e}) -- no actions were taken"))),
     }
+    if actions.is_empty() && !bad.is_empty() {
+        return (
+            reply_text.to_string(),
+            Vec::new(),
+            Some(format!("none of the requested actions matched a known action shape: {} -- no actions were taken", bad.join("; "))),
+        );
+    }
+    let display = format!("{}{}", &reply_text[..start], &after_open[close_rel + ACTIONS_FENCE_CLOSE.len()..]);
+    let err = if bad.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "{} of the requested action(s) did not match a known action shape and were skipped: {} -- the other {} valid action(s) were still applied",
+            bad.len(),
+            bad.join("; "),
+            actions.len()
+        ))
+    };
+    (display.trim().to_string(), actions, err)
 }
 
 /// Actually performs one action against devsystem-web's real, already-existing
@@ -1086,6 +1117,33 @@ mod tests {
         let block = r#"[{"type":"delete_everything","index":0}]"#;
         let err = serde_json::from_str::<Vec<Action>>(block).expect_err("an unknown action type must fail to deserialize");
         assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn extract_actions_applies_the_good_actions_in_a_mixed_batch_and_reports_the_bad_one() {
+        let text = "Done.\n\n```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"delete_everything\",\"index\":0}]\n```";
+        let (display, actions, err) = extract_actions(text);
+        assert_eq!(display, "Done.", "the block must still be stripped from the display text once at least one action was real");
+        assert_eq!(
+            actions,
+            vec![
+                Action::AddMilestone { description: "M1".to_string() },
+                Action::AddBacklogItem { text: "write tests".to_string() },
+            ],
+            "the two perfectly valid actions must still be applied even though a third, hallucinated one was mixed in"
+        );
+        let err = err.expect("the one bad action must still be reported, not silently dropped");
+        assert!(err.contains("1 of the requested action(s)"), "{err}");
+        assert!(err.contains("2 valid action(s) were still applied"), "{err}");
+    }
+
+    #[test]
+    fn extract_actions_on_a_batch_of_entirely_unknown_actions_takes_no_action_and_leaves_text_untouched() {
+        let text = "```devsystem-actions\n[{\"type\":\"delete_everything\",\"index\":0},{\"type\":\"nuke_the_run\"}]\n```";
+        let (display, actions, err) = extract_actions(text);
+        assert_eq!(display, text, "zero real actions means nothing was silently hidden -- the raw text stays untouched");
+        assert!(actions.is_empty());
+        assert!(err.unwrap().contains("none of the requested actions matched a known action shape"));
     }
 
     /// A tiny real HTTP server standing in for devsystem-web -- proves the
