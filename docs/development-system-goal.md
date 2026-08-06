@@ -3034,4 +3034,27 @@ reached the server. No code change -- a third genuine, clean security verificati
 last three firings, the custom-panel sandbox has now been live-attacked across every meaningfully
 different real risk (page state, navigation, and now direct API mutation) and held every time.
 
+**Goal-driven-loop firing, 2026-08-06 (ppp) -- verified the assistant's per-run rate limit, another
+claim only ever asserted from a doc comment this session, actually holds live**: no new operator
+input on any of the three open `#382` checkpoints; CI still not confirmable green; issue #14
+unchanged. `devsystem_assistant.rs`'s own `/ask` handler claims a real 10-second per-`run_id` rate
+limit (`MIN_INTERVAL`, a mutex-guarded `HashMap<String, Instant>`) -- documented in `ask-the-
+assistant.md` but never independently live-attacked this session.
+
+Two real checks against the actual deployment: (1) two real `POST /api/runs/{id}/assistant`
+requests fired back-to-back on the same run -- first got a real `200`, the immediate second got a
+real `429` (`"too many requests for this run -- wait a few seconds"`), proving the limit actually
+fires, not just exists in code; (2) a request against a *different* run_id, fired immediately after
+the first run got rate-limited, got a clean `200` -- proving the limit is genuinely per-run, not a
+global bottleneck that would make the assistant unusable across concurrently-active runs. Also
+checked, via code reading rather than a live attack (no live case exists to attack): whether a
+whitespace/casing variant of a `run_id` could bypass the limit by hashing to a different map key --
+ruled out, since the `run_id` reaching this handler is always `AxPath`'s own already-`valid_run_id`-
+checked canonical string (alphanumeric/-/_ only), never raw, attacker-shaped text.
+
+No code change -- a fourth genuine, clean verification in this session's own "actually attack the
+claims this codebase makes about itself, don't just trust the comments" vein. Given four consecutive
+clean audits now, the next firing should likely pivot to a different kind of increment (a real fix,
+or checking the three still-open decision points again) rather than a fifth audit in the same vein.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
