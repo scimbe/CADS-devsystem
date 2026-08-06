@@ -1397,8 +1397,8 @@ function openNewProjectDialog() {
   overlay.id = 'new-project-overlay';
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
-    <div class="modal">
-      <h3>New Project</h3>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="new-project-title">
+      <h3 id="new-project-title">New Project</h3>
       <p class="lede" style="font-size:.8rem">Creates a real run with the generic 7-stage pipeline template -- roles get added as the run self-optimizes, same as every other project here.</p>
       <form id="new-project-form">
         <label>Project id<input id="np-run-id" placeholder="e.g. my-other-project" pattern="[A-Za-z0-9_\\-]+" required autofocus></label>
