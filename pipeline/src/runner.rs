@@ -302,6 +302,49 @@ pub struct RunState {
     /// all-zero, not a migration.
     #[serde(default)]
     pub assistant_usage: AssistantUsageTotals,
+    /// Real, bounded chat-exchange history (#382 goal doc §4.2, gap #6 --
+    /// "the assistant's own chat exchanges aren't pulled in yet"). Until now
+    /// a real `/ask` exchange lived nowhere durable server-side once the
+    /// response reached the caller -- `assistant_usage`'s own doc comment
+    /// assumed a full replay "already exists, informally, in each chat
+    /// exchange", but that was the browser's own ephemeral chat window, not
+    /// persisted state: closing the tab lost it for good. Bounded and
+    /// rolling (oldest entries drop once full, via
+    /// [`push_chat_exchange`]) -- this accumulates passively on every real
+    /// `/ask` call, unlike a milestone/backlog item a human explicitly adds,
+    /// so a hard reject-past-cap (this crate's usual defensive-cap pattern)
+    /// would be the wrong shape here. `#[serde(default)]` so pre-existing
+    /// `state.json` files (no history recorded yet) still load as empty.
+    #[serde(default)]
+    pub chat_history: Vec<ChatExchange>,
+}
+
+/// See [`RunState::chat_history`]'s own doc comment for why this is rolling,
+/// not a hard cap.
+pub const MAX_CHAT_HISTORY: usize = 50;
+
+/// One real `/ask` round-trip: what a human (or the GUI on their behalf)
+/// actually asked, and what `devsystem.assistant` actually said back --
+/// `Action`s dispatched are already visible in the `response` text itself
+/// (`render_reply_with_action_results`'s own "Actions taken:" section), so
+/// this doesn't duplicate that separately.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChatExchange {
+    pub instruction: String,
+    pub response: String,
+    pub at: u64,
+}
+
+/// Appends one real exchange to `state.chat_history`, dropping the oldest
+/// once past [`MAX_CHAT_HISTORY`] -- a rolling window, not a hard reject,
+/// since this accumulates passively rather than from an explicit "add"
+/// action a human could instead be told to stop doing.
+pub fn push_chat_exchange(state: &mut RunState, instruction: String, response: String, at: u64) {
+    state.chat_history.push(ChatExchange { instruction, response, at });
+    if state.chat_history.len() > MAX_CHAT_HISTORY {
+        let overflow = state.chat_history.len() - MAX_CHAT_HISTORY;
+        state.chat_history.drain(0..overflow);
+    }
 }
 
 /// See [`RunState::assistant_usage`]'s doc comment. `total_cost_usd` is a plain
@@ -393,6 +436,7 @@ impl RunState {
             pending_issue_proposals: Vec::new(),
             requirements: Vec::new(),
             assistant_usage: AssistantUsageTotals::default(),
+            chat_history: Vec::new(),
         }
     }
 }
@@ -740,6 +784,31 @@ mod tests {
             11,
             "a real review's genuinely varied vocabulary must count each distinct word once"
         );
+    }
+
+    #[test]
+    fn push_chat_exchange_appends_real_exchanges_in_order() {
+        let mut state = RunState::new("run-chat");
+        push_chat_exchange(&mut state, "add a milestone".into(), "done: added milestone".into(), 100);
+        push_chat_exchange(&mut state, "what's the status?".into(), "3 iterations so far, no risks".into(), 200);
+        assert_eq!(state.chat_history.len(), 2);
+        assert_eq!(state.chat_history[0].instruction, "add a milestone");
+        assert_eq!(state.chat_history[1].response, "3 iterations so far, no risks");
+        assert_eq!(state.chat_history[1].at, 200);
+    }
+
+    #[test]
+    fn push_chat_exchange_drops_the_oldest_once_past_the_real_cap() {
+        let mut state = RunState::new("run-chat-cap");
+        for i in 0..MAX_CHAT_HISTORY + 5 {
+            push_chat_exchange(&mut state, format!("instruction {i}"), format!("response {i}"), i as u64);
+        }
+        assert_eq!(state.chat_history.len(), MAX_CHAT_HISTORY, "must stay bounded, not grow unbounded");
+        assert_eq!(
+            state.chat_history[0].instruction, "instruction 5",
+            "the oldest 5 entries must have been dropped, not the newest"
+        );
+        assert_eq!(state.chat_history.last().unwrap().instruction, format!("instruction {}", MAX_CHAT_HISTORY + 4));
     }
 
     #[test]

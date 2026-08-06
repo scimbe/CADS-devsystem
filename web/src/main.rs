@@ -19,8 +19,8 @@ use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::{preflight_annotations, process_annotations};
 use devsystem_pipeline::runner::{
-    load_or_init_run, persist_run, render_requirements_markdown, run_iteration, toggle_acceptance_criterion, toggle_milestone, toggle_requirement,
-    toggle_requirement_auto_judge, BacklogItem, CustomPanel,
+    load_or_init_run, persist_run, push_chat_exchange, render_requirements_markdown, run_iteration, toggle_acceptance_criterion, toggle_milestone,
+    toggle_requirement, toggle_requirement_auto_judge, BacklogItem, CustomPanel,
     Milestone, PendingIssueProposal, PendingPanelProposal, PendingStageProposal, Requirement, RoleFillMode, RunOutcome,
 };
 use devsystem_pipeline::{apply_proposal, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal};
@@ -2688,18 +2688,21 @@ async fn ask_assistant(
         Ok(r) => {
             let status = StatusCode::from_u16(r.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
             let text = r.text().await.unwrap_or_else(|e| serde_json::json!({"error": format!("could not read assistant response body: {e}")}).to_string());
-            // Real usage accounting (#382 goal doc §7.3, gap #5): this bridge call
-            // already computes real token/cost usage (devsystem_assistant.rs's
-            // parse_llm_json_output) and has always returned it in this exact
-            // response -- forwarded straight to the caller below and, until now,
-            // never persisted anywhere, so a run's real cumulative assistant spend
-            // was unrecoverable once the browser tab closed. Best-effort: a usage
-            // field that's missing or fails to parse never blocks the real reply
-            // below from reaching the caller.
+            // Real usage accounting (#382 goal doc §7.3, gap #5) AND real chat
+            // history (#382 goal doc §4.2, gap #6): this bridge call already
+            // computes real token/cost usage (devsystem_assistant.rs's
+            // parse_llm_json_output) and a real reply, both forwarded straight
+            // to the caller below and, until now, never persisted anywhere --
+            // a run's real cumulative assistant spend AND every past exchange
+            // were unrecoverable once the browser tab closed. Best-effort: a
+            // missing/malformed field never blocks the real reply below from
+            // reaching the caller.
             if status.is_success() {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(usage) = parsed.get("usage") {
-                        persist_assistant_usage(&state, &id, usage).await;
+                    let usage = parsed.get("usage");
+                    let response_text = parsed.get("response").and_then(|v| v.as_str());
+                    if usage.is_some() || response_text.is_some() {
+                        persist_assistant_call(&state, &id, &body.instruction, response_text, usage).await;
                     }
                 }
             }
@@ -2715,16 +2718,23 @@ async fn ask_assistant(
 
 /// See [`ask_assistant`]'s own doc comment for why this exists. Silently does
 /// nothing if the run doesn't exist (nothing real to persist into) or if the
-/// load/persist round-trip fails for any reason -- usage accounting is real, but
+/// load/persist round-trip fails for any reason -- this accounting is real, but
 /// it must never be the reason a real assistant reply fails to reach the caller.
-async fn persist_assistant_usage(state: &AppState, id: &str, usage: &serde_json::Value) {
+/// One load/persist round-trip for both usage and chat history, not two --
+/// they're always updated together, from the exact same real `/ask` call.
+async fn persist_assistant_call(state: &AppState, id: &str, instruction: &str, response_text: Option<&str>, usage: Option<&serde_json::Value>) {
     if !run_exists(state, id) {
         return;
     }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(state, id);
     let Ok((spec, mut run_state)) = load_or_init_run(&dir, id) else { return };
-    run_state.assistant_usage.add_call(usage);
+    if let Some(usage) = usage {
+        run_state.assistant_usage.add_call(usage);
+    }
+    if let Some(response) = response_text {
+        push_chat_exchange(&mut run_state, instruction.to_string(), response.to_string(), unix_now());
+    }
     let _ = persist_run(&dir, &spec, &run_state);
 }
 
@@ -5663,6 +5673,41 @@ exit 1"#);
         assert_eq!(usage["input_tokens"], 200);
         assert_eq!(usage["output_tokens"], 80);
         assert!((usage["total_cost_usd"].as_f64().unwrap() - 0.02).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    /// Real chat history (#382 goal doc §4.2, gap #6 -- "the assistant's own
+    /// chat exchanges aren't pulled in yet"): a real /ask exchange now
+    /// persists into the run's own state, not just the caller's ephemeral
+    /// browser tab. Proven across two real calls, in order, with the real
+    /// instruction AND the real response text both recorded.
+    async fn assistant_calls_persist_real_chat_history_into_the_runs_own_state() {
+        let (port, _rx) = spawn_mock_assistant(
+            StatusCode::OK,
+            serde_json::json!({"response": "done: added milestone", "usage": {"input_tokens": 1, "output_tokens": 1, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "total_cost_usd": 0.0}}),
+        )
+        .await;
+        let (state, _dir) = test_state_with_assistant(Some(&format!("http://127.0.0.1:{port}")));
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "chat-history-run"}))).await.unwrap();
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/chat-history-run/assistant", serde_json::json!({"instruction": "add a milestone for M1"})))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/chat-history-run/assistant", serde_json::json!({"instruction": "what's the status?"})))
+            .await
+            .unwrap();
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/chat-history-run").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        let history = body["state"]["chat_history"].as_array().expect("chat_history must be a real array");
+        assert_eq!(history.len(), 2, "two real exchanges must both persist, in order");
+        assert_eq!(history[0]["instruction"], "add a milestone for M1");
+        assert_eq!(history[0]["response"], "done: added milestone");
+        assert_eq!(history[1]["instruction"], "what's the status?");
     }
 
     #[tokio::test]
