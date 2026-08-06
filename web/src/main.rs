@@ -1257,6 +1257,15 @@ async fn add_backlog_item(
     if text.len() > MAX_SHORT_TEXT_LEN {
         return (StatusCode::BAD_REQUEST, format!("text must be under {MAX_SHORT_TEXT_LEN} characters")).into_response();
     }
+    if contains_bidi_control_char(&text) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "text contains a Unicode bidi control character (e.g. a right-to-left override) -- \
+             these can make the visually displayed text not match what's actually stored"
+                .to_string(),
+        )
+            .into_response();
+    }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
     let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
@@ -1333,6 +1342,16 @@ async fn add_milestone(
     }
     if description.len() > MAX_SHORT_TEXT_LEN {
         return (StatusCode::BAD_REQUEST, format!("description must be under {MAX_SHORT_TEXT_LEN} characters")).into_response();
+    }
+    if contains_bidi_control_char(&description) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "description contains a Unicode bidi control character (e.g. a right-to-left override) \
+             -- these can make the visually displayed text not match what's actually stored, which \
+             matters most here since achieving a milestone auto-pauses the run as a real checkpoint"
+                .to_string(),
+        )
+            .into_response();
     }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
@@ -1417,10 +1436,14 @@ const MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS: usize = 5;
 /// on-screen order doesn't match its real content is exactly the kind of
 /// thing that leads a good-faith reviewer to the wrong result through no
 /// fault of their own judgment, the same governing principle behind every
-/// other gate in this file. Scoped to the two fields a human actually reads
-/// and trusts to decide `toggle_requirement`/`toggle_acceptance_criterion`
-/// (the statement, each criterion) -- not a blanket sweep of every free-text
-/// field in one firing.
+/// other gate in this file. Originally scoped to just the requirement
+/// statement/criteria (the fields a human reads to decide
+/// `toggle_requirement`/`toggle_acceptance_criterion`), then extended the
+/// same firing's own noted follow-up candidates to milestones and backlog
+/// items too (2026-08-06) -- a milestone description mattered most of the
+/// remaining candidates, since `achieved: true` auto-pauses the run as a
+/// real checkpoint a human trusts at face value. Panel titles and
+/// stage-proposal rationale remain open candidates for a future sweep.
 const BIDI_CONTROL_CHARS: [char; 9] = ['\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}'];
 
 fn contains_bidi_control_char(s: &str) -> bool {
@@ -6034,6 +6057,57 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::OK, "a genuine, reasonably-sized backlog item must not be rejected");
+    }
+
+    #[tokio::test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): extending the same firing's own noted follow-up
+    /// candidates -- the bidi-control-character fix for requirement
+    /// statement/criteria was deliberately scoped narrow at first. A
+    /// milestone description mattered most of the remaining candidates,
+    /// since `achieved: true` auto-pauses the run as a real checkpoint a
+    /// human trusts at face value; a milestone laced with U+202E used to
+    /// sail through untouched, live-confirmed before this fix.
+    async fn backlog_and_milestone_text_reject_bidi_control_characters() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "bidi-text-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/bidi-text-run/backlog",
+                serde_json::json!({"text": "write tests\u{202e} for the real feature"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a backlog item containing a bidi override character must be rejected");
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/bidi-text-run/milestones",
+                serde_json::json!({"description": "M1 achieved\u{202e} deification esaeler ton -- gnitset ylno"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a milestone description containing a bidi override character must be rejected");
+
+        // Genuinely clean text must still be accepted through both endpoints.
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/bidi-text-run/backlog", serde_json::json!({"text": "a real, clean backlog item"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "a clean backlog item must not be rejected");
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/bidi-text-run/milestones", serde_json::json!({"description": "a real, clean milestone"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "a clean milestone description must not be rejected");
     }
 
     #[tokio::test]
