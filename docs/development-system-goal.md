@@ -2963,4 +2963,28 @@ Enter to submit, unlike the simpler fill-mode popover) rather than just stating 
 Hermetically built clean. No new operator input on any of the three open `#382` checkpoints;
 GitHub's incident still `major_outage`; live docs site continues serving correctly.
 
+**Goal-driven-loop firing, 2026-08-06 (mmm) -- independently verified a security claim this whole
+session had only ever asserted from code comments, never actually attacked**: no new operator input
+on any of the three open `#382` checkpoints; run `824e17f`'s CI still `queued`, not confirmable
+green; issue #14 unchanged.
+
+Custom-panel `html` has been treated as "safe because sandboxed" throughout this session's own
+reasoning (most recently, the deliberate choice not to add a bidi check to `html` while adding one
+to every other free-text field) -- but that claim had never actually been attacked live this
+session, only read from `add_custom_panel`'s own doc comment (`<iframe sandbox="allow-scripts">`,
+no `allow-same-origin`). Built a real, live attack: a genuine custom panel whose HTML attempts three
+real escapes -- overwriting the parent page's title via `window.parent.document`, reading
+`document.cookie`, and writing to `window.localStorage` -- submitted through the real API, opened
+through the real GUI's own "Open" button (a real floating window, not a synthetic harness), inspected
+via Playwright.
+
+**All three blocked, confirmed by the attack script's own outcome report and independently by the
+main page's own untouched title**: `parentAccess: "blocked: ... Blocked a frame with origin \"null\"
+from accessing a cross-origin frame"`, `cookieAccess`/`localStorageAccess`: both `"blocked: ... lacks
+the 'allow-same-origin' flag"`. Zero console errors. No code change -- this is a genuine, clean
+security verification, not a fix, recorded the same as any other real audit result this session
+(the 110-file bidi audit, the cross-feature Open Points sync checks). Confirms the reasoning behind
+every "deliberately not `html`" note already in this codebase and docs was actually correct, not
+just assumed.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
