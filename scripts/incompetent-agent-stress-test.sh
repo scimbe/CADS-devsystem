@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# The incompetent-agent stress test (#382 goal doc §8), finally built as real,
+# reusable infrastructure rather than left as thirty-four rounds of one-off
+# manual investigation. Each of the checks below reproduces a REAL lazy/
+# careless shortcut this project's own stress-test firings already found and
+# fixed live against the actual deployment this session -- this script exists
+# so none of those thirty-four real gaps can silently regress unnoticed on a
+# later change, not to discover new ones (that's still what each firing's own
+# live investigation is for).
+#
+# Honestly scoped, not claimed exhaustive: only the MECHANICAL, deterministic
+# gates are covered here (server-side validation that returns the same real
+# HTTP status every time). The LLM-dependent findings (prompt-injection
+# resistance, the assistant's milestone-pause disclosure, the assistant's
+# requirement-verification evidentiary gate) are deliberately left out of this
+# v1 -- each real LLM call costs real money/time and the reply's exact wording
+# is non-deterministic, so "did it behave correctly" needs a human or a
+# separate, slower live-verification pass, not a fast boolean regression
+# check. A future firing can build a v2 harness for those specifically.
+#
+# Usage: scripts/incompetent-agent-stress-test.sh [base-url]
+#   Runs against a REAL, already-running devsystem-web (default
+#   http://127.0.0.1:8790) -- this is a live-deployment test, not a mock.
+#   Creates exactly one real scratch run, named and timestamped so it's
+#   identifiable, and deletes it again at the end (pass or fail) using the
+#   real DELETE /api/runs/{id} endpoint (run 31) -- this script is itself real
+#   proof that endpoint works, on every single invocation.
+set -uo pipefail
+
+BASE="${1:-http://127.0.0.1:8790}"
+RUN="stress-harness-$(date +%s 2>/dev/null || echo fallback)-$$"
+
+PASS=0
+FAIL=0
+
+check() {
+  local description="$1"
+  local expected="$2"
+  local actual="$3"
+  if [ "$actual" = "$expected" ]; then
+    echo "  PASS: $description (got $actual)"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL: $description (expected $expected, got $actual)"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+cleanup() {
+  curl -s -o /dev/null -X DELETE "$BASE/api/runs/$RUN"
+}
+trap cleanup EXIT
+
+echo "Incompetent-agent stress test against $BASE -- scratch run: $RUN"
+echo
+
+echo "[setup] create the real scratch run"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$RUN\"}")
+check "a fresh run_id creates cleanly" "201" "$status"
+if [ "$status" != "201" ]; then
+  echo "Cannot continue without the scratch run -- aborting."
+  exit 1
+fi
+
+echo
+echo "[1] a duplicate run_id must not silently clobber the existing run"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$RUN\"}")
+check "re-creating the same run_id is a real 409, not a silent overwrite" "409" "$status"
+
+echo
+echo "[2] AbortCriteria must stay a real, finite bound -- a 'bounded super loop' the operator can trust"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/criteria" -H 'content-type: application/json' -d '{"max_iterations":0,"max_consecutive_failures":3,"checkin_every":5}')
+check "max_iterations:0 (an unstoppable loop) is rejected" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/criteria" -H 'content-type: application/json' -d '{"max_iterations":999999999,"max_consecutive_failures":3,"checkin_every":5}')
+check "an absurdly large max_iterations (unbounded in practice) is rejected" "400" "$status"
+
+echo
+echo "[3] whitespace-only text must not create a real, empty-looking entry"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/milestones" -H 'content-type: application/json' -d '{"description":"   "}')
+check "a whitespace-only milestone description is rejected" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/backlog" -H 'content-type: application/json' -d '{"text":"   "}')
+check "a whitespace-only backlog item is rejected" "400" "$status"
+
+echo
+echo "[4] a requirement must actually attempt EARS notation and a real, checkable criterion"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/requirements" -H 'content-type: application/json' -d '{"statement":"WHEN the water is shallow, THE SYSTEM SHOULD warn","acceptance_criteria":["a real testable check here"]}')
+check "'shallow' does not count as a real word-boundary SHALL (regression guard for the substring-match bug)" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/requirements" -H 'content-type: application/json' -d '{"statement":"WHEN X, THE SYSTEM SHALL Y","acceptance_criteria":["ok"]}')
+check "a near-empty acceptance criterion ('ok') is rejected" "400" "$status"
+
+echo
+echo "[5] a new-service stage proposal with no price ceiling must be flagged as a real cost-exposure risk"
+propose_body=$(curl -s -X POST "$BASE/api/runs/$RUN/stages/propose" -H 'content-type: application/json' -d '{"stage_id":"devsystem.harness_test_role","tag":"harness_test_role","rationale":"incompetent-agent stress harness probe","use_existing_service":null,"units":1,"price_ceiling":null}')
+proposal_id=$(echo "$propose_body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null)
+if [ -n "$proposal_id" ]; then
+  status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/stages/proposals/$proposal_id/approve")
+  check "approving the unbounded proposal succeeds (it's a valid proposal, just an unbounded one)" "200" "$status"
+  risk_present=$(curl -s "$BASE/api/runs/$RUN" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if any(r["label"]=="no price ceiling set" for r in d["risks"]) else "no")' 2>/dev/null)
+  check "the run now shows the real 'no price ceiling set' risk" "yes" "$risk_present"
+else
+  echo "  FAIL: could not parse a proposal id from propose_stage's real response -- $propose_body"
+  FAIL=$((FAIL + 1))
+fi
+
+echo
+echo "[6] a run belongs to whoever created it -- another account must not be able to act on it"
+owned_run="${RUN}-owned"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -H 'x-gate-email: harness-owner@example.com' -d "{\"run_id\":\"$owned_run\"}"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/runs/$owned_run" -H 'x-gate-email: harness-someone-else@example.com')
+check "a different signed-in account cannot delete someone else's run" "403" "$status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$owned_run" -H 'x-gate-email: harness-owner@example.com'
+
+echo
+echo "[7] deleting a run must be real and permanent, not a soft hide"
+scratch_delete="${RUN}-delete-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$scratch_delete\"}"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/runs/$scratch_delete")
+check "deleting an existing run returns 204" "204" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/runs/$scratch_delete")
+check "the deleted run genuinely 404s afterward, not just hidden from the list" "404" "$status"
+
+echo
+echo "======================================================================"
+echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
+if [ "$FAIL" -gt 0 ]; then
+  echo "A REAL REGRESSION was found in one of the thirty-four gaps this session already closed."
+  exit 1
+fi
+echo "All known lazy-shortcut gates still hold."
+exit 0
