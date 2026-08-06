@@ -1442,8 +1442,15 @@ const MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS: usize = 5;
 /// same firing's own noted follow-up candidates to milestones and backlog
 /// items too (2026-08-06) -- a milestone description mattered most of the
 /// remaining candidates, since `achieved: true` auto-pauses the run as a
-/// real checkpoint a human trusts at face value. Panel titles and
-/// stage-proposal rationale remain open candidates for a future sweep.
+/// real checkpoint a human trusts at face value. Extended once more
+/// (2026-08-06) to custom-panel `title` at all four real entry points
+/// (add, direct-edit, assistant-propose, assistant-propose-edit) --
+/// deliberately NOT `html`, which is untrusted-by-design and rendered only
+/// inside a sandboxed iframe (see `add_custom_panel`'s own doc comment);
+/// `title`, by contrast, is real trusted UI chrome shown in the panel list
+/// and interpolated raw into this feature's own `confirm()` dialogs.
+/// Stage-proposal rationale remains the one open candidate for a future
+/// sweep.
 const BIDI_CONTROL_CHARS: [char; 9] = ['\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}'];
 
 fn contains_bidi_control_char(s: &str) -> bool {
@@ -2433,6 +2440,26 @@ async fn add_custom_panel(
     if title.is_empty() {
         return (StatusCode::BAD_REQUEST, "title must not be empty").into_response();
     }
+    // Real gap found live by the incompetent-agent stress test (#382 goal doc
+    // §8, 2026-08-06), closing out this class's last two noted candidates (see
+    // BIDI_CONTROL_CHARS's own doc comment): a panel's `title` is real, trusted
+    // UI chrome -- shown in the panel list, and interpolated raw into this
+    // panel's own confirm() dialogs -- unlike `html`, which is deliberately
+    // untrusted-by-design (rendered only inside a sandboxed iframe, per this
+    // function's own doc comment). Live-confirmed before this fix: a title
+    // like "Safe Panel" + U+202E + reversed text sailed through untouched,
+    // displaying as an apparently-safe title while hiding real content after
+    // it. Closed at all four real title entry points in one sweep, matching
+    // the html-empty-check fix's own precedent.
+    if contains_bidi_control_char(&title) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "title contains a Unicode bidi control character (e.g. a right-to-left override) -- \
+             these can make the visually displayed text not match what's actually stored"
+                .to_string(),
+        )
+            .into_response();
+    }
     if body.html.len() > MAX_CUSTOM_PANEL_HTML_BYTES {
         return (StatusCode::BAD_REQUEST, format!("html must be under {MAX_CUSTOM_PANEL_HTML_BYTES} bytes")).into_response();
     }
@@ -2541,6 +2568,17 @@ async fn update_custom_panel(
     if title.is_empty() {
         return (StatusCode::BAD_REQUEST, "title must not be empty").into_response();
     }
+    // Same real gap as add_custom_panel -- see its own doc comment (#382 goal
+    // doc §8, 2026-08-06). This is the direct-edit path.
+    if contains_bidi_control_char(&title) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "title contains a Unicode bidi control character (e.g. a right-to-left override) -- \
+             these can make the visually displayed text not match what's actually stored"
+                .to_string(),
+        )
+            .into_response();
+    }
     if body.html.len() > MAX_CUSTOM_PANEL_HTML_BYTES {
         return (StatusCode::BAD_REQUEST, format!("html must be under {MAX_CUSTOM_PANEL_HTML_BYTES} bytes")).into_response();
     }
@@ -2601,6 +2639,19 @@ async fn propose_custom_panel(
     let title = body.title.trim().to_string();
     if title.is_empty() {
         return (StatusCode::BAD_REQUEST, "title must not be empty").into_response();
+    }
+    // Same real gap as add_custom_panel -- see its own doc comment (#382 goal
+    // doc §8, 2026-08-06). This is the assistant-proposal path -- the highest-
+    // stakes of the four, since a human approving from the review queue is
+    // trusting exactly this title at face value.
+    if contains_bidi_control_char(&title) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "title contains a Unicode bidi control character (e.g. a right-to-left override) -- \
+             these can make the visually displayed text not match what's actually stored"
+                .to_string(),
+        )
+            .into_response();
     }
     if body.html.len() > MAX_CUSTOM_PANEL_HTML_BYTES {
         return (StatusCode::BAD_REQUEST, format!("html must be under {MAX_CUSTOM_PANEL_HTML_BYTES} bytes")).into_response();
@@ -2977,6 +3028,19 @@ async fn propose_panel_edit(
     let new_title = body.title.trim().to_string();
     if new_title.is_empty() {
         return (StatusCode::BAD_REQUEST, "title must not be empty").into_response();
+    }
+    // Same real gap as add_custom_panel -- see its own doc comment (#382 goal doc §8,
+    // 2026-08-06). This is the assistant-edit-proposal path -- also the one that
+    // shows an old_title/new_title diff in the review queue, so a spoofed
+    // new_title is exactly what a reviewer is trying to compare against.
+    if contains_bidi_control_char(&new_title) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "title contains a Unicode bidi control character (e.g. a right-to-left override) -- \
+             these can make the visually displayed text not match what's actually stored"
+                .to_string(),
+        )
+            .into_response();
     }
     // Same real gap as add_custom_panel -- see its own doc comment (#382 goal doc §8,
     // 2026-08-06). This is the assistant-edit-proposal path.
@@ -6436,6 +6500,70 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): closing out this class's last-but-one noted candidate.
+    /// A panel `title` is real, trusted UI chrome (the panel list, this
+    /// feature's own confirm() dialogs) -- unlike `html`, deliberately
+    /// untrusted-by-design and sandboxed, which is why only `title` gets this
+    /// check. Live-confirmed before fixing: "Safe Panel" + U+202E + reversed
+    /// text sailed through untouched at all four real entry points.
+    async fn custom_panel_title_rejects_bidi_control_characters_at_all_four_entry_points() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "bidi-panel-run"}))).await.unwrap();
+
+        let bidi_title = "Safe Panel\u{202e} lenap suoregnad a yllaer si sihT";
+
+        // 1. add_custom_panel (direct add).
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/bidi-panel-run/panels", serde_json::json!({"title": bidi_title, "html": "<p>x</p>"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "add_custom_panel must reject a bidi-laced title");
+
+        // Add a real, clean panel to edit/update against.
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/bidi-panel-run/panels", serde_json::json!({"title": "Clean Panel", "html": "<p>x</p>"})))
+            .await
+            .unwrap();
+        let panel = body_json(response).await;
+        let panel_id = panel["id"].as_str().unwrap().to_string();
+
+        // 2. update_custom_panel (direct edit).
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/api/runs/bidi-panel-run/panels/{panel_id}/update"),
+                serde_json::json!({"title": bidi_title, "html": "<p>x</p>"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "update_custom_panel must reject a bidi-laced title");
+
+        // 3. propose_custom_panel (assistant-proposal path).
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/bidi-panel-run/panels/propose", serde_json::json!({"title": bidi_title, "html": "<p>x</p>"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "propose_custom_panel must reject a bidi-laced title");
+
+        // 4. propose_panel_edit (assistant-edit-proposal path).
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                &format!("/api/runs/bidi-panel-run/panels/{panel_id}/propose-edit"),
+                serde_json::json!({"title": bidi_title, "html": "<p>x</p>"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "propose_panel_edit must reject a bidi-laced title");
     }
 
     #[tokio::test]
