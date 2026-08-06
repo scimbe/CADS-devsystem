@@ -397,36 +397,74 @@
    transition:--orb-radius .6s cubic-bezier(.16,1,.32,1);
    opacity:0;
  }
- .orb-overlay.open{--orb-radius:490px;opacity:1;pointer-events:auto;transition:--orb-radius .6s cubic-bezier(.16,1,.32,1),opacity .15s ease}
+ .orb-overlay.open{--orb-radius:620px;opacity:1;pointer-events:auto;transition:--orb-radius .6s cubic-bezier(.16,1,.32,1),opacity .15s ease}
  @supports not (background:paint(x)){
    /* Real fallback for browsers without @property/animatable-gradient support
       (older Safari): a plain hard-edged clip-path reveal -- loses the soft
       feathered edge but still gets the actual "unfold from the dot" motion,
       the more load-bearing half of the ask. */
    .orb-overlay{clip-path:circle(0px at 50px calc(100% - 50px));transition:clip-path .6s cubic-bezier(.16,1,.32,1);-webkit-mask-image:none;mask-image:none}
-   .orb-overlay.open{clip-path:circle(490px at 50px calc(100% - 50px))}
+   .orb-overlay.open{clip-path:circle(620px at 50px calc(100% - 50px))}
  }
  .orb-bubbles{position:absolute;inset:0}
+ /* Real redesign, live operator feedback ("nicht abkuerzen... wie Apple"):
+    no title is ever shortened now -- a full label needs real horizontal
+    room, which a text-inside-a-small-circle layout structurally can't give
+    every one of 20 panels at once without either truncating or growing the
+    whole segment far past a "corner circle segment." Split instead, the
+    same way macOS' own Dock does: important panels (.tier-label) get a
+    real icon + an always-visible full label; the rest (.tier-icon) are a
+    compact icon only, with the full label appearing as a real floating
+    pill on hover/focus -- never truncated, since only one shows at a time
+    and it isn't fighting neighbors for space. */
  .orb-bubble{
-   position:absolute;left:50px;bottom:50px;border-radius:50%;border:1px solid rgba(255,255,255,.08);
-   background:radial-gradient(circle at 32% 28%,rgba(255,255,255,.14),rgba(20,27,36,.92) 65%);
-   backdrop-filter:blur(2px);color:var(--text);display:flex;flex-direction:column;align-items:center;
-   justify-content:center;text-align:center;cursor:pointer;font-family:var(--serif);line-height:1.15;
-   padding:.3rem;gap:.15rem;opacity:0;transform:translate(0,0) scale(.3);
-   transition:opacity .38s ease var(--orb-delay,0s),transform .5s cubic-bezier(.2,1.3,.4,1) var(--orb-delay,0s),
-              border-color .15s ease,background .15s ease;
+   position:absolute;left:50px;bottom:50px;display:flex;flex-direction:column;align-items:center;
+   gap:.4rem;cursor:pointer;border:none;background:none;padding:0;color:var(--text);
+   font-family:-apple-system,BlinkMacSystemFont,var(--serif);line-height:1.2;
+   opacity:0;transform:translate(0,0) scale(.5);
+   transition:opacity .4s ease var(--orb-delay,0s),transform .6s cubic-bezier(.22,1.42,.36,1) var(--orb-delay,0s);
  }
- .orb-overlay.open .orb-bubble{
-   opacity:1;transform:translate(var(--orb-x),var(--orb-y)) scale(1);
+ .orb-overlay.open .orb-bubble{opacity:1;transform:translate(var(--orb-x),var(--orb-y)) scale(1)}
+ .orb-puck{
+   position:relative;border-radius:50%;border:1px solid rgba(255,255,255,.16);
+   background:radial-gradient(circle at 32% 26%,rgba(255,255,255,.24),rgba(255,255,255,.03) 70%),
+              rgba(30,38,50,.55);
+   backdrop-filter:blur(18px) saturate(180%);-webkit-backdrop-filter:blur(18px) saturate(180%);
+   box-shadow:0 10px 26px rgba(0,0,0,.4),inset 0 1px 1px rgba(255,255,255,.15);
+   transition:transform .25s cubic-bezier(.22,1.42,.36,1),border-color .2s ease,box-shadow .2s ease;
  }
- .orb-bubble:hover,.orb-bubble:focus-visible{border-color:var(--accent2);background:radial-gradient(circle at 32% 28%,rgba(95,184,171,.24),rgba(20,27,36,.94) 65%)}
- .orb-bubble.active{border-color:var(--accent)}
- .orb-bubble .orb-bubble-title{font-size:var(--orb-font,.7rem);font-weight:600;word-break:break-word}
- .orb-bubble .orb-bubble-badge{
+ .orb-bubble:hover .orb-puck,.orb-bubble:focus-visible .orb-puck{transform:scale(1.1);border-color:var(--accent2)}
+ .orb-bubble.active .orb-puck{border-color:var(--accent);box-shadow:0 0 0 2px rgba(217,138,79,.28),0 10px 26px rgba(0,0,0,.4)}
+ .orb-label{
+   font-size:var(--orb-font,.76rem);font-weight:600;text-align:center;max-width:118px;
+   word-break:break-word;
+ }
+ .tier-label .orb-label{
+   background:rgba(13,17,23,.6);backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);
+   border:1px solid rgba(255,255,255,.07);border-radius:10px;padding:.22rem .6rem;
+ }
+ .tier-icon .orb-label{
+   position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%) translateY(4px);
+   background:rgba(13,17,23,.92);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);
+   border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:.3rem .65rem;box-shadow:0 8px 20px rgba(0,0,0,.45);
+   opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;white-space:normal;z-index:1;
+ }
+ /* No `.tier-icon{position:relative}` here -- .orb-bubble (the button) is
+    already position:absolute, which already establishes the positioning
+    context .orb-label needs. A real bug, live-confirmed via Playwright
+    bounding-box coordinates before this fix: `.tier-icon{position:relative}`
+    had the same specificity as `.orb-bubble{position:absolute}` and came
+    later in the stylesheet, so it silently won and knocked all 12 icon-tier
+    bubbles out of the radial layout entirely (real negative Y coordinates,
+    stacked off-screen above the viewport in normal document flow) -- they
+    were rendering with opacity:1, just nowhere near their intended
+    position, invisible in every screenshot taken before this was caught. */
+ .tier-icon:hover .orb-label,.tier-icon:focus-visible .orb-label{opacity:1;transform:translateX(-50%) translateY(0)}
+ .orb-bubble-badge{
    position:absolute;top:-4px;right:-4px;background:var(--danger);color:#fff;border-radius:999px;
-   font-family:var(--mono);font-size:.62rem;font-weight:700;padding:.05rem .35rem;line-height:1.3;
+   font-family:var(--mono);font-size:.62rem;font-weight:700;padding:.05rem .35rem;line-height:1.3;z-index:1;
  }
- .orb-bubble .orb-bubble-dot{width:6px;height:6px;border-radius:50%;background:var(--accent2)}
+ .orb-bubble-dot{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);width:6px;height:6px;border-radius:50%;background:var(--accent2)}
  .orb-product-link{
    position:absolute;left:16px;bottom:88px;font-family:var(--mono);font-size:.72rem;color:var(--muted);
    opacity:0;transition:opacity .35s ease .22s;display:flex;align-items:center;gap:.4rem;text-decoration:none;
@@ -1367,73 +1405,68 @@ function updateOrbProductLink() {
   link.innerHTML = `<img src="https://opengraph.githubassets.com/1/${escapeHtml(owner)}/${escapeHtml(repo)}" alt="" loading="lazy">open ${escapeHtml(owner)}/${escapeHtml(repo)} ↗`;
 }
 
-// Real gap found live via a Playwright screenshot: several two/three-word
-// panel titles ("Health & Criteria", "Custom Panels", "Assistant Usage")
-// genuinely overflowed the smaller outer-ring bubbles, reading as visual
-// overlap with a neighbor even though the circles themselves weren't
-// touching. Real title stays the accessible name (title="" attribute,
-// always full) -- only the on-bubble label shortens, and only for the two
-// outer rings, which is where the real estate is actually tight.
-const ORB_SHORT_TITLE = {
-  healthcrit: 'Health', risks: 'Risks', newiter: 'Iterate', requirements: 'Reqs',
-  panels: 'Panels', usage: 'Usage', openpoints: 'Open Pts',
-  memory: 'Memory', rag: 'Docs', milestones: 'Miles', checkin: 'Check',
-};
-
 function renderOrbBubbles() {
   const wrap = document.getElementById('orb-bubbles');
   if (!wrap) return;
   const ids = Object.keys(PANEL_DEFAULTS);
   const scored = ids.map(id => ({ id, score: orbImportanceScore(id, currentRunData) })).sort((a, b) => b.score - a.score);
-  // Real correction, live operator feedback: the reveal itself is now
-  // bounded to a fixed 490px radius (see --orb-radius above), a genuine
-  // corner segment rather than covering most of the viewport -- so these
-  // four rings are deliberately tighter/smaller than the first version to
-  // keep every bubble's outer edge comfortably inside that real boundary
-  // (worked out below, outer edge tops out around 420px, well under 490).
-  const RINGS = [
-    { count: 3, size: 76, font: .76, minRadius: 140, shortLabel: false },
-    { count: 5, size: 56, font: .62, minRadius: 220, shortLabel: true },
-    { count: 6, size: 44, font: .54, minRadius: 310, shortLabel: true },
-    { count: Infinity, size: 36, font: .48, minRadius: 400, shortLabel: true },
+  // Real redesign, live operator feedback ("nicht abkuerzen... wie Apple"):
+  // no title is ever shortened now. A permanently-visible full label needs
+  // real horizontal room (~120px), which only the top two tiers can afford
+  // without either the segment ballooning past a real "corner segment" or
+  // labels colliding -- so tiers 3+4 are icon-only (puck), full label on
+  // hover/focus, exactly the macOS Dock convention. Each tier's own radius
+  // is solved for real collision avoidance: the chord between adjacent
+  // items at radius r spanning angle step (radians) is 2r*sin(step/2) --
+  // labeled tiers size that chord off the real label width; icon tiers off
+  // the much smaller puck width alone, which is why they can pack in
+  // without needing anywhere near as much radius per item.
+  const TIERS = [
+    { count: 3, puck: 72, font: .86, minRadius: 160, labeled: true, chordBasis: 148 },
+    { count: 5, puck: 54, font: .78, minRadius: 300, labeled: true, chordBasis: 138 },
+    { count: 6, puck: 38, font: .74, minRadius: 380, labeled: false, chordBasis: 58 },
+    { count: Infinity, puck: 30, font: .74, minRadius: 470, labeled: false, chordBasis: 48 },
   ];
   const minA = 8, maxA = 82;
   let cursor = 0;
+  let outerEdgeSoFar = 0;
   const placed = [];
-  for (const ring of RINGS) {
-    const slice = scored.slice(cursor, cursor + ring.count);
-    cursor += ring.count;
+  for (const tier of TIERS) {
+    const slice = scored.slice(cursor, cursor + tier.count);
+    cursor += tier.count;
     const n = slice.length;
     if (!n) continue;
-    // Real collision avoidance, not a guessed gap: the chord between two
-    // adjacent bubbles at radius r spanning angle step (in radians) is
-    // 2r*sin(step/2) -- solve for the radius that keeps that chord at
-    // least one bubble-diameter-plus-gap apart, given n's own real angular
-    // step across the fixed 8deg-82deg arc. Found live why this matters:
-    // the first version used flat fixed radii per ring and every bubble in
-    // ring 0 visibly overlapped in a real screenshot.
     const stepRad = n > 1 ? ((maxA - minA) / (n - 1)) * (Math.PI / 180) : 0;
-    const neededChord = ring.size + 20;
-    const radius = n > 1 ? Math.max(ring.minRadius, neededChord / (2 * Math.sin(stepRad / 2))) : ring.minRadius;
+    // Real fix, live-confirmed via Playwright bounding boxes: a tier's own
+    // *configured* minRadius isn't enough on its own -- a labeled tier's
+    // real computed radius (driven by label-width chord spacing) can
+    // legitimately exceed a LATER tier's configured minimum, so that later
+    // tier's small icon pucks land visually inside the earlier tier's own
+    // footprint. Each tier must clear the actual (not just configured)
+    // outer edge of everything already placed, with real margin.
+    const floor = Math.max(tier.minRadius, outerEdgeSoFar + 30);
+    const radius = n > 1 ? Math.max(floor, tier.chordBasis / (2 * Math.sin(stepRad / 2))) : floor;
+    outerEdgeSoFar = radius + tier.puck / 2;
     slice.forEach((entry, i) => {
       const angleDeg = n === 1 ? (minA + maxA) / 2 : minA + ((maxA - minA) * i) / (n - 1);
       const rad = (angleDeg * Math.PI) / 180;
       const x = Math.cos(rad) * radius;
       const y = -Math.sin(rad) * radius;
-      placed.push({ ...entry, x, y, size: ring.size, font: ring.font, shortLabel: ring.shortLabel });
+      placed.push({ ...entry, x, y, puck: tier.puck, font: tier.font, labeled: tier.labeled });
     });
   }
   wrap.innerHTML = placed
     .map((p, i) => {
       const d = PANEL_DEFAULTS[p.id];
-      const label = p.shortLabel ? ORB_SHORT_TITLE[p.id] || d.title : d.title;
       const visible = panelRect(p.id).visible;
       const pending = pendingApprovalCountFor(p.id);
       const badge = pending ? `<span class="orb-bubble-badge">${pending}</span>` : '';
       const dot = visible ? `<span class="orb-bubble-dot" title="currently open"></span>` : '';
-      return `<button type="button" class="orb-bubble${visible ? ' active' : ''}" data-panel="${p.id}" title="${escapeHtml(d.title)}"
-        style="width:${p.size}px;height:${p.size}px;--orb-x:${p.x.toFixed(1)}px;--orb-y:${p.y.toFixed(1)}px;--orb-font:${p.font}rem;--orb-delay:${Math.min(i * 22, 420)}ms">
-        ${badge}<span class="orb-bubble-title">${escapeHtml(label)}</span>${dot}
+      const tierClass = p.labeled ? 'tier-label' : 'tier-icon';
+      const label = `<span class="orb-label">${escapeHtml(d.title)}</span>`;
+      return `<button type="button" class="orb-bubble ${tierClass}${visible ? ' active' : ''}" data-panel="${p.id}" title="${escapeHtml(d.title)}"
+        style="--orb-x:${p.x.toFixed(1)}px;--orb-y:${p.y.toFixed(1)}px;--orb-font:${p.font}rem;--orb-delay:${Math.min(i * 22, 420)}ms">
+        <span class="orb-puck" style="width:${p.puck}px;height:${p.puck}px">${badge}${dot}</span>${label}
       </button>`;
     })
     .join('');
