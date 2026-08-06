@@ -2674,6 +2674,12 @@ async fn approve_stage_proposal(
     let outcome = apply_proposal(&mut spec, &pending.proposal);
     if outcome == ProposalOutcome::Added {
         run_state.added_stages.push(pending.proposal.stage_id.clone());
+        // Real gap found live by the stress test, twenty-fifth run, 2026-08-06
+        // (see RunState::approved_stage_proposals' own doc comment): this path
+        // used to discard `pending.proposal` here, permanently losing its real
+        // price_ceiling the moment it was approved -- `no_price_ceiling` could
+        // never see it, since this path never touches `history` either.
+        run_state.approved_stage_proposals.push(pending.proposal.clone());
     }
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({
@@ -5549,6 +5555,49 @@ mod tests {
         assert_eq!(run["spec"]["roles"].as_array().unwrap().len(), 2, "approval must add the real role to the live spec");
         assert_eq!(run["state"]["pending_stage_proposals"].as_array().unwrap().len(), 0);
         assert_eq!(run["state"]["added_stages"], serde_json::json!(["devsystem.android_emulator_test"]));
+    }
+
+    #[tokio::test]
+    /// Real gap found live by the stress test, twenty-fifth run, 2026-08-06:
+    /// approving a stage proposal through this exact real path used to
+    /// discard the proposal's own real price_ceiling entirely -- no_price_ceiling
+    /// (preflight.rs) only ever scanned history.proposals, which this path
+    /// never touches at all, so an assistant-relayed proposal's cost exposure
+    /// became permanently invisible to that risk check the moment it was
+    /// approved. Proves the real fix at this real call site, not just the
+    /// shared preflight.rs logic in isolation.
+    async fn approving_a_stage_proposal_with_no_price_ceiling_makes_the_real_risk_appear() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "propose-stage-price-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/propose-stage-price-run/stages/propose",
+                serde_json::json!({"stage_id": "devsystem.gpu_training", "tag": "gpu_training", "rationale": "needs a real new paid service"}),
+            ))
+            .await
+            .unwrap();
+        let proposal_id = body_json(response).await["id"].as_str().unwrap().to_string();
+
+        let before = app.clone().oneshot(Request::builder().uri("/api/runs/propose-stage-price-run").body(Body::empty()).unwrap()).await.unwrap();
+        let before = body_json(before).await;
+        assert!(before["risks"].as_array().unwrap().is_empty(), "not live yet -- no real risk before approval");
+
+        app.clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/propose-stage-price-run/stages/proposals/{proposal_id}/approve")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        let after = app.oneshot(Request::builder().uri("/api/runs/propose-stage-price-run").body(Body::empty()).unwrap()).await.unwrap();
+        let after = body_json(after).await;
+        let risks = after["risks"].as_array().unwrap();
+        assert!(
+            risks.iter().any(|r| r["label"] == "no price ceiling set"),
+            "approving this exact real path must make the real cost-exposure risk visible, not silently lose it: {risks:?}"
+        );
     }
 
     #[tokio::test]

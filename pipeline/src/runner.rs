@@ -258,6 +258,25 @@ pub struct RunState {
     /// `stage_id`s of every proposal that actually got added to the live spec, in the
     /// order they were added -- the run's own record of how the pipeline grew itself.
     pub added_stages: Vec<String>,
+    /// The real, full `StageProposal` behind every entry in `added_stages` -- not just
+    /// the stage id, the actual proposal (including its real `price_ceiling`) that got
+    /// applied. Real gap found live by the stress test, twenty-fifth run, 2026-08-06:
+    /// `no_price_ceiling` (preflight.rs) only ever scanned `history.proposals`, which
+    /// only a role-filler's own iteration-embedded proposals land in
+    /// (`run_iteration` pushes the whole `IterationRecord` there) -- an
+    /// assistant-relayed proposal, approved via `POST .../stages/proposals/{id}/approve`,
+    /// never touches `history` at all (`approve_stage_proposal` mutates `spec`/
+    /// `added_stages` directly, then discards the pending proposal), so its real
+    /// `price_ceiling` became permanently unrecoverable the moment it was approved --
+    /// not just invisible to one check, genuinely lost. The same "two real entry
+    /// points, one bug class" shape already found and fixed this session for
+    /// `validate_proposals`/markdown-fencing/`valid_run_id`/signing-key permissions.
+    /// Both real call sites (`run_iteration` here, `approve_stage_proposal` in
+    /// `web/src/main.rs`) now push here whenever `apply_proposal` returns `Added`, so
+    /// this is the one complete, honest record regardless of which path a proposal
+    /// took -- `#[serde(default)]` so pre-existing `state.json` files still load.
+    #[serde(default)]
+    pub approved_stage_proposals: Vec<crate::StageProposal>,
     /// This run's own bounded-loop criteria -- starts at [`AbortCriteria::default`] but
     /// a human can tune it per run (e.g. a run that's earned trust doesn't need a
     /// check-in every 5 iterations). `#[serde(default)]` so `state.json` files written
@@ -556,6 +575,7 @@ impl RunState {
             consecutive_failures: 0,
             history: Vec::new(),
             added_stages: Vec::new(),
+            approved_stage_proposals: Vec::new(),
             criteria: AbortCriteria::default(),
             paused: false,
             backlog: Vec::new(),
@@ -831,6 +851,7 @@ pub fn run_iteration(
     for proposal in &record.proposals {
         if apply_proposal(spec, proposal) == ProposalOutcome::Added {
             state.added_stages.push(proposal.stage_id.clone());
+            state.approved_stage_proposals.push(proposal.clone());
         }
     }
 
