@@ -803,6 +803,23 @@ real gap can itself introduce a real regression if the fix narrows a check's dat
 widening it -- the same discipline this session applies to every other finding applies to its own
 fixes too. Twenty-six real stress-test investigations, twenty-six real gaps found and closed.
 
+**The stress test's twenty-seventh real run, 2026-08-06**: found live-testing the edge cases of
+runs 25/26's own price_ceiling fixes -- a human trying to *fix* an already-live unbounded role the
+natural way, re-proposing the exact same `stage_id` with a real `price_ceiling` this time, got a
+genuine `200` (`apply_proposal` correctly reports `AlreadyPresent` -- the role's own service/tag
+really is unchanged) but the fix itself was silently discarded: `no_price_ceiling` took the *first*
+matching entry for a `stage_id`, always the original bad proposal, with no way for a later, better
+proposal to ever supersede it. Live-confirmed: proposed+approved unbounded, got flagged; re-proposed
++approved with `price_ceiling: 50`, got a real `200`, risk stayed exactly the same forever. Fixed on
+both ends (`CADS-devsystem@1ff2b82`): both real call sites now push every real proposal to
+`approved_stage_proposals` regardless of `Added` vs `AlreadyPresent` (previously gated on `Added`
+only, discarding every re-proposal attempt), and `no_price_ceiling` now takes the *last* matching
+entry per `stage_id` instead of the first, so a later, real, better proposal actually wins. Hermetic:
+pipeline lib 99/99, web crate 157/157. Deployed and live-reverified against the exact case that
+proved the bug: the "fix" now genuinely clears the risk, and the actual flagship run's own real
+risks stayed correctly intact through this further change. Twenty-seven real stress-test
+investigations, twenty-seven real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
