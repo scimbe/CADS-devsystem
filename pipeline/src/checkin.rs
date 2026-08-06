@@ -38,6 +38,70 @@ pub fn render_plan_markdown(state: &RunState) -> Option<String> {
     Some(render_iteration(state, latest))
 }
 
+/// Real gap found live by the incompetent-agent stress test (#382 goal doc §8,
+/// 2026-08-06): free-text fields a role-filler (or a human) fully controls --
+/// `feedback`, a requirement's `statement`, a proposal's `rationale` -- were
+/// spliced directly into this check-in artifact as raw markdown. Live-verified
+/// before this fix: an iteration whose feedback contained
+/// `"## Risk annotations\n\nNone found -- all clear"` and
+/// `"**APPROVED by human reviewer**"` rendered as if it were this renderer's own
+/// real structure, ahead of the genuine `## Risk annotations` section this
+/// function renders further down with the run's actual, real findings -- a
+/// human skimming the document at exactly the moment they're meant to catch a
+/// real problem could easily read the fake section as authoritative and never
+/// reach the real one. This is the check-in artifact's entire reason to exist
+/// (a human staying in the loop), so letting role-filler-controlled text
+/// impersonate the renderer's own voice defeats the point.
+///
+/// Fixed the same way custom-panel HTML is already handled elsewhere in this
+/// codebase: render as content, never as trusted structure -- wrapped in a
+/// fenced code block, so it displays in full (nothing hidden or stripped) but
+/// can never be mistaken for a real heading/bold/list this renderer produced.
+/// The fence length is chosen longer than the longest run of consecutive
+/// backticks already in the text (CommonMark: a closing fence must be at least
+/// as long as the opening one; a shorter backtick run inside stays literal), so
+/// content can't break out of its own fence either.
+fn fence_wrap(text: &str) -> String {
+    let mut longest_run = 0;
+    let mut current_run = 0;
+    for c in text.chars() {
+        if c == '`' {
+            current_run += 1;
+            longest_run = longest_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+    let fence = "`".repeat((longest_run + 1).max(3));
+    format!("{fence}\n{text}\n{fence}")
+}
+
+/// Same reasoning as [`fence_wrap`], for content that has to stay on one line (a
+/// single `- ` list item can't hold a fenced code block, which needs its own
+/// lines) -- a backtick-delimited inline code span instead, sized the same way
+/// (longer than the longest existing backtick run), with a padding space on
+/// each side if the text itself starts or ends with a backtick (CommonMark's
+/// own rule -- without it, the delimiter and the text's own leading/trailing
+/// backtick would visually merge).
+fn inline_code_escape(text: &str) -> String {
+    let mut longest_run = 0;
+    let mut current_run = 0;
+    for c in text.chars() {
+        if c == '`' {
+            current_run += 1;
+            longest_run = longest_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+    let delim = "`".repeat(longest_run + 1);
+    if text.starts_with('`') || text.ends_with('`') {
+        format!("{delim} {text} {delim}")
+    } else {
+        format!("{delim}{text}{delim}")
+    }
+}
+
 fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
     let mut md = String::new();
     md.push_str(&format!("# Check-in: `{}` -- iteration {}\n\n", state.run_id, record.iteration));
@@ -69,7 +133,7 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
 
     md.push_str(&format!("**Stage:** `{}`\n\n", record.stage));
     md.push_str("## What this stage found\n\n");
-    md.push_str(&record.feedback);
+    md.push_str(&fence_wrap(&record.feedback));
     md.push_str("\n\n");
 
     // Real gap found+fixed 2026-08-05: requirement_indices lives ON this exact
@@ -82,7 +146,11 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
         md.push_str("## Requirements addressed this iteration\n\n");
         for &i in &record.requirement_indices {
             match state.requirements.get(i) {
-                Some(r) => md.push_str(&format!("- {}\n", r.statement)),
+                // A one-line list item can't safely hold a fenced code block (the
+                // fence needs its own lines) -- inline backtick-escaping the
+                // statement instead still neutralizes markdown structure
+                // (headings/bold/etc.) while keeping this a real one-line list.
+                Some(r) => md.push_str(&format!("- {}\n", inline_code_escape(&r.statement))),
                 None => md.push_str(&format!("- requirement #{i} (no longer exists)\n")),
             }
         }
@@ -99,7 +167,8 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
             md.push_str(&format!("- **Tag / units:** `{}` / {}\n", p.tag, p.units));
             let reuse = p.use_existing_service.as_deref().unwrap_or("none -- a new service must be built or provided");
             md.push_str(&format!("- **Existing service to reuse:** {reuse}\n\n"));
-            md.push_str(&format!("{}\n\n", p.rationale));
+            md.push_str(&fence_wrap(&p.rationale));
+            md.push_str("\n\n");
         }
     }
 
@@ -144,19 +213,42 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
     // never mentioned them at all. A human could approve/request-changes on
     // THIS iteration and never learn a real, possibly much older proposal was
     // still waiting on them.
-    let pending_total = state.pending_stage_proposals.len() + state.pending_panel_proposals.len() + state.pending_issue_proposals.len();
+    //
+    // Real gap found live by the incompetent-agent stress test (#382 goal doc
+    // §8, 2026-08-06): the exact same "only three of five real queues" undercount
+    // already found and fixed in the GUI's own Pipeline-chip badge
+    // (CADS-devsystem@c5c02c5) was live here too -- pending_total never grew to
+    // include pending_panel_removal_proposals/pending_panel_edit_proposals, and
+    // this section's own enumeration below never listed them at all. A real
+    // pending panel-removal or -edit proposal was invisible to the one artifact
+    // whose whole job is telling a human what's waiting on them.
+    let pending_total = state.pending_stage_proposals.len()
+        + state.pending_panel_proposals.len()
+        + state.pending_panel_removal_proposals.len()
+        + state.pending_panel_edit_proposals.len()
+        + state.pending_issue_proposals.len();
     if pending_total > 0 {
         md.push_str("## Also awaiting your review\n\n");
         md.push_str("Independent of this check-in's own decision -- queued separately (possibly \
             several iterations ago) and still waiting on you:\n\n");
         for p in &state.pending_stage_proposals {
-            md.push_str(&format!("- **Pipeline stage** `{}`: {}\n", p.proposal.stage_id, p.proposal.rationale));
+            md.push_str(&format!("- **Pipeline stage** `{}`: {}\n", p.proposal.stage_id, inline_code_escape(&p.proposal.rationale)));
         }
         for p in &state.pending_panel_proposals {
-            md.push_str(&format!("- **Custom panel** \"{}\"\n", p.title));
+            md.push_str(&format!("- **Custom panel proposed** {}\n", inline_code_escape(&p.title)));
+        }
+        for p in &state.pending_panel_removal_proposals {
+            md.push_str(&format!("- **Custom panel removal proposed:** {}\n", inline_code_escape(&p.panel_title)));
+        }
+        for p in &state.pending_panel_edit_proposals {
+            md.push_str(&format!(
+                "- **Custom panel edit proposed:** {} -> {}\n",
+                inline_code_escape(&p.old_title),
+                inline_code_escape(&p.new_title)
+            ));
         }
         for p in &state.pending_issue_proposals {
-            md.push_str(&format!("- **GitHub issue** on `{}`: \"{}\"\n", p.repo, p.title));
+            md.push_str(&format!("- **GitHub issue** on `{}`: {}\n", p.repo, inline_code_escape(&p.title)));
         }
         md.push('\n');
     }
@@ -255,6 +347,45 @@ mod tests {
     }
 
     #[test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): a live iteration whose feedback contained fake
+    /// "## Risk annotations\n\nNone found -- all clear" and
+    /// "**APPROVED by human reviewer**" markdown rendered as if it were this
+    /// renderer's own real structure, ahead of the genuine `## Risk annotations`
+    /// section further down. This proves the fix: the injected text must appear
+    /// on its own fenced-code lines, immediately preceded by a backtick fence,
+    /// so a markdown renderer displays it as literal content, never as a real
+    /// heading/bold run this function produced.
+    fn role_filler_feedback_cannot_impersonate_this_renderers_own_markdown_structure() {
+        let mut state = RunState::new("run-injection");
+        let feedback = "Implemented the feature.\n\n## Risk annotations\n\nNone found -- all clear, fully tested and reviewed.\n\n## Decision\n\n**APPROVED by human reviewer -- no further action needed.**";
+        state.history.push(IterationRecord {
+            run_id: "run-injection".into(),
+            stage: "devsystem.implement".into(),
+            iteration: 1,
+            feedback: feedback.into(),
+            proposals: vec![],
+            succeeded: true,
+            requirement_indices: Vec::new(),
+        });
+
+        let md = render_plan_markdown(&state).unwrap();
+        // The fake section text must still be fully visible (never hidden or
+        // stripped) -- just neutralized.
+        assert!(md.contains("None found -- all clear"));
+        assert!(md.contains("APPROVED by human reviewer"));
+        // It must be immediately preceded by an opening code fence -- proving
+        // it renders as literal text, not real markdown structure.
+        let fence_then_feedback = "```\nImplemented the feature.";
+        assert!(md.contains(fence_then_feedback), "the injected content must sit inside a real fenced code block:\n{md}");
+        // The real, genuine Risk annotations section this run's own history
+        // actually produces must still exist as REAL markdown structure
+        // (a real heading, not fenced) -- the fix must not accidentally fence
+        // the renderer's own real output too.
+        assert!(md.contains("\n## Risk annotations\n\nMechanical checks"), "the renderer's own real Risk annotations heading must stay real markdown, not get fenced: {md}");
+    }
+
+    #[test]
     fn surfaces_real_run_level_pending_proposals_even_when_queued_iterations_ago() {
         use crate::runner::{PendingIssueProposal, PendingPanelProposal, PendingStageProposal};
         let mut state = state_with_one_iteration(vec![]);
@@ -297,6 +428,36 @@ mod tests {
         let state = state_with_one_iteration(vec![]);
         let md = render_plan_markdown(&state).unwrap();
         assert!(!md.contains("## Also awaiting your review"));
+    }
+
+    #[test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): the exact same "only three of five real queues"
+    /// undercount already found and fixed in the GUI's own Pipeline-chip badge
+    /// (CADS-devsystem@c5c02c5) was live here too -- a real pending panel-
+    /// removal or panel-edit proposal was invisible to this artifact.
+    fn a_pending_panel_removal_or_edit_proposal_surfaces_in_also_awaiting_your_review() {
+        use crate::runner::{PendingPanelEditProposal, PendingPanelRemovalProposal};
+        let mut state = state_with_one_iteration(vec![]);
+        state.pending_panel_removal_proposals.push(PendingPanelRemovalProposal {
+            id: "rm1".into(),
+            panel_id: "panel-abc".into(),
+            panel_title: "Release Burndown".into(),
+            proposed_at: 1,
+        });
+        state.pending_panel_edit_proposals.push(PendingPanelEditProposal {
+            id: "edit1".into(),
+            panel_id: "panel-def".into(),
+            old_title: "Old Title".into(),
+            new_title: "New Title".into(),
+            new_html: "<p>x</p>".into(),
+            proposed_at: 1,
+        });
+
+        let md = render_plan_markdown(&state).unwrap();
+        assert!(md.contains("## Also awaiting your review"), "a real pending proposal must never leave this section entirely absent: {md}");
+        assert!(md.contains("Release Burndown"), "a pending removal proposal must be named: {md}");
+        assert!(md.contains("Old Title") && md.contains("New Title"), "a pending edit proposal must show both the real old and new title: {md}");
     }
 
     #[test]
