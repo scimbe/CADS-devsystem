@@ -588,6 +588,11 @@ iteration, not self-report) the review gate already enforces, is real, separate,
 not attempted here, and not safe to claim solved by a label change alone. Fourteen real stress-test
 runs, fourteen real gaps found (thirteen closed, one honestly still open).
 
+**Update, same day, next firing**: the "separate, still-open work" above turned out to fit as one
+real bounded increment after all -- see gap #10's own now-**done** entry below
+(`CADS-devsystem@76facaf`) for the real fix and its live verification. Not claimed done here to
+avoid rewriting this entry's own honest state at the time it was written.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
@@ -765,7 +770,7 @@ runs, fourteen real gaps found (thirteen closed, one honestly still open).
    (report the real ceiling distance), not just papered over with the new risk annotation. Re-
    verified live against the exact run used to prove both bugs: three correct verdicts where there
    were none or wrong ones before, no resubmission needed.
-10. **A real evidentiary gate on assistant-driven requirement verification** (§4.3/§8, found by the
+10. ~~**A real evidentiary gate on assistant-driven requirement verification**~~ (§4.3/§8, found by the
     stress test's fourteenth run, 2026-08-06) — today, `devsystem.assistant` can be asked in a plain
     chat message to verify any requirement's acceptance criteria on any run, and will sometimes
     genuinely do so (a real `ToggleRequirement`/`ToggleAcceptanceCriterion` write, not just talk)
@@ -783,5 +788,24 @@ runs, fourteen real gaps found (thirteen closed, one honestly still open).
     evidentiary bar the review gate already enforces for a human's (an independent `devsystem.test`/
     `devsystem.review` iteration, not the implementer's own prose). Sized as its own increment, not
     assumed away or half-solved by relabeling a checkbox.
+
+    **Done, 2026-08-06** (`CADS-devsystem@76facaf`): built both real pieces. (a) `apply_action` now
+    sends a real `X-Actor: devsystem.assistant` header on every request it makes, giving
+    `devsystem-web` an honest, simple way to tell an assistant-relayed call apart from a human's own
+    direct click -- the two pieces of evidence indistinguishable server-side. (b)
+    `toggle_requirement_handler` requires the exact same evidentiary bar gap #2's mandatory review
+    gate already enforces (`qualifying_review_evidence`, extracted from `toggle_requirement` itself,
+    byte-identical logic) **unconditionally** when the caller is the assistant and the call would
+    mark a requirement verified -- regardless of whether this run happens to have declared `review`
+    at all. A human's own direct click, and un-verifying via either path, stay completely
+    unaffected, matching existing precedent exactly. Live re-verified against the exact scenario that
+    proved the original gap: asked the real assistant to judge and verify a requirement backed only
+    by the implementer's own prose; it declined on its own good judgment, so the actual write was
+    explicitly forced ("submit the action, do not ask again") to test the real server-side gate
+    rather than trust voluntary LLM restraint -- result: a real `409`, honestly surfaced back through
+    `apply_action`'s own failure-reporting path, and the run's persisted state confirmed `verified`
+    stayed `false`. The two per-criterion toggles in the same request still succeeded, matching this
+    fix's deliberate scope (individual criteria remain ungated, same as the existing human-click
+    precedent). Fourteen real stress-test runs, all fourteen real gaps now closed.
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).
