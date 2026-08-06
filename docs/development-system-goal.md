@@ -141,22 +141,28 @@ readiness checks). Matches the goal as-is — no gap identified here.
 Extends §4's user-support goal with concrete GUI requirements:
 
 1. **Windows/panels must relate to the process actually needed right now** — not a fixed, always-
-   identical panel set regardless of what stage/state a run is in. **Real gap**: today's GUI shows
-   the same panel set (Runs, Roles, Requirements, Backlog, Milestones, History, RAG, Assistant,
-   custom panels) for every run in every state — nothing hides an irrelevant panel or surfaces a
-   more relevant one contextually (e.g. a run with zero requirements yet should foreground "add
-   your first requirement", not bury it behind six other panels).
+   identical panel set regardless of what stage/state a run is in. **Corrected, 2026-08-06**: this
+   entry's own "real gap" framing went stale without being updated here when the work closed --
+   the ranked list below (item 3) already marks this **done**, five real slices: a sensible starter
+   set stays open by default (not all 18+ panels thrown at a first-time user at once), and a
+   genuinely empty Requirements/Backlog/Milestones/RAG panel now foregrounds the real first action
+   instead of burying it. Left as a pointer to that entry rather than duplicated prose here, so this
+   section doesn't drift out of sync with the ranked list a second time.
 2. **Panel values must be editable by the user AND by `devsystem.assistant`** — today the assistant
    can only act through its fixed `Action` enum (`AddRequirement`, `ToggleBacklogItem`, ...,
-   `pipeline/src/bin/devsystem_assistant.rs:248`), a real but narrow, pre-enumerated set. **Real
-   gap**: no general "the assistant can edit whatever a human could edit in this panel" capability
-   — every new editable field needs a new hand-written `Action` variant.
-3. **A real overview of every agent used, its tokens, and its cost must exist.** **Real gap,
-   confirmed by direct check**: no such view exists anywhere in `web/src/main.rs` or `index.html`
-   today. `devsystem_assistant.rs` already parses real `usage` fields from the Claude CLI's JSON
-   output (`tests::missing_usage_fields_default_to_zero_not_a_parse_failure` proves the field
-   exists and is parsed) — the raw data is closer to hand than a blank slate, but it's parsed and
-   discarded per-call, never persisted or aggregated per-run/per-agent.
+   `pipeline/src/bin/devsystem_assistant.rs:293`, line number re-checked 2026-08-06 rather than left
+   stale after later edits shifted it), a real but narrow, pre-enumerated set. **Still a
+   real, genuinely open gap** (re-confirmed 2026-08-06, not stale like the two siblings here): no
+   *general* "the assistant can edit whatever a human could edit in this panel" capability exists —
+   every new editable field still needs a new hand-written `Action` variant, fifteen of them as of
+   this writing (see the ranked list's item 4 for the specific panels/fields already covered one at
+   a time, and stack-mode's own `propose_next_step` for the newest one).
+3. **A real overview of every agent used, its tokens, and its cost must exist.** **Corrected,
+   2026-08-06**: this entry's own "real gap, confirmed by direct check" framing went stale the same
+   way item 1's did — the ranked list below (item 5) already marks this **done**: a real Assistant
+   Usage panel exists, backed by `RunState.assistant_usage`, a genuine running total accumulated on
+   every `/ask` call, not an estimate. Left as a pointer to that entry for the same reason as item 1
+   above.
 
 ## 8. Validation methodology: the incompetent-agent stress test and the DAU lens (operator
    mandate, 2026-08-05)
