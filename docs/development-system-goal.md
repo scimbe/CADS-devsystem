@@ -2497,4 +2497,21 @@ actual redeployed site (not just a code read): each opens on click, closes on `E
 console errors. No hermetic Rust suite affected (pure static-frontend change); the existing
 hermetic web/pipeline suites remain unaffected and were not the layer touched this firing.
 
+**Docs-loop firing, 2026-08-06 (mm) -- caught up on two real, shipped, undocumented features/fixes
+from firings (kk) and (ll)**: `CADS-devsystem-docs` shipped a new how-to page, "Set a panel's
+auto-refresh interval or a role's fill mode" (`CADS-devsystem-docs@8d1bc8f`), covering two real,
+previously zero-docs-coverage controls (the per-panel ⚙ auto-refresh gear, the Roles panel's ⋯
+fill-mode menu) plus firing (ll)'s Escape-to-close fix, all live-driven and screenshotted via
+Playwright against the real deployment. Also extended `ask-the-assistant.md`
+(`CADS-devsystem-docs@fae2ec8`) with firing (kk)'s mixed-action-batch parsing fix -- live-forced,
+not assumed: insisted the real assistant emit one genuine action plus one fabricated action type in
+the same reply, confirmed the real backlog item was genuinely added afterward (checked the run's
+own state) and the fabricated action was named and rejected, exactly matching the fixed behavior.
+
+Also shipped this firing: `_config.yml`'s `baseurl` fix from the previous docs-loop firing (jj) is
+still not live on the real deployed site (`CADS-devsystem-docs@80f5150`, re-checked again just now)
+-- GitHub's Actions/Pages incident is still `major_outage`, unresolved since `15:22:49Z`. Continuing
+to treat the local hermetic build + generated-HTML link check as the trustworthy signal per this
+session's own standing discipline; will re-verify the real deployed site once the incident clears.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
