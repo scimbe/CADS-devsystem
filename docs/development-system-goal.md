@@ -747,6 +747,21 @@ its own edge cases are automatically covered -- worth stress-testing a feature t
 not just the ones already live for a while. Twenty-three real stress-test investigations, twenty-three
 real gaps found and closed.
 
+**The stress test's twenty-fourth real run, 2026-08-06**: found investigating the RAG upload
+fallback shipped last turn (`CADS-devsystem@3193007`) -- the GUI's own upload-success message
+always read "Extracted N element(s)." using `elements_extracted`, but the
+`devsystem.document_extraction` channel path has no "elements" concept at all (unlike Unstructured)
+and always reports `elements_extracted: 0`. A real, successful upload through that path would
+render the confusing "Extracted 0 element(s)." as if something had silently gone wrong, even though
+real text was extracted and indexed. Fixed using the `extracted_via` field that same commit already
+added but never surfaced in the GUI -- the element count only means something for the Unstructured
+path; the channel path now says plainly which real extraction path ran
+(`CADS-devsystem@72fa81d`). Live-verified against the actual deployed JS in a real browser: polled
+the real DOM at 5ms intervals (the form's own follow-up re-render replaces the message quickly, the
+same real timing a fast human eye would also lose) to catch the transient state, confirmed the
+deployed code now shows "Extracted via document_extraction_channel." for real. Twenty-four real
+stress-test investigations, twenty-four real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
