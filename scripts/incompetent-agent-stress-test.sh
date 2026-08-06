@@ -251,6 +251,26 @@ check "an embedded proposal (applies immediately, no human review) rejects units
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$units_run"
 
 echo
+echo "[18] a next-step draft must reject empty/oversized text at propose AND update, and 404 for an unknown id"
+draft_run="${RUN}-next-step-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$draft_run\"}"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$draft_run/next-steps/propose" -H 'content-type: application/json' -d '{"text":"   "}')
+check "propose_next_step rejects whitespace-only text" "400" "$status"
+oversized=$(printf 'x%.0s' $(seq 1 4001))
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$draft_run/next-steps/propose" -H 'content-type: application/json' -d "{\"text\":\"$oversized\"}")
+check "propose_next_step rejects text over the 4,000-byte cap" "400" "$status"
+draft_id=$(curl -s -X POST "$BASE/api/runs/$draft_run/next-steps/propose" -H 'content-type: application/json' -d '{"text":"Option A: resume and expand M1."}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' 2>/dev/null)
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$draft_run/next-steps/$draft_id/update" -H 'content-type: application/json' -d '{"text":""}')
+check "update_next_step_draft rejects empty text" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$draft_run/next-steps/never-existed/update" -H 'content-type: application/json' -d '{"text":"x"}')
+check "update_next_step_draft 404s for an unknown draft id" "404" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$draft_run/next-steps/never-existed/remove")
+check "remove_next_step_draft 404s for an unknown draft id" "404" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$draft_run/next-steps/$draft_id/remove")
+check "remove_next_step_draft removes a real draft for real" "204" "$status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$draft_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
