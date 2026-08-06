@@ -239,6 +239,18 @@ check "a real holder_label still works" "200" "$status"
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$holder_run"
 
 echo
+echo "[17] units must be bounded at all three real StageProposal entry points"
+units_run="${RUN}-units-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$units_run\"}"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$units_run/stages/propose" -H 'content-type: application/json' -d '{"stage_id":"devsystem.units_test","tag":"units_test","rationale":"probe","units":18446744073709551615}')
+check "propose_stage rejects units:u64::MAX" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$units_run/offers/quick-submit" -H 'content-type: application/json' -d '{"stage_id":"devsystem.plan","price":7,"units":18446744073709551615}')
+check "quick_submit_offer rejects units:u64::MAX" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$units_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.implement","feedback":"real work","succeeded":true,"proposals":[{"proposed_by":"devsystem.implement","stage_id":"devsystem.embedded_units_test","tag":"embedded_units_test","rationale":"a real reason","units":0,"price_ceiling":null}]}')
+check "an embedded proposal (applies immediately, no human review) rejects units:0" "400" "$status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$units_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
