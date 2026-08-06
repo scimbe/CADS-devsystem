@@ -394,10 +394,21 @@ check "a genuine, reasonably-sized backlog item still works" "200" "$status"
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$longtext_run"
 
 echo
+echo "[29] an absurdly long repo_url must be rejected, not persisted unbounded"
+repourl_run="${RUN}-long-repourl-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$repourl_run\"}"
+huge_repo_url=$(python3 -c 'print("https://" + "x" * 2001)')
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$repourl_run/repo" -H 'content-type: application/json' -d "{\"repo_url\":\"$huge_repo_url\"}")
+check "an absurdly long repo_url is rejected" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$repourl_run/repo" -H 'content-type: application/json' -d '{"repo_url":"https://github.com/scimbe/CADS-webconference-android"}')
+check "a genuine, real-sized repo_url still works" "200" "$status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$repourl_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the thirty-nine gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the forty gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
