@@ -29,7 +29,7 @@
 
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration};
 use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, valid_run_id, RunOutcome};
-use devsystem_pipeline::{validate_proposals, IterationRecord};
+use devsystem_pipeline::{validate_feedback, validate_proposals, IterationRecord};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -63,6 +63,15 @@ fn run_local(run_id: &str, record_path: &str) -> std::process::ExitCode {
     // any write happens (memory log append, persist_run) -- an invalid record.json
     // must leave the run's files completely untouched, not partially applied.
     if let Err(e) = validate_proposals(&record.proposals) {
+        eprintln!("rejected: {e}");
+        return std::process::ExitCode::FAILURE;
+    }
+    // Real gap found live 2026-08-06 (stress-test run 45): same "two real entry
+    // points, one bug class" shape as validate_proposals above -- see
+    // validate_feedback's own doc comment (pipeline crate) for why an empty/
+    // whitespace-only feedback matters. Checked before any write happens, same as
+    // the proposals check.
+    if let Err(e) = validate_feedback(&record.feedback) {
         eprintln!("rejected: {e}");
         return std::process::ExitCode::FAILURE;
     }

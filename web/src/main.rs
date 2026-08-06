@@ -24,7 +24,7 @@ use devsystem_pipeline::runner::{
     Milestone, PendingIssueProposal, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal, Requirement, RoleFillMode,
     RunOutcome,
 };
-use devsystem_pipeline::{apply_proposal, validate_proposals, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal};
+use devsystem_pipeline::{apply_proposal, validate_feedback, validate_proposals, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
 use ct_common::pipeline::SelectionState;
 use serde::{Deserialize, Serialize};
@@ -776,6 +776,14 @@ async fn iterate_run(
     if let Some(&bad) = body.requirement_indices.iter().find(|&&i| i >= run_state.requirements.len()) {
         return (StatusCode::BAD_REQUEST, format!("requirement_indices references index {bad}, but state.requirements only has {} entries", run_state.requirements.len()))
             .into_response();
+    }
+    // Real gap found live 2026-08-06 (stress-test run 45): confirmed live a real
+    // `succeeded: true` iteration with `""` or `"   "` as its feedback got a real
+    // 200 -- see `validate_feedback`'s own doc comment (pipeline crate) for why this
+    // matters and why the check lives there, shared with the local CLI's identical
+    // real entry point, not duplicated inline here.
+    if let Err(e) = validate_feedback(&body.feedback) {
+        return (StatusCode::BAD_REQUEST, e).into_response();
     }
     // Real gap found live by the incompetent-agent stress test (#382 goal doc §8,
     // 2026-08-06): a role-filler's own embedded `proposals` -- applied *immediately*
@@ -6422,6 +6430,43 @@ exit 1"#);
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST, "no requirements exist yet, so index 0 must be rejected, not silently accepted");
+    }
+
+    #[tokio::test]
+    /// Real gap found live 2026-08-06 (stress-test run 45): every other real free-text
+    /// field here (milestones, backlog items, requirement statements) already rejects
+    /// whitespace-only content -- feedback was the one exception. A real
+    /// succeeded:true iteration with empty/whitespace-only feedback used to get a
+    /// real 200, leaving zero real record of what actually happened while multiple
+    /// mechanical checks (defect-admission phrases, review-evidence bars) that depend
+    /// on the real feedback text silently had nothing to work with.
+    async fn iterate_run_rejects_empty_or_whitespace_only_feedback() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "empty-feedback-run"}))).await.unwrap();
+
+        for feedback in ["", "   "] {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/runs/empty-feedback-run/iterate",
+                    serde_json::json!({"stage": "implement", "feedback": feedback, "succeeded": true}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::BAD_REQUEST, "feedback {feedback:?} must be rejected, not silently accepted");
+        }
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/empty-feedback-run/iterate",
+                serde_json::json!({"stage": "implement", "feedback": "a real, non-empty account of what happened", "succeeded": true}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "real, non-empty feedback must still work");
     }
 
     #[tokio::test]

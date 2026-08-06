@@ -204,6 +204,24 @@ pub fn validate_proposals(proposals: &[StageProposal]) -> Result<(), String> {
     Ok(())
 }
 
+/// Real gap found live 2026-08-06 (stress-test run 45): every other real free-text
+/// field in this codebase (milestones, backlog items, requirement statements, stage
+/// proposals via [`validate_proposals`] above) already rejects whitespace-only
+/// content -- an iteration's own `feedback` was the one exception, confirmed live at
+/// the HTTP entry point. Same "two real entry points, one bug class" shape already
+/// found this session for `validate_proposals` itself: `devsystem_iterate`'s local,
+/// non-`--remote` CLI path calls [`run_iteration`] directly with no HTTP layer at
+/// all, so a check added only in `web/src/main.rs` would leave that path unprotected.
+/// A shared, standalone function (not folded into `run_iteration` itself, matching
+/// `validate_proposals`'s own precedent of validating BEFORE constructing the real
+/// `IterationRecord`) so every real entry point calls the identical gate.
+pub fn validate_feedback(feedback: &str) -> Result<(), String> {
+    if feedback.trim().is_empty() {
+        return Err("feedback must not be empty".to_string());
+    }
+    Ok(())
+}
+
 /// Explicit, bounded termination criteria for one run's "super loop" (#382 §"Abbruch
 /// kriterien"): the pipeline's own self-optimization is iterative, not unsupervised
 /// forever -- these numbers are what make it a *bounded* loop.
@@ -462,6 +480,13 @@ mod tests {
         assert!(validate_proposals(std::slice::from_ref(&garbage)).is_err(), "the shared gate must catch it");
         assert_eq!(apply_proposal(&mut spec, &garbage), ProposalOutcome::Added, "apply_proposal itself has no opinion -- callers must gate first");
         assert_eq!(spec.roles.len(), before + 1, "confirms apply_proposal really would add the garbage role if a caller skipped validate_proposals");
+    }
+
+    #[test]
+    fn validate_feedback_rejects_empty_or_whitespace_only_text() {
+        assert!(validate_feedback("a real, non-empty account of what happened").is_ok());
+        assert!(validate_feedback("").is_err());
+        assert!(validate_feedback("   ").is_err(), "whitespace-only must count as empty, not just byte-empty");
     }
 
     #[test]
