@@ -3450,6 +3450,23 @@ async fn reject_issue_proposal(
 /// offer outright (`CapacityOffer::is_valid`, real cryptographic verification, not
 /// a shape check) rather than silently accepting garbage. One current offer per
 /// holder pubkey per run -- a resubmission replaces the holder's prior offer.
+///
+/// Deliberately no `MAX_ROLE_UNITS` check here, despite the auction view
+/// rendering this offer's `units_available` under an `"units"` JSON key that
+/// reads identically to `StageProposal.units` -- investigated live 2026-08-06
+/// after `devsystem_offer --units 18446744073709551615`/`--units 0` both got a
+/// real `200` here with no rejection, initially suspected as the same
+/// unbounded-`units` bug class `MAX_ROLE_UNITS` already closed at
+/// `propose_stage`/`quick_submit_offer`/`validate_proposals`. It isn't: checked
+/// directly against `ct_common::channel::CapacityOffer` at this crate's own
+/// pinned tag (`v0.4.13`) rather than assumed from the JSON key name alone --
+/// `units_available` is "tokens for cloud quota, job-units for local hardware,"
+/// a bidder's own real capacity claim, semantically unrelated to
+/// `StageProposal.units` ("how many bidder slots a role needs"). Capping a real
+/// bidder's declared capacity at 100 would incorrectly reject any legitimately
+/// large real-world provider. CADS-Tunnel core's own `CapacityOffer::is_valid`
+/// doesn't bound it either (checked directly, not assumed) -- this is the
+/// underlying protocol's own design, not a gap in this endpoint.
 async fn submit_offer(State(state): State<AppState>, AxPath(id): AxPath<String>, Json(offer): Json<CapacityOffer>) -> impl IntoResponse {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
