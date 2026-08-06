@@ -24,7 +24,7 @@ use devsystem_pipeline::runner::{
     Milestone, PendingIssueProposal, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal, Requirement, RoleFillMode,
     RunOutcome,
 };
-use devsystem_pipeline::{apply_proposal, validate_feedback, validate_proposals, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal};
+use devsystem_pipeline::{apply_proposal, validate_feedback, validate_proposals, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal, MAX_ROLE_UNITS};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
 use ct_common::pipeline::SelectionState;
 use serde::{Deserialize, Serialize};
@@ -2753,6 +2753,9 @@ async fn propose_stage(
     if body.units == 0 {
         return (StatusCode::BAD_REQUEST, "units must be at least 1").into_response();
     }
+    if body.units > MAX_ROLE_UNITS {
+        return (StatusCode::BAD_REQUEST, format!("units must be at most {MAX_ROLE_UNITS}")).into_response();
+    }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
     let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
@@ -3263,6 +3266,9 @@ async fn quick_submit_offer(State(state): State<AppState>, AxPath(id): AxPath<St
     }
     if body.units == 0 {
         return (StatusCode::BAD_REQUEST, "units must be at least 1").into_response();
+    }
+    if body.units > MAX_ROLE_UNITS {
+        return (StatusCode::BAD_REQUEST, format!("units must be at most {MAX_ROLE_UNITS}")).into_response();
     }
 
     let mut csprng = rand::rngs::OsRng;
@@ -5942,6 +5948,7 @@ mod tests {
         assert_eq!(response.status(), SC::BAD_REQUEST);
 
         let response = app
+            .clone()
             .oneshot(json_request(
                 "POST",
                 "/api/runs/propose-stage-edge-run/stages/propose",
@@ -5950,6 +5957,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST);
+
+        // Real gap found live 2026-08-06 (stress-test run 55): units had a zero
+        // check but no upper bound -- live-confirmed units: 18446744073709551615
+        // (u64::MAX) got a real 200 before this fix.
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/propose-stage-edge-run/stages/propose",
+                serde_json::json!({"stage_id": "devsystem.x", "tag": "x", "rationale": "y", "units": u64::MAX}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "an absurdly large units value must be rejected, not silently accepted");
     }
 
     #[tokio::test]
@@ -6710,6 +6730,12 @@ exit 1"#);
             serde_json::json!({"proposed_by": "devsystem.plan", "stage_id": "", "tag": "x", "rationale": "y", "units": 1}),
             serde_json::json!({"proposed_by": "devsystem.plan", "stage_id": "devsystem.x", "tag": "", "rationale": "y", "units": 1}),
             serde_json::json!({"proposed_by": "devsystem.plan", "stage_id": "devsystem.x", "tag": "x", "rationale": "   ", "units": 1}),
+            // Real gap found live 2026-08-06 (stress-test run 55): units:0 reaching
+            // this exact real entry point got a real 200 before this fix -- the
+            // MORE consequential of the three real entry points, since an embedded
+            // proposal applies immediately with no human review gate at all.
+            serde_json::json!({"proposed_by": "devsystem.plan", "stage_id": "devsystem.x", "tag": "x", "rationale": "y", "units": 0}),
+            serde_json::json!({"proposed_by": "devsystem.plan", "stage_id": "devsystem.x", "tag": "x", "rationale": "y", "units": u64::MAX}),
         ] {
             let response = app
                 .clone()
@@ -6720,7 +6746,7 @@ exit 1"#);
                 ))
                 .await
                 .unwrap();
-            assert_eq!(response.status(), SC::BAD_REQUEST, "an empty stage_id/tag/rationale must never reach apply_proposal, not even from a role-filler's own immediately-applied proposal");
+            assert_eq!(response.status(), SC::BAD_REQUEST, "an empty stage_id/tag/rationale, or an out-of-range units, must never reach apply_proposal, not even from a role-filler's own immediately-applied proposal");
         }
 
         let response = app.oneshot(Request::builder().uri("/api/runs/empty-proposal-run").body(Body::empty()).unwrap()).await.unwrap();
@@ -6954,6 +6980,7 @@ exit 1"#);
         app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "quick-offer-run3"}))).await.unwrap();
 
         let response = app
+            .clone()
             .oneshot(json_request(
                 "POST",
                 "/api/runs/quick-offer-run3/offers/quick-submit",
@@ -6962,6 +6989,18 @@ exit 1"#);
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST);
+
+        // Real gap found live 2026-08-06 (stress-test run 55): the same missing
+        // upper bound as propose_stage, at this separate real entry point.
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/quick-offer-run3/offers/quick-submit",
+                serde_json::json!({"stage_id": "devsystem.plan", "price": 7, "units": u64::MAX}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "an absurdly large units value must be rejected, not silently accepted");
     }
 
     #[tokio::test]

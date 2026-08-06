@@ -194,12 +194,30 @@ pub fn apply_proposal(spec: &mut PipelineSpec, proposal: &StageProposal) -> Prop
 /// where both entry points can share the identical logic, is the actual fix -- not
 /// re-duplicating the same `if` in a second place, which is exactly how it went missing
 /// from the second place the first time.
+/// Real gap found live 2026-08-06 (stress-test run 55), same "no upper bound" shape
+/// `MAX_ABORT_CRITERIA_VALUE` (`web/src/main.rs`) already closed for a different
+/// field: `units` (how many real bidders a role needs) was checked for `== 0` at
+/// `propose_stage`/`quick_submit_offer` but never for an upper bound anywhere,
+/// including here -- and an embedded proposal reaching `validate_proposals` applies
+/// *immediately* to the live spec, no human review gate at all, making this the
+/// more consequential of the three real entry points, not less. Live-confirmed
+/// before this fix: an embedded proposal with `units: 0` got a real `200` and was
+/// genuinely added to the live spec. A hundred is deliberately generous -- no real
+/// role in this project has ever needed more than a handful of simultaneous
+/// bidders -- not a tight arbitrary limit. Single source of truth for all three real
+/// entry points (`propose_stage`, `quick_submit_offer`, and here), not three
+/// separately-maintained copies.
+pub const MAX_ROLE_UNITS: u64 = 100;
+
 pub fn validate_proposals(proposals: &[StageProposal]) -> Result<(), String> {
     if let Some(bad) = proposals
         .iter()
         .find(|p| p.stage_id.trim().is_empty() || p.tag.trim().is_empty() || p.rationale.trim().is_empty())
     {
         return Err(format!("proposal for stage_id {:?} needs a non-empty stage_id, tag, and rationale", bad.stage_id));
+    }
+    if let Some(bad) = proposals.iter().find(|p| p.units == 0 || p.units > MAX_ROLE_UNITS) {
+        return Err(format!("proposal for stage_id {:?} needs units between 1 and {MAX_ROLE_UNITS}, got {}", bad.stage_id, bad.units));
     }
     Ok(())
 }
@@ -456,6 +474,32 @@ mod tests {
         let mut empty_rationale = base;
         empty_rationale.rationale = "".to_string();
         assert!(validate_proposals(&[empty_rationale]).is_err());
+    }
+
+    #[test]
+    /// Real gap found live 2026-08-06 (stress-test run 55): validate_proposals had
+    /// no upper bound on `units` at all, and an embedded proposal reaching it
+    /// applies immediately with no human review gate -- live-confirmed a real
+    /// units:0 embedded proposal got a real 200 against the actual deployment.
+    fn validate_proposals_rejects_zero_or_absurdly_large_units() {
+        let base = StageProposal {
+            proposed_by: "devsystem.plan".to_string(),
+            stage_id: "devsystem.real".to_string(),
+            tag: "real".to_string(),
+            rationale: "a genuine reason".to_string(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: None,
+        };
+        assert!(validate_proposals(std::slice::from_ref(&base)).is_ok(), "a genuine units:1 proposal must pass");
+
+        let mut zero_units = base.clone();
+        zero_units.units = 0;
+        assert!(validate_proposals(&[zero_units]).is_err(), "units:0 must be rejected -- a role needing zero bidders is meaningless");
+
+        let mut absurd_units = base;
+        absurd_units.units = u64::MAX;
+        assert!(validate_proposals(&[absurd_units]).is_err(), "an absurdly large units value must be rejected, not silently accepted");
     }
 
     #[test]
