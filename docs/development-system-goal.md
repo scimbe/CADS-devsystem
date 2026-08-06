@@ -113,7 +113,7 @@ not just referenced:
 | **Stand der Technik** (state of the art) | Current, non-deprecated dependencies and idioms at time of delivery | Not checked — no dependency-freshness/deprecation gate exists |
 | **Vertragsgemäße / Sachmangelfreie Leistung** (contract-conforming, defect-free delivery) | Satisfies every declared acceptance criterion, zero known open defects at delivery | Requirements/acceptance-criteria machinery exists; **partially checked as of `CADS-devsystem@9f9f5d2`** -- a `succeeded: true` iteration whose own feedback admits a known defect (`DEFECT_ADMISSION_PHRASES`) is now flagged as a real risk. Advisory, not a hard block, and beatable by phrasing a real defect without those exact words -- not the whole gap closed |
 | **Fachgerecht / Fachmännisch** (professionally correct) | Passes the same review bar a competent human reviewer would apply | The `review` stage exists as a role; not mandatory for every change today |
-| **Kunstgerecht** (in accordance with the craft) | Idiomatic to the language/framework, not just "works" | Not mechanically checked; currently relies on the role-filler's own judgment |
+| **Kunstgerecht** (in accordance with the craft) | Idiomatic to the language/framework, not just "works" | **Checked as of `CADS-devsystem@9861abe`** (stress-test run 29) -- `cargo clippy --all-targets -- -D warnings` runs in real CI for both real crates, same hermetic-gate discipline as the existing `RUSTFLAGS=-D warnings` compiler-warnings gate. Rust-specific and this project's own two crates only -- a role-filler's target repo in a different language, or a future crate this pipeline builds, isn't covered by this gate automatically |
 | **Kollektives Qualitätsverständnis** (collective quality understanding) | Meets what this project's own established conventions (this doc, `role-contracts.md`, CLAUDE.md files) already agree quality means | This document itself is a step toward making that explicit and checkable |
 
 **Real gap, concrete and actionable**: none of the above is a *mandatory gate* today — a role-filler
@@ -835,6 +835,28 @@ real title attribute render correctly. Confirmed this is the only `price_ceiling
 the GUI -- no other site needed the same fix. Twenty-eight real stress-test investigations,
 twenty-eight real gaps found and closed.
 
+**The stress test's twenty-ninth real run, 2026-08-06**: a different kind of finding this time --
+not a bug in a specific check, a real, mechanical gap in §5's own quality-bar table. "Kunstgerecht"
+(idiomatic to the language/framework, not just "works") had no check at all: this project's real CI
+(`pipeline-ci.yml`) already runs `cargo test` under `RUSTFLAGS=-D warnings`, but that only catches
+compiler warnings, a genuinely different, narrower layer than clippy's own idiomatic-Rust lints. Ran
+`cargo clippy --all-targets -- -D warnings` hermetically against both real crates before adding
+anything to CI, to know the true scope first rather than guess: 9 real, small, mechanical findings
+total (a doc-comment formatting quirk where a `+` inside a quoted aside got misparsed as a markdown
+list item, a manual reimplementation of `is_multiple_of`, two unnecessary clones creating a slice
+from a reference, an overly complex test-helper return type, a `drain`-then-`extend` that should
+have been `append`, three `sort_by` calls that should have been `sort_by_key` with `Reverse`) -- all
+fixed in the same commit that added the gate, not left for CI to catch on the next unrelated PR
+(`CADS-devsystem@9861abe`). Added `cargo clippy --all-targets -- -D warnings` as a real step in both
+`pipeline-ci.yml` jobs. Hermetic: both crates build clean under clippy now, full test suites
+unaffected (pipeline 99/99, web 157/157). Deployed both real services; live-confirmed the RAG
+search sort-order rewrite still produces the exact same descending-score order as before, against
+the actual running deployment. Watched the real, actual GitHub Actions run for this exact push to
+completion -- both jobs green, including the two new clippy steps, not just a local hermetic
+Docker run standing in for real CI. Twenty-nine real stress-test investigations, twenty-nine real
+gaps found and closed -- and one real row of §5's own quality-bar table moved from "not checked" to
+mechanically gated.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
@@ -847,8 +869,10 @@ twenty-eight real gaps found and closed.
    bug: the Requirements panel's checkbox stayed visually "checked" after a blocked toggle,
    silently misleading whoever's looking at it — now reverts to the real state on rejection.
    Still open for a later increment: this is one concrete slice of §5's quality bar (review actually
-   happened), not the whole table (Stand der Technik / dependency freshness, Kunstgerecht /
-   idiomatic-code checks, etc. remain unenforced).
+   happened), not the whole table. **Update, 2026-08-06**: Kunstgerecht (idiomatic code) is now
+   real, mechanically gated too -- `cargo clippy --all-targets -- -D warnings` in real CI
+   (`CADS-devsystem@9861abe`, stress-test run 29). Stand der Technik (dependency freshness) remains
+   the one row still fully unenforced.
 3. ~~**Context-relevant panels**~~ (§7.1) — **done**, five slices — show what this run's actual state needs, not a fixed set.
    **First slice done** (`CADS-devsystem@de56d33`): the Pipeline chip on the panel toggle bar now
    carries a real badge with the run's actual pending-proposal count (stage + panel + issue
