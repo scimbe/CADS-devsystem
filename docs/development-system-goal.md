@@ -1009,6 +1009,22 @@ passing locally against the real deployment (two per check [8]). Thirty-eight re
 investigations, thirty-four real gaps found and closed -- runs 35, 36, 37, and 38 all strengthened
 the stress test's own infrastructure rather than finding a new bug.
 
+**The stress test's thirty-ninth real run, 2026-08-06**: extended the harness with another already-
+fixed, genuinely mechanical gap it didn't cover yet -- the markdown-injection defense in the real
+requirements export (`render_requirements_markdown`/`fence_wrap`). A role-filler-controlled
+requirement statement can't forge a fake markdown structure (e.g. a crafted "**VERIFIED BY HUMAN
+REVIEWER**" line meant to read as real system output): the export wraps the statement in a code
+fence widened past the longest backtick run the statement itself contains, so an embedded
+triple-backtick trying to close out early and break out can't. Live-confirmed both directions
+before writing the check, not assumed: a statement embedding its own triple-backtick gets wrapped
+in a real 4-backtick fence; an ordinary statement with no embedded backticks stays at the plain
+3-backtick fence,
+proving the check actually discriminates rather than always passing. Added as check [9]
+(`CADS-devsystem@f6916f3`); the harness now covers fifteen real checks, 16/16 individual assertions
+passing locally against the real deployment. Also confirmed live: the CI run for run 38's own push
+(the `secrets` job plus check [8]) is genuinely green in real GitHub Actions. Thirty-nine real
+stress-test investigations, thirty-four real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
