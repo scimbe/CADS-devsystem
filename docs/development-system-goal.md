@@ -2545,4 +2545,27 @@ the real redeployed container: the exact bidi-laced criterion that visually lied
 gets a real `400`; a clean criterion still gets `200`. Ten real stress-test runs, ten real gaps
 found and closed.
 
+**Docs-loop firing, 2026-08-06 (oo) -- documented firing (nn)'s bidi fix, and found two more real,
+live gaps while validating it, per the loop's own step 3**: `CADS-devsystem-docs` shipped a new
+section in `requirements-and-automode.md` (`CADS-devsystem-docs@2108e8f`) with two real screenshots
+-- the scrambled criterion as typed, and the legible rejection after fixing.
+
+Validating live surfaced two real gaps in `CADS-devsystem` itself, fixed before writing the page:
+1. The Requirements form's other two per-criterion checks (length, triviality) already warn
+   immediately client-side; the new bidi check from firing (nn) had none, so a scrambled criterion
+   used to silently round-trip to the server before failing -- same "no client-side early feedback"
+   class fixed repeatedly earlier this session. Added the matching check.
+2. Found while capturing the verification screenshot itself: the new client-side error message
+   echoed the offending criterion back verbatim, so the same unterminated override character
+   scrambled the *explanation sentence* that followed it too -- a real, honest, slightly funny
+   self-referential instance of the exact bug the message exists to warn about. Fixed by swapping
+   the control character for a visible placeholder before display.
+
+Both fixed and live-verified via Playwright against the real redeployed site (zero console errors)
+before the docs page was written (`CADS-devsystem@9241642`). No hermetic Rust suite affected (pure
+static-frontend change).
+
+Also re-checked: the `baseurl` fix (firing jj) is still not live on the real deployed site --
+GitHub's Actions/Pages incident is still `major_outage`, unresolved since `15:22:49Z` (~3.5h now).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
