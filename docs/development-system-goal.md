@@ -3515,4 +3515,29 @@ of what had just wrongly landed. Both gates working exactly as designed, cross-c
 other. Mutated image, container, and volumes torn down each time; the source mutation was never
 committed (`git checkout --` reverted it, confirmed clean).
 
+**Goal-driven-loop firing, 2026-08-06 -- closed the last of §7.2's own three deferred gaps
+(`update_criteria`)**: no new operator input on any of the three open `#382` checkpoints; issue #14
+unchanged; no scimbe-authored open PRs. `ToggleRequirementAutoJudge` and `SetRoleFillMode` were
+already closed earlier this session; `update_criteria` was the third, deliberately left open at the
+time because it governs a run's own abort/pause safety bounds, not just inert metadata.
+
+Re-examined rather than left open indefinitely: read the real `/api/runs/{id}/criteria` endpoint
+(`web/src/main.rs`) and confirmed it already rejects a zero `max_iterations`/`max_consecutive_failures`
+and anything above `MAX_ABORT_CRITERIA_VALUE`; read the human GUI's own criteria-save button handler
+and confirmed it gets zero extra confirmation beyond those same two real bounds -- a plain click,
+no `confirm()`. Giving the assistant the identical direct-action treatment is parity with what a
+human already has, not a new risk. Added `Action::UpdateCriteria` to `devsystem_assistant.rs`,
+updated the system prompt's action-type count/JSON example in the same commit (the exact
+stale-count bug class already caught and fixed three times this session), renamed/extended the
+`parses_all_*_action_types` test, and added a dedicated `apply_action` test. Hermetic
+`cargo test`/`clippy` clean (50/50 assistant tests, 0 clippy warnings). Redeployed
+`devsystem_assistant`, then live-verified end to end: a plain-English request against a real
+scratch run changed its criteria from 20/3/5 to 42/7/9 (confirmed via the real persisted state, not
+just the reply text), and the assistant's own self-report now correctly says "18 distinct action
+types, covering nine kinds of run data". Scratch run deleted after verification.
+`CADS-devsystem@ba68c43`.
+
+This closes every previously-deferred instance of the §7.2 "assistant action parity with the human
+GUI" gap found so far -- no further items in that specific list remain open.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
