@@ -52,6 +52,21 @@ fn run_local(run_id: &str, record_path: &str) -> std::process::ExitCode {
     let record: IterationRecord =
         serde_json::from_str(&fs::read_to_string(record_path).expect("read record.json")).expect("valid record.json");
 
+    // Real gap found live 2026-08-06 (#382 goal doc §8), same "two real entry points,
+    // one bug class" shape as the three checks below: `iterate_run`'s own `if
+    // run_state.paused { 409 }` (devsystem-web) exists precisely so a human can stop a
+    // run at a milestone or an abort-bound and force a real review before anything
+    // else lands -- the flagship `webconference-android` run's own real M1 checkpoint
+    // depends on this exact mechanism. This local path had no equivalent at all.
+    // Confirmed live before this fix: a scratch run with `paused: true` accepted a
+    // real iteration via this binary, appended it to `history`, and left `paused`
+    // untouched -- the pause was never actually enforced, only displayed. Checked
+    // before any write happens, same as the checks below.
+    if state.paused {
+        eprintln!("rejected: run is paused -- resume it first (devsystem-web POST /api/runs/{{id}}/resume, or clear state.paused directly) before submitting another local iteration");
+        return std::process::ExitCode::FAILURE;
+    }
+
     // Real gap found live by the incompetent-agent stress test's twelfth run (#382
     // goal doc §8, 2026-08-06): this local path calls run_iteration directly, with
     // no HTTP layer in between at all -- devsystem-web's own equivalent check
