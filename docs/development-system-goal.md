@@ -2762,4 +2762,13 @@ re-confirmed live against the redeployed container. Cleaned up every scratch run
 artifact afterward. 1 new regression test, 115/115 pipeline-lib tests (was 114), 187/187 web tests
 unchanged, hermetic clippy clean on both crates.
 
+**Docs-loop firing, 2026-08-06 (zz) -- documented firing (yy)'s markdown-forgery fix**:
+`CADS-devsystem-docs` extended `review-a-checkin.md`'s existing "free text renders as content, never
+as structure" section (`CADS-devsystem-docs@dc72b0e`) with the second instance found this same day
+-- single-line identifiers in an unescaped inline code span, not the multi-line fenced-block shape
+the first fix covered. Includes the real generated `.plan.md` proof from actually running
+`devsystem_checkin` against the malicious `stage_id`. Hermetically built clean. No new operator
+input on any of the three open `#382` checkpoints; GitHub's incident still `major_outage` per the
+status page; the live docs site itself continues serving correctly (spot-checked again).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
