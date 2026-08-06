@@ -26,6 +26,18 @@ on:
   pull_request:
     branches: [main]
 
+# Real gap found live 2026-08-06: this project's own goal-driven loop pushes to
+# main every few minutes, and each push's real CI run takes ~7 minutes (the `web`
+# job builds+tests+docker-builds+runs the live stress harness) -- with no
+# concurrency group, four separate runs were genuinely stacked in-progress at
+# once, none of them cancelled, only the LAST one's result actually mattering for
+# main's real current health. Standard GitHub Actions practice for exactly this
+# shape: a new push to the same ref cancels its own branch's still-running CI
+# rather than letting superseded runs finish redundantly.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Real gap found live 2026-08-06, investigating §5's own quality-bar table
   # ("Anerkannte Regeln der Technik" row): it claimed partial coverage via
