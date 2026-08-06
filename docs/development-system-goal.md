@@ -2568,4 +2568,23 @@ static-frontend change).
 Also re-checked: the `baseurl` fix (firing jj) is still not live on the real deployed site --
 GitHub's Actions/Pages incident is still `major_outage`, unresolved since `15:22:49Z` (~3.5h now).
 
+**Docs-loop firing, 2026-08-06 (pp) -- a mechanical link-integrity sweep, the first this session,
+honestly reported clean**: `CADS-devsystem` and `CADS-webconference-android` both quiet since the
+last docs-loop firing (only this loop's own bookkeeping commits); no new operator input on any of
+the three open `#382` checkpoints; GitHub's incident still `major_outage`, unresolved since
+`15:22:49Z` (~3.5h in). With nothing new shipped to document, tried a genuinely different angle:
+verifying the docs site's own link integrity end to end, something never explicitly checked this
+session despite the real `baseurl` bug found in firing (jj).
+
+Two real, mechanical checks against the hermetic build output (not the still-`major_outage`-blocked
+live site): (1) every internal `href`/`src` across all 26 generated pages resolves to a real
+generated file or directory -- **0 broken links found** (a first script attempt falsely flagged 797
+"broken" links due to a path-comparison bug of its own, forgetting the fixed `baseurl` prefix;
+caught and fixed before trusting the result, not reported as-is); (2) every one of the 19 unique
+`github.com/scimbe/CADS-devsystem/commit/<hash>` links referenced across `_how-to`/`_explanation`
+was checked against the real repo via `gh api repos/.../commits/<hash>` -- **all 19 resolve to real
+commits**, no typo'd or stale hashes. No new gap found; reported honestly as a clean, thorough sweep
+rather than manufacturing a change to fill the slot. The `baseurl` fix (firing jj) still hasn't gone
+live on the real deployed site -- will re-verify once the incident clears.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
