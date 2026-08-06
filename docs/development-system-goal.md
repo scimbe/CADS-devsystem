@@ -1675,4 +1675,12 @@ the identical question -- the real reply now names all three. Docs updated to ma
 (`CADS-devsystem-docs@4781d6a`) with both the honest before/after and the real fixed transcript, not
 a cleaned-up hypothetical one.
 
+**Goal-driven-loop firing, 2026-08-06**: extended the incompetent-agent stress-test harness (§8)
+with check [18], a real regression guard for the validation stack-mode slice 3 added
+(`propose_next_step`/`update_next_step_draft`/`remove_next_step_draft`) -- empty/whitespace-only and
+oversized (>4,000 byte) draft text rejected at both propose and update, an unknown draft id 404s on
+update/remove, a real draft removes for real
+(`CADS-devsystem@361634b`). 39/39 assertions passing, confirmed both locally and in the real GitHub
+Actions run against the actual deployed Docker image, not just locally.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
