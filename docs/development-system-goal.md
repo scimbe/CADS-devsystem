@@ -3261,4 +3261,35 @@ static-frontend change; hermetic `web` suite re-run for completeness, 190/190 un
 This closes the focus-trap candidate named in firing (vvv); the only other angle it named
 (screen-reader labeling) is still genuinely open for a future firing to pick up.
 
+**Goal-driven-loop firing, 2026-08-06 (xxx) -- closed the screen-reader-labeling gap firing (www)
+left explicitly open**: no new operator input on any of the three open `#382` checkpoints (all three
+most recent comments still my own); GitHub's incident still `major_outage` though CADS-devsystem's
+two most recent completed CI runs are both `success`; issue #14 unchanged; no scimbe-authored open
+PRs on either target repo.
+
+Checked the New Project modal's real accessibility tree via Playwright's `ariaSnapshot` (what
+assistive technology actually consumes, not a guess from reading the markup) against the actual
+production `devsystem-web` container -- confirmed a sitewide grep for `role="dialog"`/`aria-modal`/
+`aria-label` first: zero matches anywhere in `index.html`, so this genuinely was the only modal and
+the gap was total, not partial. The snapshot before any change showed the dialog's own heading,
+paragraph, and fields flattened into the page with no grouping, no `dialog` role, and no accessible
+name at all -- a screen-reader user opening it got no indication anything had changed on the page.
+
+Fixed with the standard three ARIA attributes on the modal element (`web/static/index.html`,
+`CADS-devsystem@ad572e2`): `role="dialog"`, `aria-modal="true"`, and `aria-labelledby` pointing at
+the existing "New Project" heading (given a real `id` for this to reference). No behavior change --
+purely exposes structure that was already visually true to assistive technology too.
+
+Live-verified after the fix and a real redeploy: the identical `ariaSnapshot` now shows a real
+`dialog "New Project"` node with every field correctly nested inside it. Regression-checked the
+focus trap (12 Tabs, still never escapes) and a full real create-run submission (scratch run
+created, then cleaned up via a real `DELETE`) both still work identically. Pure static-frontend
+change; hermetic `web` suite re-run for completeness, 190/190 unchanged.
+
+This closes both angles firing (vvv)/(www) named (Escape-coverage, focus-trap, screen-reader
+labeling) for this app's one real modal. A genuinely fresh angle for a future firing: the
+`#new-project-status` line (`Creating…`, or a real error) updates purely visually today, with no
+`aria-live` region -- a screen-reader user gets no announcement of the outcome at all. Deliberately
+not bundled into this same firing to keep the increment bounded to what was already named as open.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
