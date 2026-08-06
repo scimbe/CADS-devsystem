@@ -873,6 +873,24 @@ the checkbox and leaves the run genuinely unpaused; accepting it still pauses th
 milestone achieved, same real behavior as before the fix. Thirty real stress-test investigations,
 thirty real gaps found and closed.
 
+**The stress test's thirty-first real run, 2026-08-06**: a real infrastructure gap, found by
+observing the actual live deployment rather than simulating a single careless click. This
+deployment's own Runs list had grown to **112 real entries** -- almost all throwaway
+scratch/verification runs this project's own stress-test methodology creates on every firing -- and
+no endpoint has ever existed to remove one, on a system explicitly meant to run this way
+indefinitely. Added `DELETE /api/runs/{id}` (a real `fs::remove_dir_all` under the same
+`write_lock` every mutation uses, the same `owner_authorized` check `get_run` already applies), plus
+a delete button in the GUI's Runs panel guarded by the same real `confirm()` convention every other
+permanent-delete action here already follows (`CADS-devsystem@9e2d4bd`). Hermetic: 3 new tests (a
+real removal that stops listing and genuinely 404s after, a 404 for a run that never existed, a
+different account gets a real 403 and the run survives untouched) -- web crate 160/160, clippy
+clean. Deployed and live-verified end-to-end via Playwright against the actual running GUI:
+dismissing the confirm leaves the run listed, accepting it removes it from the GUI immediately and
+the API confirms a real 404 afterward. Used it for real afterward to remove this run's own two
+Playwright verification scratch-runs from the previous firing -- the tool proving itself on its
+first real use, not just its own test suite. Thirty-one real stress-test investigations, thirty-one
+real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
