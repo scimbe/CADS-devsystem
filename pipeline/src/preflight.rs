@@ -58,9 +58,7 @@ pub fn preflight_annotations(state: &RunState) -> Vec<RiskAnnotation> {
         findings.push(a);
     }
     findings.extend(no_price_ceiling(state));
-    if let Some(a) = succeeded_iteration_admits_a_defect(state) {
-        findings.push(a);
-    }
+    findings.extend(succeeded_iteration_admits_a_defect(state));
     if let Some(a) = checkin_cadence_effectively_disabled(state) {
         findings.push(a);
     }
@@ -202,25 +200,44 @@ fn security_keyword_hit(state: &RunState) -> Option<RiskAnnotation> {
 /// ever admitted a defect. A false "still open" nag on an actually-fixed
 /// defect is a real, named cost of this -- but it's a far smaller one than
 /// silently hiding a defect nobody ever said was fixed.
-fn succeeded_iteration_admits_a_defect(state: &RunState) -> Option<RiskAnnotation> {
-    let hit = state.history.iter().rev().find(|h| {
-        h.succeeded && {
+///
+/// **A second real gap in this same check, found live 2026-08-06 applying
+/// the identical lens that found `no_price_ceiling`'s and
+/// `vague_acceptance_criteria`'s own "only the first/latest match" bugs**:
+/// the "scan all of history, stays flagged" fix above solved the defect
+/// vanishing over time, but this still only ever returned ONE
+/// `RiskAnnotation` via `Iterator::find` -- if two DIFFERENT succeeded
+/// iterations each admit a genuinely different, unfixed defect, only the
+/// most recent one's evidence was ever shown, the other silently invisible.
+/// Live-confirmed: two real iterations, one admitting an unfixed session-
+/// expiry security gap, the other an unfixed search crash, produced exactly
+/// one finding -- the security defect was completely hidden. Now collects
+/// every real defect-admitting succeeded iteration, not just the latest.
+fn succeeded_iteration_admits_a_defect(state: &RunState) -> Vec<RiskAnnotation> {
+    state
+        .history
+        .iter()
+        .filter(|h| {
+            h.succeeded && {
+                let feedback_lower = h.feedback.to_lowercase();
+                DEFECT_ADMISSION_PHRASES.iter().any(|p| feedback_lower.contains(*p))
+            }
+        })
+        .filter_map(|h| {
             let feedback_lower = h.feedback.to_lowercase();
-            DEFECT_ADMISSION_PHRASES.iter().any(|p| feedback_lower.contains(*p))
-        }
-    })?;
-    let feedback_lower = hit.feedback.to_lowercase();
-    let phrase = DEFECT_ADMISSION_PHRASES.iter().find(|p| feedback_lower.contains(**p))?;
-    Some(RiskAnnotation {
-        label: "succeeded iteration admits a known defect".into(),
-        evidence: format!(
-            "iteration {}'s own feedback contains \"{phrase}\" while marked succeeded:true -- goal \
-             doc §5's Vertragsgemäße/Sachmangelfreie row names this exact gap: nothing else blocks \
-             marking work \"done\" with open, known defects. No later iteration signals it was \
-             ever fixed, so this stays flagged.",
-            hit.iteration
-        ),
-    })
+            let phrase = DEFECT_ADMISSION_PHRASES.iter().find(|p| feedback_lower.contains(**p))?;
+            Some(RiskAnnotation {
+                label: "succeeded iteration admits a known defect".into(),
+                evidence: format!(
+                    "iteration {}'s own feedback contains \"{phrase}\" while marked succeeded:true -- goal \
+                     doc §5's Vertragsgemäße/Sachmangelfreie row names this exact gap: nothing else blocks \
+                     marking work \"done\" with open, known defects. No later iteration signals it was \
+                     ever fixed, so this stays flagged.",
+                    h.iteration
+                ),
+            })
+        })
+        .collect()
 }
 
 /// "no test stage before implement" (proposal §5's own example): a real
@@ -565,6 +582,33 @@ mod tests {
             findings.iter().any(|f| f.label == "succeeded iteration admits a known defect"),
             "the defect was never actually fixed -- it must still be flagged: {findings:?}"
         );
+    }
+
+    #[test]
+    /// Real gap, live-found 2026-08-06 applying the identical lens that found
+    /// `no_price_ceiling`'s and `vague_acceptance_criteria`'s own "only the
+    /// first/latest match" bugs. Two different succeeded iterations, each
+    /// admitting a genuinely different, unfixed defect -- both must be
+    /// flagged, not just the most recent one.
+    fn flags_every_distinct_admitted_defect_not_just_the_most_recent() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(
+            STAGE_IMPLEMENT,
+            1,
+            "Shipped the login flow. Known issue: session tokens never expire, a real security gap not fixed yet.",
+            vec![],
+        ));
+        state.history.push(iteration(
+            STAGE_IMPLEMENT,
+            2,
+            "Shipped the message search feature. Known bug: search crashes on empty query, not implemented a guard for it yet.",
+            vec![],
+        ));
+        let findings = preflight_annotations(&state);
+        let defects: Vec<_> = findings.iter().filter(|f| f.label == "succeeded iteration admits a known defect").collect();
+        assert_eq!(defects.len(), 2, "both real, distinct, unfixed defects must be flagged, not just the most recent: {findings:?}");
+        assert!(defects.iter().any(|f| f.evidence.contains("iteration 1")));
+        assert!(defects.iter().any(|f| f.evidence.contains("iteration 2")));
     }
 
     #[test]
