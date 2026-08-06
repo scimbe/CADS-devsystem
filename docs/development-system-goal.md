@@ -2406,4 +2406,31 @@ Android build progress once M1 is answered, or a genuinely different investigati
 tried: GUI keyboard/accessibility DAU-proofing, or the assistant's own tool-call error paths under
 malformed input) rather than re-treading ground already swept clean twice.
 
+**Docs-loop firing, 2026-08-06 (jj) -- a real, severe, long-standing bug found by checking the
+live site instead of trusting the hermetic build alone**: `CADS-devsystem-docs`'s `_config.yml`
+had `baseurl: ""` since its very first commit, while the site is actually deployed as a GitHub
+Pages *project* site at `https://scimbe.github.io/CADS-devsystem-docs/`. Every `relative_url`-built
+link on every page -- the whole nav bar, every page-to-page link, every screenshot `src` -- resolved
+to a root-relative path missing the `/CADS-devsystem-docs` prefix. Live-confirmed before fixing:
+`https://scimbe.github.io/explanation/` (the literal emitted href) `404`s;
+`https://scimbe.github.io/CADS-devsystem-docs/explanation/` (correct) `200`s. This had been broken
+from day one and never caught, because the standing hermetic-rebuild verification step (`jekyll
+build --trace` succeeding) and local `jekyll serve` both serve at root, where `baseurl: ""` looks
+correct -- only checking the actual deployed URL's real hrefs surfaced it. The templates themselves
+were always correct (`relative_url` used consistently everywhere); only the config value was wrong.
+
+Fixed (`CADS-devsystem-docs@80f5150`) by setting `baseurl: "/CADS-devsystem-docs"` -- the site's own
+existing default GitHub Pages URL, not a new subdomain, so this does not touch the DNS/Pages-config
+constraint. Hermetic Jekyll rebuild confirmed clean; verified the generated `_site/index.html` and a
+sample how-to page (`manage-custom-panels`) now emit every nav link, page link, and image `src` with
+the correct prefix. Not yet re-verified against the actual redeployed GitHub Pages site, since
+GitHub's own Actions/Pages `major_outage` (still active as of this firing) may delay the real
+publish -- will re-check once the incident clears rather than assume it deployed instantly.
+
+Worth noting as a process lesson for future docs-loop firings: step 4 of the standing 5-step process
+("hermetic Jekyll rebuild") proves the site *builds*, not that it *links correctly once deployed* --
+add a periodic live-link spot-check against the real deployed URL (not just localhost/hermetic
+output) as part of the loop's own discipline going forward, since a `baseurl` mismatch is exactly
+the kind of defect a build-only check structurally cannot catch.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
