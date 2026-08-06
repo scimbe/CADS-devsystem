@@ -2467,4 +2467,34 @@ no action and leaves text untouched), `devsystem_assistant`'s own suite 47/47 (w
 `400` round trip against `172.17.0.1:8791/ask`, real process restarted under the new pid). Nine
 real stress-test runs, nine real gaps found and closed.
 
+**Main-dev-loop firing, 2026-08-06 (ll) -- a real DAU-lens GUI gap, plus a state check with nothing
+new to act on**: no new operator input on any of the three open `#382` checkpoints (still all this
+loop's own comments on re-check); GitHub's Actions/Pages incident still `major_outage` on both.
+Issue #13 (CADS-devsystem) confirmed closed, unchanged. Issue #14 confirmed still open and blocked
+on the operator-only OIDC credential, unchanged. No open PRs on either `CADS-devsystem` or
+`CADS-webconference-android` from any `scimbe`-authored source (only dependabot PRs #9/#10/#11,
+correctly left untouched per the standing "only act on scimbe-authored" constraint). The flagship
+`webconference-android` run remains paused at its own real M1-complete checkpoint, its three
+backlog items done and its one milestone achieved -- left untouched pending the operator's still-
+unanswered direction choice on `#382`, per the standing "don't guess past a real checkpoint" rule.
+
+With no new external input to act on, went after §7's DAU-proofing mandate with a genuinely
+untried angle (accessibility/keyboard, flagged as untried in firing (ii)'s own note): the app's two
+custom popovers (auto-refresh interval, per-role fill-mode) only ever closed on an outside click --
+no `Escape` support, unlike every native `confirm()` dialog already used throughout this app for
+destructive actions, and unlike the assistant-prompt autocomplete's own existing `Escape` handling.
+A user who reflexively hits the universal "close this" key found it did nothing and had to go hunt
+for where to click instead -- a real, if minor, instance of the GUI not leading a plausible user
+toward a good outcome. Fixed (`CADS-devsystem@5352d4c`): a dedicated `keydown` listener for
+`Escape`, deliberately NOT gated behind the existing "don't hijack normal typing" check the other
+global shortcuts use, since `Escape` must close the popover even while its own dedicated-label
+`<input>` is focused. Checked first that no other custom popover/modal exists in this app needing
+the same fix (grepped for every `.id = '...popover'`/`'...modal'` assignment -- only these two;
+every other confirmation already goes through native `confirm()`, which handles `Escape` for free).
+
+Redeployed `devsystem-web` and live-verified both popovers with a real Playwright run against the
+actual redeployed site (not just a code read): each opens on click, closes on `Escape`, zero
+console errors. No hermetic Rust suite affected (pure static-frontend change); the existing
+hermetic web/pipeline suites remain unaffected and were not the layer touched this firing.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
