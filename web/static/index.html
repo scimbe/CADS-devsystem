@@ -2255,7 +2255,20 @@ function renderMilestonesPanel(id, data) {
     if (milestoneInput) milestoneInput.focus();
   }
   for (const cb of body.querySelectorAll('.milestone-toggle')) {
-    cb.onchange = () => toggleMilestone(id, parseInt(cb.dataset.index, 10));
+    cb.onchange = () => {
+      // Real DAU-lens gap: checking this box does not just record a fact -- the
+      // not-achieved -> achieved transition auto-pauses the ENTIRE run server-side
+      // (see toggle_milestone's own doc comment in pipeline/src/runner.rs), which
+      // blocks every further iteration submission until a human explicitly resumes
+      // it. A careless click on what looks like a plain checkbox had zero warning
+      // of that. The un-achieve direction has no such side effect (it never
+      // auto-resumes), so only the destructive direction needs a confirm.
+      if (cb.checked && !confirm('Mark this milestone achieved? This pauses the run for real -- no new iterations are accepted until you resume it.')) {
+        cb.checked = false;
+        return;
+      }
+      toggleMilestone(id, parseInt(cb.dataset.index, 10));
+    };
   }
   document.getElementById('milestone-form').addEventListener('submit', async (e) => {
     e.preventDefault();
