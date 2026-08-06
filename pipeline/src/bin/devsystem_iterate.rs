@@ -363,13 +363,16 @@ mod tests {
         assert!(err.contains("no string"));
     }
 
+    /// (method, url, body, real Authorization header if one was sent) -- one real
+    /// captured HTTP request, named so `spawn_capturing_server`'s own signature
+    /// doesn't need to spell out the full tuple type at every use site.
+    type CapturedRequest = (String, String, String, Option<String>);
+
     /// A tiny real HTTP server standing in for devsystem-web -- proves the exact
     /// method/path/body/Authorization-header devsystem_iterate --remote actually
     /// sends, not just that remote_request_body compiles. Same pattern as
     /// devsystem_assistant's own apply_action tests.
-    fn spawn_capturing_server(
-        response_body: &'static str,
-    ) -> (String, std::sync::mpsc::Receiver<(String, String, String, Option<String>)>) {
+    fn spawn_capturing_server(response_body: &'static str) -> (String, std::sync::mpsc::Receiver<CapturedRequest>) {
         let server = tiny_http::Server::http("127.0.0.1:0").expect("bind ephemeral port");
         let addr = format!("http://{}", server.server_addr());
         let (tx, rx) = std::sync::mpsc::channel();

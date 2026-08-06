@@ -5,6 +5,20 @@ name: Pipeline CI
 # now, unlike CADS-webconference-android's; same class of gap, same fix. Matches
 # this project's own hermetic-gate discipline: -D warnings, real tests, no
 # `cargo build` alone counted as "passing".
+#
+# Real gap found live by the stress test, twenty-ninth run, 2026-08-06: the
+# goal doc's own §5 quality-bar table names "Kunstgerecht" (idiomatic to the
+# language/framework, not just "works") as a row with no mechanical check at
+# all -- `RUSTFLAGS: -D warnings` catches compiler warnings, a genuinely
+# different, narrower layer than clippy's own idiomatic-Rust lints. Checked
+# hermetically: `cargo clippy --all-targets -- -D warnings` found 9 real,
+# small findings across both crates (a doc-comment formatting quirk, a manual
+# reimplementation of `is_multiple_of`, two unnecessary clones creating a
+# slice from a reference, an overly complex test-helper return type, a
+# drain-then-extend that should have been `append`, three `sort_by` calls
+# that should have been `sort_by_key` with `Reverse`) -- all fixed in the
+# same real commit that added this step, not left for a future PR to trip
+# over.
 
 on:
   push:
@@ -21,10 +35,16 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: pipeline
+
+      - name: cargo clippy (pipeline crate -- idiomatic-Rust gate, goal doc §5 "Kunstgerecht")
+        working-directory: pipeline
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: cargo test (pipeline crate)
         working-directory: pipeline
@@ -67,10 +87,16 @@ jobs:
       - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: web
+
+      - name: cargo clippy (web crate -- idiomatic-Rust gate, goal doc §5 "Kunstgerecht")
+        working-directory: web
+        run: cargo clippy --all-targets -- -D warnings
 
       # Real gap found+fixed 2026-08-05: this ran `cargo build`, not `cargo
       # test` -- directly violating this workflow's OWN stated principle two

@@ -96,6 +96,7 @@ pub fn full_spec(run_id: &str, operator_pubkey_hex: Option<String>) -> PipelineS
 /// The #382 first-slice spec: **only** the `plan` role, matching the committed
 /// sequencing ("stand up the coordination repo + generalize RequiredRole/convene() ...
 /// + plan/Plan-Canvas stage only, before committing to the full seven-stage build").
+///
 /// The other six stages exist in [`full_spec`] but are not wired into any real run yet.
 pub fn plan_only_spec(run_id: &str, operator_pubkey_hex: Option<String>) -> PipelineSpec {
     PipelineSpec {
@@ -256,7 +257,7 @@ pub fn should_checkin(record: &IterationRecord, criteria: &AbortCriteria) -> boo
     if record.iteration == 0 || criteria.checkin_every == 0 {
         return record.iteration >= criteria.max_iterations;
     }
-    record.iteration % criteria.checkin_every == 0 || record.iteration >= criteria.max_iterations
+    record.iteration.is_multiple_of(criteria.checkin_every) || record.iteration >= criteria.max_iterations
 }
 
 /// True when the run should abort outright (not just pause for check-in): too many
@@ -424,7 +425,7 @@ mod tests {
             units: 1,
             price_ceiling: None,
         };
-        assert!(validate_proposals(&[base.clone()]).is_ok(), "a genuine, non-empty proposal must pass");
+        assert!(validate_proposals(std::slice::from_ref(&base)).is_ok(), "a genuine, non-empty proposal must pass");
 
         let mut empty_stage_id = base.clone();
         empty_stage_id.stage_id = "".to_string();
@@ -458,7 +459,7 @@ mod tests {
             units: 1,
             price_ceiling: None,
         };
-        assert!(validate_proposals(&[garbage.clone()]).is_err(), "the shared gate must catch it");
+        assert!(validate_proposals(std::slice::from_ref(&garbage)).is_err(), "the shared gate must catch it");
         assert_eq!(apply_proposal(&mut spec, &garbage), ProposalOutcome::Added, "apply_proposal itself has no opinion -- callers must gate first");
         assert_eq!(spec.roles.len(), before + 1, "confirms apply_proposal really would add the garbage role if a caller skipped validate_proposals");
     }

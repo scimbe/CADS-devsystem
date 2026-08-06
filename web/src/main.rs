@@ -1771,7 +1771,7 @@ async fn search_rag(
                         None => results.push(rag::RagSearchResult { path: hit.path, score, snippet, match_kind: rag::MatchKind::Semantic }),
                     }
                 }
-                results.sort_by(|a, b| b.score.cmp(&a.score));
+                results.sort_by_key(|b| std::cmp::Reverse(b.score));
                 results.truncate(10);
             }
             Err(e) => eprintln!("devsystem-web: real Postgres semantic search failed for run {id}, falling back to the embedded results already found: {e}"),

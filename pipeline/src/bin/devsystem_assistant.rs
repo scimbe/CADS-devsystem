@@ -131,7 +131,7 @@ fn condense_history(body: &str) -> String {
         })
         .collect();
     condensed.push(serde_json::json!({"note": format!("{omitted} earlier iteration(s) condensed to iteration/stage/succeeded only (feedback text dropped) to keep this prompt a reasonable size; {KEEP_FULL} most recent kept in full below")}));
-    condensed.extend(history.drain(..));
+    condensed.append(history);
     *history = condensed;
     serde_json::to_string(&root).unwrap_or_else(|_| body.to_string())
 }

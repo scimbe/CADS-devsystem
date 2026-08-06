@@ -299,7 +299,7 @@ pub fn search(index: &RagIndex, query: &str, limit: usize) -> Vec<RagSearchResul
             }
         }
     }
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|b| std::cmp::Reverse(b.0));
     scored
         .into_iter()
         .take(limit)
@@ -392,7 +392,7 @@ pub fn combined_search(index: &RagIndex, query: &str, query_embedding: Option<&[
             }
         }
     }
-    merged.sort_by(|a, b| b.score.cmp(&a.score));
+    merged.sort_by_key(|b| std::cmp::Reverse(b.score));
     merged.truncate(limit);
     merged
 }
