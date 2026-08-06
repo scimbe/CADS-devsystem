@@ -1739,7 +1739,7 @@ async function renderRolesPanel(id, data) {
     <form class="arch-offer-form" id="quick-offer-form">
       <label>bid a role<select id="quick-offer-role">${roleOptions}</select></label>
       <label>price<input id="quick-offer-price" type="number" min="0" value="10" required></label>
-      <label>units<input id="quick-offer-units" type="number" min="1" value="1" required></label>
+      <label>units<input id="quick-offer-units" type="number" min="1" max="100" value="1" required></label>
       <button type="submit">Submit offer</button>
       <span id="quick-offer-status" class="status-line"></span>
     </form>
@@ -1872,8 +1872,17 @@ async function renderRolesPanel(id, data) {
     const stage_id = document.getElementById('quick-offer-role').value;
     const price = parseInt(document.getElementById('quick-offer-price').value, 10);
     const units = parseInt(document.getElementById('quick-offer-units').value, 10);
-    if (!Number.isInteger(price) || price < 0 || !Number.isInteger(units) || units < 1) {
-      status.textContent = 'price/units must be valid numbers'; status.className = 'status-line err';
+    // DAU-lens gap found live 2026-08-06 (#382 goal doc §8): this form's own real
+    // <form> submit already gets native HTML5 validation (unlike Health & Criteria's
+    // plain-button form, which needed an explicit JS check for the same reason) -- but
+    // there was no upper bound at all, client or server-attribute, on `units`, even
+    // though the server enforces a real MAX_ROLE_UNITS (100). Live-confirmed before
+    // this fix: units:99999 round-tripped to a real 400 with no earlier warning. Both
+    // the `max="100"` attribute above AND this explicit check now cover it, the same
+    // "attribute for what it's worth, real check for what actually blocks it" shape
+    // already used for the criteria panel.
+    if (!Number.isInteger(price) || price < 0 || !Number.isInteger(units) || units < 1 || units > 100) {
+      status.textContent = 'price must be a valid non-negative number, units must be between 1 and 100'; status.className = 'status-line err';
       return;
     }
     status.textContent = 'Signing and submitting…'; status.className = 'status-line';
