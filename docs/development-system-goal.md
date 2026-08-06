@@ -2206,4 +2206,22 @@ session:
 No new gap found in any of the three -- reported honestly as a thorough, clean investigation rather
 than manufacturing a change.
 
+**Main-dev-loop firing, 2026-08-06 (aa)**: issues #13/#14 unchanged, `webconference-android` no new
+commits (still correctly left untouched pending the operator's own M1-checkpoint reply). Found a
+real, if minor, DAU-lens gap continuing the sweep into the Health & Criteria panel's own edit form:
+the three `AbortCriteria` inputs had a client-side `min` but no `max`, even though the server
+enforces a real `MAX_ABORT_CRITERIA_VALUE` (10,000) -- a careless value would silently round-trip to
+the server before failing (still a clear error there, per this codebase's own earlier `fetchJSON`
+real-message fix, but one avoidable retry). Adding a bare `max="10000"` attribute alone would have
+been cosmetic and misleading: `Save criteria` is a plain button `onclick`, not a real `<form>`
+submit, so the browser never runs native HTML5 validation against it regardless of the attribute.
+Fixed for real (`CADS-devsystem@911b295`): added the attribute for what it's worth on real
+number-input steppers, AND an explicit bounds check inside `saveCriteria()` that actually blocks
+the request and gives immediate feedback. Deployed, live-verified end to end with a real
+headless-browser (Playwright) run against the actual redeployed container: typed `999999` into
+`max iterations`, clicked Save, got `"All three fields must be at most 10,000."` immediately, no
+round-trip -- and confirmed a genuine, in-bounds value still saves correctly (`200`). 57/57
+stress-harness assertions still clean; no new harness check needed (pure frontend change, same
+precedent as the pause-reason and `truncate()` fixes).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
