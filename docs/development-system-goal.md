@@ -1205,6 +1205,21 @@ against the actual deployment: the real `webconference-android` run moved from p
 position 0/110. Full stress-test harness re-run afterward confirmed no regressions elsewhere.
 Fifty-two real stress-test investigations, forty-one real gaps found and closed.
 
+**The stress test's fifty-third real run, 2026-08-06**: the outer `label` for a dedicated role
+(directly accepting a bid, skipping the auction) was already validated non-empty -- the nested
+`accepted_bid.holder_label`, a real identity record of who actually won the bid, had zero
+validation, the exact same bug class already closed everywhere else (milestones, backlog,
+requirements, iteration feedback). Live-confirmed before touching anything: both a byte-empty and a
+whitespace-only `holder_label` got a real `200`. Fixed (`CADS-devsystem@9c466ae`). Hermetic: web
+crate 168/168 (a new test covering both empty and whitespace-only), clippy clean. Deployed and
+live-verified all three cases against the actual deployment. Full stress-test harness re-run
+afterward confirmed no regressions elsewhere.
+
+**The stress test's fifty-fourth real run, 2026-08-06**: added run 53's fix to the harness as check
+[16] (`CADS-devsystem@dfc8f9b`) -- live-confirmed against the deployed change before writing it. The
+harness now covers twenty-two real checks, 30/30 individual assertions passing locally against the
+real deployment. Fifty-four real stress-test investigations, forty-two real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
