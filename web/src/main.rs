@@ -441,6 +441,19 @@ async fn main() {
 /// state.json without bound (matches the host's real, limited disk headroom).
 const MAX_LIST_ITEMS: usize = 500;
 
+/// DAU-lens gap found live 2026-08-06 (#382 goal doc §8): every other real free-text
+/// field in this codebase has a real length cap (`MAX_REQUIREMENT_STATEMENT_LEN`,
+/// `MAX_ACCEPTANCE_CRITERION_LEN`, `MAX_ISSUE_TITLE_LEN`/`MAX_ISSUE_BODY_LEN`) --
+/// backlog item text and milestone descriptions were the one real exception,
+/// bounded only by axum's generic whole-request body limit (a real 2MB request gets
+/// a real, correctly-rejected `413`, but a 500KB single field -- live-confirmed --
+/// sailed through as a real `200`). Same reasoning as `MAX_LIST_ITEMS` right above:
+/// this persists to state.json on every add, and nothing else stops a client from
+/// growing it without bound. Matches `MAX_REQUIREMENT_STATEMENT_LEN`'s own value --
+/// both are "one real sentence or two describing what needs to happen," the same
+/// shape of field.
+const MAX_SHORT_TEXT_LEN: usize = 2_000;
+
 /// Real gap found live 2026-08-06 (stress-test run 42): unlike every per-run list
 /// above, `create_run` had no cap at all on the total NUMBER of runs -- confirmed
 /// live this deployment already carries 110 real run directories on a host at 91%
@@ -1241,6 +1254,9 @@ async fn add_backlog_item(
     if text.is_empty() {
         return (StatusCode::BAD_REQUEST, "text must not be empty").into_response();
     }
+    if text.len() > MAX_SHORT_TEXT_LEN {
+        return (StatusCode::BAD_REQUEST, format!("text must be under {MAX_SHORT_TEXT_LEN} characters")).into_response();
+    }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
     let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
@@ -1314,6 +1330,9 @@ async fn add_milestone(
     let description = body.description.trim().to_string();
     if description.is_empty() {
         return (StatusCode::BAD_REQUEST, "description must not be empty").into_response();
+    }
+    if description.len() > MAX_SHORT_TEXT_LEN {
+        return (StatusCode::BAD_REQUEST, format!("description must be under {MAX_SHORT_TEXT_LEN} characters")).into_response();
     }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
@@ -5848,6 +5867,41 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    /// DAU-lens gap found live 2026-08-06 (#382 goal doc §8): every other real
+    /// free-text field in this codebase (requirement statements, acceptance
+    /// criteria, issue title/body) already has a real length cap -- backlog item
+    /// text and milestone descriptions were the one exception, bounded only by
+    /// axum's generic whole-request body limit. Live-confirmed before fixing: a
+    /// real 500,000-character backlog item text got a real 200.
+    async fn backlog_and_milestone_text_reject_an_absurdly_long_value() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "long-text-run"}))).await.unwrap();
+
+        let huge = "x".repeat(MAX_SHORT_TEXT_LEN + 1);
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/long-text-run/backlog", serde_json::json!({"text": huge})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "an absurdly long backlog item text must be rejected");
+
+        let huge2 = "x".repeat(MAX_SHORT_TEXT_LEN + 1);
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/long-text-run/milestones", serde_json::json!({"description": huge2})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "an absurdly long milestone description must be rejected");
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/long-text-run/backlog", serde_json::json!({"text": "a genuinely real, short backlog item"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "a genuine, reasonably-sized backlog item must not be rejected");
     }
 
     #[tokio::test]

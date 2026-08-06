@@ -2443,7 +2443,7 @@ function renderBacklogPanel(id, data) {
     ${startHere}
     <div class="backlog-list">${items}</div>
     <form class="inline" id="backlog-form" style="margin-top:.6rem">
-      <input id="backlog-text" placeholder="Add a backlog item…">
+      <input id="backlog-text" maxlength="2000" placeholder="Add a backlog item…">
       <button type="submit">+</button>
     </form>
     <div id="backlog-status" class="status-line"></div>
@@ -2509,7 +2509,7 @@ function renderMilestonesPanel(id, data) {
     <div class="backlog-list">${items}</div>
     <div class="lede" style="font-size:.72rem;margin-top:.4rem">Checking one off pauses the run for review.</div>
     <form class="inline" id="milestone-form" style="margin-top:.6rem">
-      <input id="milestone-text" placeholder="Add a milestone…">
+      <input id="milestone-text" maxlength="2000" placeholder="Add a milestone…">
       <button type="submit">+</button>
     </form>
     <div id="milestone-status" class="status-line"></div>
