@@ -57,9 +57,7 @@ pub fn preflight_annotations(state: &RunState) -> Vec<RiskAnnotation> {
     if let Some(a) = no_review_for_succeeded_work(state) {
         findings.push(a);
     }
-    if let Some(a) = no_price_ceiling(state) {
-        findings.push(a);
-    }
+    findings.extend(no_price_ceiling(state));
     if let Some(a) = succeeded_iteration_admits_a_defect(state) {
         findings.push(a);
     }
@@ -334,7 +332,7 @@ fn no_review_for_succeeded_work(state: &RunState) -> Option<RiskAnnotation> {
 /// human reviewing this run a false "this is bounded" signal for a role that's
 /// exactly as unbounded as one with no ceiling at all. `unwrap_or(0) == 0`
 /// below treats both the same, honestly.
-fn no_price_ceiling(state: &RunState) -> Option<RiskAnnotation> {
+fn no_price_ceiling(state: &RunState) -> Vec<RiskAnnotation> {
     // Real regression found live, same day as approved_stage_proposals was
     // introduced: scanning *only* the new field silently dropped every real,
     // still-unbounded role approved before that field existed -- confirmed
@@ -358,7 +356,19 @@ fn no_price_ceiling(state: &RunState) -> Option<RiskAnnotation> {
     // `history.proposals` only for a `stage_id` with no entry there at all
     // (pre-existing data from before that field existed) -- so a later, real,
     // better proposal actually supersedes an earlier bad one.
-    let unbounded = state
+    // Real gap found live 2026-08-06, checking the actual deployed
+    // webconference-android run rather than assuming this already-audited
+    // check was complete: `devsystem.review` has the identical unbounded
+    // shape as `devsystem.document_extraction` (both `use_existing_service:
+    // None`, `price_ceiling: None`, confirmed live) -- but this used to be a
+    // single `Option<RiskAnnotation>`, built on `Iterator::find`, which stops
+    // at the FIRST unbounded role in `added_stages` order and never checks
+    // the rest. A run with two simultaneously-unbounded roles only ever
+    // showed one of them, silently hiding the other -- the exact "a real risk
+    // exists but nothing surfaces it" bug class this whole file exists to
+    // catch, this time in one of its own checks. Now collects every real
+    // unbounded role, not just the first.
+    let unbounded: Vec<_> = state
         .added_stages
         .iter()
         .filter_map(|stage_id| {
@@ -369,15 +379,19 @@ fn no_price_ceiling(state: &RunState) -> Option<RiskAnnotation> {
                 .find(|p| &p.stage_id == stage_id)
                 .or_else(|| state.history.iter().rev().flat_map(|h| h.proposals.iter().rev()).find(|p| &p.stage_id == stage_id))
         })
-        .find(|p| p.use_existing_service.is_none() && p.price_ceiling.unwrap_or(0) == 0)?;
-    Some(RiskAnnotation {
-        label: "no price ceiling set".into(),
-        evidence: format!(
-            "role `{}` is live in this run's own spec, was proposed needing a new service (no use_existing_service) with no real price_ceiling ({}), and nothing since has bounded what filling it could cost -- price_ceiling is never actually enforced against a real bid's price, so 0 is exactly as unbounded as unset",
-            unbounded.stage_id,
-            unbounded.price_ceiling.map(|p| p.to_string()).unwrap_or_else(|| "none set".to_string())
-        ),
-    })
+        .filter(|p| p.use_existing_service.is_none() && p.price_ceiling.unwrap_or(0) == 0)
+        .collect();
+    unbounded
+        .into_iter()
+        .map(|p| RiskAnnotation {
+            label: "no price ceiling set".into(),
+            evidence: format!(
+                "role `{}` is live in this run's own spec, was proposed needing a new service (no use_existing_service) with no real price_ceiling ({}), and nothing since has bounded what filling it could cost -- price_ceiling is never actually enforced against a real bid's price, so 0 is exactly as unbounded as unset",
+                p.stage_id,
+                p.price_ceiling.map(|v| v.to_string()).unwrap_or_else(|| "none set".to_string())
+            ),
+        })
+        .collect()
 }
 
 const MIN_ITERATIONS_BEFORE_FLAGGING_NO_REVIEW: usize = 3;
@@ -695,6 +709,47 @@ mod tests {
         state.added_stages.push("devsystem.some_new_role".into());
         let findings = preflight_annotations(&state);
         assert!(findings.iter().any(|f| f.label == "no price ceiling set"));
+    }
+
+    #[test]
+    /// Real gap, live-found 2026-08-06 checking the actual deployed
+    /// webconference-android run: `devsystem.review` had the identical
+    /// unbounded shape as `devsystem.document_extraction` (both live,
+    /// use_existing_service: None, price_ceiling: None), but only the latter
+    /// was ever surfaced -- `no_price_ceiling` used to be built on
+    /// `Iterator::find`, which stops at the first match in `added_stages`
+    /// order and silently never looks at the rest. Two roles proposed
+    /// unbounded at once here must both be flagged, not just the first one
+    /// added.
+    fn flags_every_simultaneously_unbounded_role_not_just_the_first() {
+        let mut state = RunState::new("run-preflight");
+        let first = StageProposal {
+            proposed_by: STAGE_REVIEW.into(),
+            stage_id: "devsystem.role_a".into(),
+            tag: "role_a".into(),
+            rationale: "test".into(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: None,
+        };
+        let second = StageProposal {
+            proposed_by: STAGE_REVIEW.into(),
+            stage_id: "devsystem.role_b".into(),
+            tag: "role_b".into(),
+            rationale: "test".into(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: None,
+        };
+        state.approved_stage_proposals.push(first);
+        state.approved_stage_proposals.push(second);
+        state.added_stages.push("devsystem.role_a".into());
+        state.added_stages.push("devsystem.role_b".into());
+        let findings = preflight_annotations(&state);
+        let unbounded: Vec<_> = findings.iter().filter(|f| f.label == "no price ceiling set").collect();
+        assert_eq!(unbounded.len(), 2, "both real unbounded roles must be flagged, not just the first: {findings:?}");
+        assert!(unbounded.iter().any(|f| f.evidence.contains("devsystem.role_a")));
+        assert!(unbounded.iter().any(|f| f.evidence.contains("devsystem.role_b")));
     }
 
     #[test]
