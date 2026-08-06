@@ -1034,8 +1034,15 @@ async fn set_paused(state: AppState, id: String, paused: bool, headers: axum::ht
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
     }
     run_state.paused = paused;
+    // Real "why paused" distinction (RunState::pause_reason's own doc comment, run
+    // 49): a direct pause/resume through this exact route is the one real trigger
+    // that's always a deliberate human action, never automatic -- reflects that
+    // honestly rather than leaving a stale reason from an earlier auto-pause
+    // showing after a human explicitly took over, and clears it on resume so a
+    // later auto-pause doesn't inherit a stale human-set one either.
+    run_state.pause_reason = if paused { Some("paused manually".to_string()) } else { None };
     match persist_run(&dir, &spec, &run_state) {
-        Ok(()) => Json(serde_json::json!({"paused": run_state.paused})).into_response(),
+        Ok(()) => Json(serde_json::json!({"paused": run_state.paused, "pause_reason": run_state.pause_reason})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
     }
 }
@@ -6113,6 +6120,36 @@ exit 1"#);
             .await
             .unwrap();
         assert_eq!(response.status(), SC::OK, "iterations must be accepted again after resume");
+    }
+
+    #[tokio::test]
+    /// Real "why paused" distinction (stress-test run 49): a milestone achieved, a
+    /// run hitting its own real bound, and a human's own direct pause click are
+    /// three genuinely different situations that used to render an identical
+    /// banner. Proves the real, honest reason a direct pause/resume records, and
+    /// that resuming clears it rather than leaving a stale reason a later
+    /// auto-pause could inherit.
+    async fn pause_and_resume_record_and_clear_a_real_reason() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "reason-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/reason-run/pause").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(body_json(response).await["pause_reason"], "paused manually");
+
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/reason-run").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(body_json(get).await["state"]["pause_reason"], "paused manually");
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/reason-run/resume").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(body_json(response).await["pause_reason"], serde_json::Value::Null, "resuming must clear the reason, not leave it stale");
     }
 
     #[tokio::test]

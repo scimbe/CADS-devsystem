@@ -301,16 +301,39 @@ pub struct RunState {
     /// run used to be hardcoded to.
     #[serde(default)]
     pub criteria: AbortCriteria,
-    /// Explicit human "stop, let me correct something" -- operator feedback: "ich
-    /// weiss nicht... wie ich es anhalten kann um es zu korrigieren." Distinct from
-    /// `CheckinDue`/`Abort` (which the run reaches on its own bounded-loop cadence):
-    /// this is set/cleared only by a human action (the GUI's Pause/Resume button or
-    /// the equivalent API calls), never by `run_iteration` itself. While `true`,
-    /// `iterate_run` refuses new iterations with a clear error instead of silently
-    /// accepting them. `#[serde(default)]` so pre-existing `state.json` files (none
-    /// paused, obviously) still load.
+    /// "Stop, let me look at this" -- operator feedback: "ich weiss nicht... wie ich
+    /// es anhalten kann um es zu korrigieren." While `true`, `iterate_run` refuses
+    /// new iterations with a real `409` instead of silently accepting them, the one
+    /// real gate every real trigger below shares.
+    ///
+    /// **Real gap in this comment's own earlier claim, corrected 2026-08-06
+    /// (stress-test run 47)**: this used to say `paused` was "set/cleared only by a
+    /// human action... never by `run_iteration` itself," true only for the direct
+    /// pause/resume API and already stale the moment [`toggle_milestone`] started
+    /// auto-pausing on achievement. It's now genuinely false a second way too:
+    /// `run_iteration` itself sets this on a real `Abort` (hitting the run's own
+    /// `max_iterations`/`max_consecutive_failures`) -- confirmed live before that fix
+    /// existed that `RunOutcome::Abort` was purely advisory, letting a run accept
+    /// real iterations forever past its own configured bound. Three real triggers
+    /// set it today: a human's own direct pause, [`toggle_milestone`] on achievement,
+    /// and `run_iteration` on a real abort -- only the first is undone by anything
+    /// other than an explicit resume; see each site's own doc comment for which.
+    /// `#[serde(default)]` so pre-existing `state.json` files (none paused,
+    /// obviously) still load.
     #[serde(default)]
     pub paused: bool,
+    /// Real gap named honestly at the moment `run_iteration` gained its own real
+    /// abort-pause trigger (2026-08-06, stress-test run 47/48): the paused banner
+    /// looked identical whether a milestone was achieved, a human clicked Pause, or
+    /// the run genuinely hit its own bound -- three real, different situations with
+    /// no way to tell them apart at a glance. Set at every site that sets `paused =
+    /// true` (a real, short, human-readable sentence, not a code), cleared back to
+    /// `None` whenever `paused` is explicitly cleared via the direct resume API --
+    /// `#[serde(default)]` so pre-existing `state.json` files (paused, if at all,
+    /// from before this field existed) still load with an honest `None` rather than
+    /// a guessed reason.
+    #[serde(default)]
+    pub pause_reason: Option<String>,
     /// This run's real backlog -- see [`BacklogItem`]. `#[serde(default)]` so
     /// pre-existing `state.json` files (no backlog yet) still load.
     #[serde(default)]
@@ -595,6 +618,7 @@ impl RunState {
             approved_stage_proposals: Vec::new(),
             criteria: AbortCriteria::default(),
             paused: false,
+            pause_reason: None,
             backlog: Vec::new(),
             milestones: Vec::new(),
             repo_url: None,
@@ -622,8 +646,11 @@ pub fn toggle_milestone(state: &mut RunState, index: usize) -> Result<(), String
     let milestone = state.milestones.get_mut(index).ok_or_else(|| format!("no milestone at index {index}"))?;
     let was_achieved = milestone.achieved;
     milestone.achieved = !milestone.achieved;
-    if !was_achieved && milestone.achieved {
+    let just_achieved = !was_achieved && milestone.achieved;
+    let description = milestone.description.clone();
+    if just_achieved {
         state.paused = true;
+        state.pause_reason = Some(format!("milestone achieved: {description}"));
     }
     Ok(())
 }
@@ -905,11 +932,18 @@ pub fn run_iteration(
         // already established (real GUI banner, disabled New Iteration form, the
         // existing `if run_state.paused { 409 }` check `iterate_run` already runs at
         // the top) -- the next real iterate call is blocked by code that already
-        // existed, not new enforcement logic. Distinguishing *why* a run is paused
-        // (milestone vs. abort ceiling) in the GUI is a real, separate, honestly
-        // still-open refinement, not solved here -- this fix closes the actual
-        // enforcement gap, not the UX polish on top of it.
+        // existed, not new enforcement logic.
+        //
+        // The "why paused" distinction named still-open above is done now too
+        // (`RunState::pause_reason`'s own doc comment, run 49): which real bound was
+        // actually hit, checked in the same order `should_abort` itself checks them,
+        // so this never contradicts the real condition that fired.
         state.paused = true;
+        state.pause_reason = Some(if state.consecutive_failures >= criteria.max_consecutive_failures {
+            format!("{} consecutive failed iterations (limit {})", state.consecutive_failures, criteria.max_consecutive_failures)
+        } else {
+            format!("reached the {}-iteration limit", criteria.max_iterations)
+        });
         RunOutcome::Abort
     } else if checkin_check {
         RunOutcome::CheckinDue
@@ -1550,6 +1584,27 @@ mod tests {
         assert!(!state.paused, "must not pause before the real bound is actually reached");
         assert_eq!(run_iteration(&mut spec, &mut state, record(2, true, vec![]), &criteria), RunOutcome::Abort);
         assert!(state.paused, "reaching max_iterations must actually pause the run, not just report Abort");
+        assert_eq!(state.pause_reason.as_deref(), Some("reached the 2-iteration limit"));
+    }
+
+    #[test]
+    /// Real "why paused" distinction (stress-test run 49): the milestone-achieve and
+    /// abort-ceiling triggers must record genuinely different, honest reasons, not a
+    /// shared generic string -- otherwise the whole point of this field (telling
+    /// three real situations apart at a glance) is lost.
+    fn consecutive_failures_and_milestone_achievement_record_distinct_real_reasons() {
+        let mut spec = plan_only_spec("run-x", None);
+        let mut state = RunState::new("run-x");
+        let criteria = AbortCriteria { max_iterations: 20, max_consecutive_failures: 2, checkin_every: 10 };
+
+        run_iteration(&mut spec, &mut state, record(1, false, vec![]), &criteria);
+        run_iteration(&mut spec, &mut state, record(2, false, vec![]), &criteria);
+        assert_eq!(state.pause_reason.as_deref(), Some("2 consecutive failed iterations (limit 2)"));
+
+        let mut milestone_state = RunState::new("run-y");
+        milestone_state.milestones.push(Milestone { description: "1:1 messaging works end to end".to_string(), achieved: false });
+        toggle_milestone(&mut milestone_state, 0).expect("toggle a real milestone index");
+        assert_eq!(milestone_state.pause_reason.as_deref(), Some("milestone achieved: 1:1 messaging works end to end"));
     }
 
     #[test]

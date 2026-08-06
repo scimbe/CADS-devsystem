@@ -2122,7 +2122,7 @@ function renderProcessPanel(id, data) {
   const stalled = data.stalled_stages || [];
   const risks = data.risks || [];
 
-  const pausedBanner = paused ? `<div class="paused-banner">⏸ paused -- no new iterations until resumed</div>` : '';
+  const pausedBanner = paused ? `<div class="paused-banner">⏸ paused${data.state.pause_reason ? ` -- ${escapeHtml(data.state.pause_reason)}` : ''} -- no new iterations until resumed</div>` : '';
 
   const headline = `
     <div class="health" style="margin-bottom:.6rem">
@@ -2160,10 +2160,15 @@ function renderHealthCriteriaPanel(id, data) {
   if (!h) { body.innerHTML = '<span class="lede">No health data.</span>'; return; }
   const paused = !!data.state.paused;
   // Explicit human stop/correct control -- operator feedback: "ich weiss nicht...
-  // wie ich es anhalten kann um es zu korrigieren." Distinct from CheckinDue/Abort,
-  // which the run reaches on its own; this is only ever set by a human here.
+  // wie ich es anhalten kann um es zu korrigieren." Real "why paused" distinction
+  // (stress-test run 49): a milestone achieved, the run hitting its own real
+  // max_iterations/max_consecutive_failures bound, and a human's own direct pause
+  // click are three genuinely different situations that used to render an
+  // identical banner -- data.state.pause_reason (set at every real site that sets
+  // paused=true, see RunState::pause_reason's own doc comment) is now shown
+  // honestly instead of a guess.
   const pauseBanner = paused
-    ? `<div class="paused-banner">⏸ paused -- no new iterations are accepted until resumed</div>`
+    ? `<div class="paused-banner">⏸ paused${data.state.pause_reason ? ` -- ${escapeHtml(data.state.pause_reason)}` : ''} -- no new iterations are accepted until resumed</div>`
     : '';
   body.innerHTML = `
     ${pauseBanner}
