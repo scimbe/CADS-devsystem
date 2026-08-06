@@ -1438,9 +1438,6 @@ async fn add_requirement(
     if acceptance_criteria.len() > MAX_ACCEPTANCE_CRITERIA {
         return (StatusCode::BAD_REQUEST, format!("acceptance_criteria is at its defensive cap of {MAX_ACCEPTANCE_CRITERIA} items")).into_response();
     }
-    if let Some(c) = acceptance_criteria.iter().find(|c| c.len() > MAX_ACCEPTANCE_CRITERION_LEN) {
-        return (StatusCode::BAD_REQUEST, format!("acceptance criterion \"{c}\" is over {MAX_ACCEPTANCE_CRITERION_LEN} characters")).into_response();
-    }
     // Real gap found and closed by the incompetent-agent stress test (#382 goal
     // doc §8, 2026-08-05): a live round-trip proved criteria like "ok", ".", and
     // "done" -- plus a criterion that was ONLY a zero-width space (U+200B), which
@@ -1452,16 +1449,34 @@ async fn add_requirement(
     // one rule -- a criterion with too few real letters/digits to be checkable,
     // and one with none at all (which is what an invisible-character-only string
     // actually is under this count).
-    if let Some(c) = acceptance_criteria.iter().find(|c| c.chars().filter(|ch| ch.is_alphanumeric()).count() < MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS) {
-        return (
-            StatusCode::BAD_REQUEST,
-            format!(
-                "acceptance criterion \"{c}\" doesn't have enough real content to be checkable \
-                 (minimum {MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS} letters/digits) -- \"ok\", \".\", or an \
-                 invisible character aren't real acceptance criteria."
-            ),
-        )
-            .into_response();
+    //
+    // DAU-lens gap found live 2026-08-06, applying the same "does this hide a
+    // real, distinct, actionable thing" lens that found the multi-finding bugs
+    // in preflight.rs's own risk checks: these two rules used to each `find`
+    // and reject on the FIRST bad criterion only. A careless human/role-filler
+    // submitting three simultaneously-bad criteria got told about exactly one,
+    // fixed it, resubmitted, got told about the next -- a real, avoidable
+    // round-trip per extra mistake. Now reports every bad criterion in the one
+    // real request that actually has them, not one repeated retry-and-learn
+    // cycle.
+    let bad_criteria: Vec<String> = acceptance_criteria
+        .iter()
+        .filter_map(|c| {
+            if c.len() > MAX_ACCEPTANCE_CRITERION_LEN {
+                Some(format!("\"{c}\" is over {MAX_ACCEPTANCE_CRITERION_LEN} characters"))
+            } else if c.chars().filter(|ch| ch.is_alphanumeric()).count() < MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS {
+                Some(format!(
+                    "\"{c}\" doesn't have enough real content to be checkable (minimum \
+                     {MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS} letters/digits) -- \"ok\", \".\", or an \
+                     invisible character aren't real acceptance criteria"
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+    if !bad_criteria.is_empty() {
+        return (StatusCode::BAD_REQUEST, format!("acceptance criteria: {}", bad_criteria.join("; "))).into_response();
     }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
@@ -5121,6 +5136,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::OK, "a genuinely short but real criterion must not be rejected");
+    }
+
+    #[tokio::test]
+    /// DAU-lens gap found live 2026-08-06 (#382 goal doc §8): the trivial/over-length
+    /// acceptance-criteria checks used to each `find` and reject on the FIRST bad
+    /// criterion only, so a request with several simultaneously-bad criteria required
+    /// one real, avoidable retry per extra mistake to fully discover. This must now
+    /// report every bad criterion in the one request that has them, not just the first.
+    async fn add_requirement_reports_every_bad_acceptance_criterion_in_one_response_not_just_the_first() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-multi-bad-run"}))).await.unwrap();
+
+        let too_long = "x".repeat(MAX_ACCEPTANCE_CRITERION_LEN + 1);
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-multi-bad-run/requirements",
+                serde_json::json!({
+                    "statement": "WHEN a user does X, THE SYSTEM SHALL do Y (a real statement)",
+                    "acceptance_criteria": ["ok", too_long, "a real, checkable criterion"]
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a request with multiple bad criteria must still be a real 400");
+        let body = String::from_utf8(axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+        assert!(body.contains("\"ok\""), "the short/uncheckable criterion must be named in the response, not silently dropped: {body}");
+        assert!(
+            body.contains(&format!("over {MAX_ACCEPTANCE_CRITERION_LEN} characters")),
+            "the over-length criterion must ALSO be named in the same response, not require a separate retry: {body}"
+        );
     }
 
     #[tokio::test]
