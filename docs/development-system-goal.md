@@ -643,6 +643,16 @@ and closed.
    Verified live both ways: a fresh run's statement input is genuinely focused (confirmed via
    `document.activeElement`), an existing run with requirements shows no banner. Still open: hiding
    panels genuinely irrelevant to the current stage (the rest of §7.1's ask) remains unaddressed.
+   **Third slice done, 2026-08-06** (`CADS-devsystem@c5c02c5`): the badge from the first slice above
+   went stale in a real, live-confirmed way -- its count only summed the three original proposal
+   queues (`pending_stage_proposals`/`pending_panel_proposals`/`pending_issue_proposals`), and never
+   grew to include the two new ones later increments shipped (`pending_panel_removal_proposals`,
+   `pending_panel_edit_proposals`). Found live by the stress test: created a real panel, proposed
+   removing it, and the badge's own function still computed `0` for a run with one genuine pending
+   decision -- silently hiding exactly the "something needs a decision" signal this badge exists for.
+   Fixed by summing all five real queues; confirmed live via a real Playwright screenshot, the same
+   run's Pipeline chip now shows a real "1". Still open: hiding panels genuinely irrelevant to the
+   current stage remains the one unaddressed piece of §7.1's original ask.
 4. ~~**Assistant-editable panel values generally**~~ (§7.2) — beyond the current fixed `Action` enum.
    **First slice done** (`CADS-devsystem@920f66e`): a human could already toggle one acceptance
    criterion independently of the whole requirement (`toggle_acceptance_criterion_handler`, the
