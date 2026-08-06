@@ -227,6 +227,18 @@ check "a real pending panel-removal proposal counts toward pending_reviews (prev
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$undercount_run"
 
 echo
+echo "[16] directly accepting a bid must not allow an empty/whitespace-only holder_label"
+holder_run="${RUN}-empty-holder-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$holder_run\"}"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$holder_run/roles/plan/fill-mode" -H 'content-type: application/json' -d '{"mode":"dedicated","label":"Compass-1","accepted_bid":{"holder_label":"","price":5}}')
+check "an empty holder_label is rejected" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$holder_run/roles/plan/fill-mode" -H 'content-type: application/json' -d '{"mode":"dedicated","label":"Compass-1","accepted_bid":{"holder_label":"   ","price":5}}')
+check "a whitespace-only holder_label is rejected" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$holder_run/roles/plan/fill-mode" -H 'content-type: application/json' -d '{"mode":"dedicated","label":"Compass-1","accepted_bid":{"holder_label":"real-bidder-abc123","price":5}}')
+check "a real holder_label still works" "200" "$status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$holder_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
