@@ -2937,4 +2937,22 @@ noted here as a real, scoped candidate for a future firing if it's worth a consi
 Enter advances focus to the next field instead of submitting, matching a multi-field form's usual
 convention) rather than a mechanical copy of the fill-mode fix.
 
+**Goal-driven-loop firing, 2026-08-06 (kkk) -- resolved firing (jjj)'s own deferred candidate with the
+considered design it named, not a rushed guess**: no new operator input on any of the three open
+`#382` checkpoints; a CI run is `queued` for `824e17f`, still not confirmable green.
+
+Firing (jjj) explicitly left the New Iteration panel's embedded-proposal fields unfixed rather than
+mechanically copy the fill-mode Enter-submits fix (a real premature-submission risk on a multi-field
+form), naming "Enter advances focus to the next field instead" as the considered alternative worth
+building properly. Built it: `pr-stage-id`/`pr-tag`/`pr-existing-service`/`pr-units`/
+`pr-price-ceiling` now advance focus to the next field in sequence on Enter, ending at the Submit
+button -- never submitting anything itself. `pr-rationale` (a `<textarea>`) is deliberately excluded
+so Enter there keeps inserting a real newline for multi-line rationale text, unchanged.
+
+Live-verified via Playwright against the real redeployed site (`CADS-devsystem@2f393b8`): the focus
+chain advances correctly across five real Enter presses, the run's own history stayed at zero the
+whole time (nothing was ever submitted, confirming the footgun firing (jjj) worried about doesn't
+exist in this design), the rationale textarea still gets a real newline and keeps focus, zero console
+errors either way. This closes the last open DAU-lens candidate from the Enter-to-submit sweep.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
