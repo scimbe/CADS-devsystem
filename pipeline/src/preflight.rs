@@ -197,13 +197,28 @@ fn missing_test_before_implement(state: &RunState) -> Option<RiskAnnotation> {
 /// sets no `price_ceiling`. Doesn't claim to know the filler is specifically an
 /// *external paid* partner -- `StageProposal` has no field distinguishing that
 /// from an internal build yet -- only that nothing here bounds what it could cost.
+///
+/// **Real gap found live by the stress test, 2026-08-06**: this used to only look
+/// at the LATEST iteration's own proposals, the same real bug class already fixed
+/// elsewhere in this file for other checks -- a genuinely unbounded-cost role,
+/// still live in the run's own spec, silently stopped being flagged the moment
+/// any unrelated iteration followed it, even though nothing about the actual risk
+/// had changed. Live-verified: proposed `devsystem.gpu_training` with no
+/// `price_ceiling`, got flagged; one unrelated iteration later, the exact same
+/// still-live, still-unbounded role produced zero risk findings. Fixed by scanning
+/// all of history for an unbounded proposal whose `stage_id` is still present in
+/// `state.added_stages` -- the real, checkable "is this specific risk still live"
+/// signal, not "did the most recent iteration happen to mention it". A role that's
+/// no longer in `added_stages` (rejected, or never applied) is correctly not
+/// flagged either way.
 fn no_price_ceiling(state: &RunState) -> Option<RiskAnnotation> {
-    let latest = state.history.last()?;
-    let unbounded = latest.proposals.iter().find(|p| p.use_existing_service.is_none() && p.price_ceiling.is_none())?;
+    let unbounded = state.history.iter().flat_map(|h| &h.proposals).find(|p| {
+        p.use_existing_service.is_none() && p.price_ceiling.is_none() && state.added_stages.iter().any(|s| s == &p.stage_id)
+    })?;
     Some(RiskAnnotation {
         label: "no price ceiling set".into(),
         evidence: format!(
-            "proposal `{}` needs a new service (no use_existing_service) and sets no price_ceiling -- nothing bounds what filling it could cost",
+            "role `{}` is live in this run's own spec, was proposed needing a new service (no use_existing_service) with no price_ceiling, and nothing since has bounded what filling it could cost",
             unbounded.stage_id
         ),
     })
@@ -449,6 +464,7 @@ mod tests {
     fn flags_a_new_service_proposal_with_no_price_ceiling() {
         let mut state = RunState::new("run-preflight");
         state.history.push(iteration(STAGE_REVIEW, 1, "no risk words here", vec![proposal(None, None)]));
+        state.added_stages.push("devsystem.some_new_role".into());
         let findings = preflight_annotations(&state);
         assert!(findings.iter().any(|f| f.label == "no price ceiling set"));
     }
@@ -457,6 +473,7 @@ mod tests {
     fn does_not_flag_a_proposal_with_a_price_ceiling_set() {
         let mut state = RunState::new("run-preflight");
         state.history.push(iteration(STAGE_REVIEW, 1, "no risk words here", vec![proposal(None, Some(100))]));
+        state.added_stages.push("devsystem.some_new_role".into());
         assert!(preflight_annotations(&state).is_empty());
     }
 
@@ -464,7 +481,40 @@ mod tests {
     fn does_not_flag_a_proposal_that_reuses_an_existing_service() {
         let mut state = RunState::new("run-preflight");
         state.history.push(iteration(STAGE_REVIEW, 1, "no risk words here", vec![proposal(Some("android-build-box"), None)]));
+        state.added_stages.push("devsystem.some_new_role".into());
         assert!(preflight_annotations(&state).is_empty());
+    }
+
+    #[test]
+    /// Real gap found live by the stress test, 2026-08-06: this check used to
+    /// only look at the LATEST iteration's own proposals, so a genuinely
+    /// unbounded-cost role, still live in the run's own spec, silently
+    /// stopped being flagged the moment any unrelated iteration followed it.
+    fn still_flags_an_unbounded_role_after_an_unrelated_later_iteration() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_REVIEW, 1, "proposing a costly new role", vec![proposal(None, None)]));
+        state.added_stages.push("devsystem.some_new_role".into());
+        // The costly role is still live in the spec, but the LATEST iteration
+        // is unrelated and carries no proposals at all.
+        state.history.push(iteration(STAGE_IMPLEMENT, 2, "unrelated real work, nothing to do with the proposal", vec![]));
+        let findings = preflight_annotations(&state);
+        assert!(
+            findings.iter().any(|f| f.label == "no price ceiling set"),
+            "the risk is still real -- the role never got a price_ceiling -- so it must still be flagged: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn does_not_flag_an_unbounded_proposal_that_was_never_actually_applied() {
+        let mut state = RunState::new("run-preflight");
+        // A real proposal with no price_ceiling was made, but it was rejected
+        // (or simply never approved) -- never added to the live spec, so
+        // there's no real, live cost risk to warn about.
+        state.history.push(iteration(STAGE_REVIEW, 1, "proposing a costly new role", vec![proposal(None, None)]));
+        assert!(
+            !preflight_annotations(&state).iter().any(|f| f.label == "no price ceiling set"),
+            "a proposal that never became a real, live role isn't a real, live cost risk"
+        );
     }
 
     #[test]
