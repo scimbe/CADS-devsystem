@@ -687,6 +687,20 @@ binaries and re-verified live against the exact traversal payload that proved th
 reject it outright with no files touched outside `runs/`, a genuine `run_id` still works completely
 normally. Nineteen real stress-test investigations, nineteen real gaps found and closed.
 
+**The stress test's twentieth real run, 2026-08-06**: a real, live-confirmed key-material exposure.
+Both real CLI binaries that persist a real ed25519 signing key to disk (`devsystem_offer`,
+`devsystem_assistant`) wrote it with a plain `fs::write`, landing at whatever the process's own
+umask allows -- confirmed directly against the actual deployed `devsystem_assistant` key file: real
+mode `664`, world-readable. Anything else that can read arbitrary files on this host could lift the
+key and sign fraudulent `CapacityOffer`s in the real crew-auction, impersonating this identity.
+Shared the fix as one real `pub fn` (`write_signing_key_restricted`) rather than patching one binary
+and leaving the other with the identical gap -- the same "two real entry points, one bug class"
+lesson already learned twice this session (path validation, markdown injection)
+(`CADS-devsystem@d115882`). Deployed the fix and directly remediated the actual, already-existing
+deployed key file too (`chmod 600`) -- the code fix alone only protects a newly-generated key; this
+exact file already existed at mode `664` before today. Twenty real stress-test investigations,
+twenty real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
