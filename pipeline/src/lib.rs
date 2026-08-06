@@ -209,17 +209,30 @@ pub fn apply_proposal(spec: &mut PipelineSpec, proposal: &StageProposal) -> Prop
 /// separately-maintained copies.
 pub const MAX_ROLE_UNITS: u64 = 100;
 
+/// DAU-lens gap found live 2026-08-06 (#382 goal doc §8), same lens and same shape as
+/// the `add_requirement` acceptance-criteria fix (`web/src/main.rs`): each of these
+/// two checks used to `find` and reject on the FIRST bad proposal in the batch only.
+/// A real, live-confirmed case: an iteration submitting two simultaneously-bad
+/// embedded proposals (one with an empty `stage_id`, one with `units: 0`) got told
+/// about only the first -- the second stayed completely invisible until a resubmit.
+/// Every real caller passes a genuine batch (`body.proposals`/`record.proposals`, not
+/// a single-element convenience wrapper), so this is a real, not hypothetical, case.
+/// Now reports every bad proposal in the one batch that has them, not one
+/// retry-and-learn cycle per additional mistake.
 pub fn validate_proposals(proposals: &[StageProposal]) -> Result<(), String> {
-    if let Some(bad) = proposals
+    let bad: Vec<String> = proposals
         .iter()
-        .find(|p| p.stage_id.trim().is_empty() || p.tag.trim().is_empty() || p.rationale.trim().is_empty())
-    {
-        return Err(format!("proposal for stage_id {:?} needs a non-empty stage_id, tag, and rationale", bad.stage_id));
-    }
-    if let Some(bad) = proposals.iter().find(|p| p.units == 0 || p.units > MAX_ROLE_UNITS) {
-        return Err(format!("proposal for stage_id {:?} needs units between 1 and {MAX_ROLE_UNITS}, got {}", bad.stage_id, bad.units));
-    }
-    Ok(())
+        .filter_map(|p| {
+            if p.stage_id.trim().is_empty() || p.tag.trim().is_empty() || p.rationale.trim().is_empty() {
+                Some(format!("proposal for stage_id {:?} needs a non-empty stage_id, tag, and rationale", p.stage_id))
+            } else if p.units == 0 || p.units > MAX_ROLE_UNITS {
+                Some(format!("proposal for stage_id {:?} needs units between 1 and {MAX_ROLE_UNITS}, got {}", p.stage_id, p.units))
+            } else {
+                None
+            }
+        })
+        .collect();
+    if bad.is_empty() { Ok(()) } else { Err(bad.join("; ")) }
 }
 
 /// Real gap found live 2026-08-06 (stress-test run 45): every other real free-text
@@ -500,6 +513,31 @@ mod tests {
         let mut absurd_units = base;
         absurd_units.units = u64::MAX;
         assert!(validate_proposals(&[absurd_units]).is_err(), "an absurdly large units value must be rejected, not silently accepted");
+    }
+
+    #[test]
+    /// DAU-lens gap found live 2026-08-06 (#382 goal doc §8): the two checks above
+    /// each used to reject on the FIRST bad proposal in a batch and stop, so a real
+    /// iteration submitting several simultaneously-bad embedded proposals needed one
+    /// resubmit per additional mistake to discover them all. Every real caller
+    /// (`web/src/main.rs`, `devsystem_iterate.rs`) passes a genuine batch, so this is
+    /// a real, not hypothetical, case.
+    fn validate_proposals_reports_every_bad_proposal_in_one_batch_not_just_the_first() {
+        let good = StageProposal {
+            proposed_by: "devsystem.plan".to_string(),
+            stage_id: "devsystem.real".to_string(),
+            tag: "real".to_string(),
+            rationale: "a genuine reason".to_string(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: None,
+        };
+        let empty_stage_id = StageProposal { stage_id: "".to_string(), tag: "".to_string(), rationale: "".to_string(), ..good.clone() };
+        let zero_units = StageProposal { stage_id: "devsystem.other".to_string(), units: 0, ..good.clone() };
+
+        let err = validate_proposals(&[empty_stage_id, good, zero_units]).expect_err("a batch with two distinct bad proposals must still be rejected");
+        assert!(err.contains("needs a non-empty stage_id"), "the empty-field proposal must be named: {err}");
+        assert!(err.contains("devsystem.other") && err.contains("needs units between"), "the zero-units proposal must ALSO be named, not require a separate resubmit: {err}");
     }
 
     #[test]
