@@ -2343,6 +2343,16 @@ async fn add_custom_panel(
     if body.html.len() > MAX_CUSTOM_PANEL_HTML_BYTES {
         return (StatusCode::BAD_REQUEST, format!("html must be under {MAX_CUSTOM_PANEL_HTML_BYTES} bytes")).into_response();
     }
+    // DAU-lens gap found live 2026-08-06 (#382 goal doc §8): every other real
+    // free-text field in this codebase (milestones, backlog, requirement
+    // statements, stage proposals) already rejects whitespace-only content --
+    // a custom panel's own `html` was the one exception, at all four real entry
+    // points. Live-confirmed before this fix: `{"title":"x","html":""}` got a
+    // real 200, creating a genuinely blank, useless panel with nothing telling
+    // the human anything went wrong.
+    if body.html.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "html must not be empty").into_response();
+    }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
     let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
@@ -2441,6 +2451,12 @@ async fn update_custom_panel(
     if body.html.len() > MAX_CUSTOM_PANEL_HTML_BYTES {
         return (StatusCode::BAD_REQUEST, format!("html must be under {MAX_CUSTOM_PANEL_HTML_BYTES} bytes")).into_response();
     }
+    // DAU-lens gap found live 2026-08-06 (#382 goal doc §8) -- see add_custom_panel's
+    // own doc comment for the full finding; the same gap existed at all four real
+    // panel-html entry points, this being the direct-edit one.
+    if body.html.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "html must not be empty").into_response();
+    }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
     let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
@@ -2495,6 +2511,13 @@ async fn propose_custom_panel(
     }
     if body.html.len() > MAX_CUSTOM_PANEL_HTML_BYTES {
         return (StatusCode::BAD_REQUEST, format!("html must be under {MAX_CUSTOM_PANEL_HTML_BYTES} bytes")).into_response();
+    }
+    // Same real gap as add_custom_panel -- see its own doc comment (#382 goal doc §8,
+    // 2026-08-06). This is the assistant-proposal path; without this check a proposed
+    // panel could sit in the human's real review queue as something to approve that's
+    // already known to be blank.
+    if body.html.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "html must not be empty").into_response();
     }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
@@ -2861,6 +2884,11 @@ async fn propose_panel_edit(
     let new_title = body.title.trim().to_string();
     if new_title.is_empty() {
         return (StatusCode::BAD_REQUEST, "title must not be empty").into_response();
+    }
+    // Same real gap as add_custom_panel -- see its own doc comment (#382 goal doc §8,
+    // 2026-08-06). This is the assistant-edit-proposal path.
+    if body.html.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "html must not be empty").into_response();
     }
     if body.html.len() > MAX_CUSTOM_PANEL_HTML_BYTES {
         return (StatusCode::BAD_REQUEST, format!("html must be under {MAX_CUSTOM_PANEL_HTML_BYTES} bytes")).into_response();
@@ -4420,10 +4448,70 @@ mod tests {
 
         let huge = "x".repeat(MAX_CUSTOM_PANEL_HTML_BYTES + 1);
         let response = app
+            .clone()
             .oneshot(json_request("POST", "/api/runs/panels-bad-run/panels", serde_json::json!({"title": "T", "html": huge})))
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    /// DAU-lens gap found live 2026-08-06 (#382 goal doc §8): every other real free-text
+    /// field in this codebase already rejects whitespace-only content -- a custom
+    /// panel's own `html` was the one exception, at all four real entry points
+    /// (add, update, propose, propose-edit). Live-confirmed before this fix:
+    /// `{"title":"x","html":""}` got a real 200, creating a genuinely blank panel.
+    async fn custom_panel_html_rejects_empty_or_whitespace_only_content_at_all_four_real_entry_points() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "panels-blank-html-run"}))).await.unwrap();
+
+        for bad_html in ["", "   ", "\n\t"] {
+            let response = app
+                .clone()
+                .oneshot(json_request("POST", "/api/runs/panels-blank-html-run/panels", serde_json::json!({"title": "T", "html": bad_html})))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::BAD_REQUEST, "add_custom_panel must reject {bad_html:?}");
+
+            let response = app
+                .clone()
+                .oneshot(json_request("POST", "/api/runs/panels-blank-html-run/panels/propose", serde_json::json!({"title": "T", "html": bad_html})))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::BAD_REQUEST, "propose_custom_panel must reject {bad_html:?}");
+        }
+
+        let real = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/panels-blank-html-run/panels", serde_json::json!({"title": "T", "html": "<p>real content</p>"})))
+            .await
+            .unwrap();
+        let panel_id = body_json(real).await["id"].as_str().unwrap().to_string();
+
+        for bad_html in ["", "   "] {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    &format!("/api/runs/panels-blank-html-run/panels/{panel_id}/update"),
+                    serde_json::json!({"title": "T", "html": bad_html}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::BAD_REQUEST, "update_custom_panel must reject {bad_html:?}");
+
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    &format!("/api/runs/panels-blank-html-run/panels/{panel_id}/propose-edit"),
+                    serde_json::json!({"title": "T", "html": bad_html}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::BAD_REQUEST, "propose_panel_edit must reject {bad_html:?}");
+        }
     }
 
     #[tokio::test]
