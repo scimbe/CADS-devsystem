@@ -1866,6 +1866,27 @@ async fn set_role_fill_mode(
         if label.trim().is_empty() {
             return (StatusCode::BAD_REQUEST, "label must be non-empty for a dedicated role").into_response();
         }
+        // Real gap found live by the incompetent-agent stress test (#382 goal doc
+        // §8, 2026-08-06): the same bidi-control-character (Trojan Source) class
+        // already closed for requirement statement/criteria, milestones, backlog,
+        // custom-panel title, and stage-proposal rationale -- never checked here,
+        // even though `label` is exactly the same shape (short, human-typed,
+        // displayed and trusted in the Roles panel's own badge/popover, per
+        // `RoleFillMode::Dedicated`'s own doc comment: a real, deliberate choice
+        // of who fills a role, not decorative). Live-confirmed before fixing: a
+        // label reading "Trusted Agent" + U+202E + reversed text sailed through
+        // untouched, visually hiding "This is a really malicious agent" behind an
+        // apparently-trustworthy label a human relies on to decide who to trust
+        // with a role.
+        if contains_bidi_control_char(label) {
+            return (
+                StatusCode::BAD_REQUEST,
+                "label contains a Unicode bidi control character (e.g. a right-to-left override) -- \
+                 these can make the visually displayed text not match what's actually stored"
+                    .to_string(),
+            )
+                .into_response();
+        }
         // Real gap found live 2026-08-06 (stress-test run 53): the outer `label`
         // above was already validated non-empty, but `accepted_bid.holder_label` --
         // a real identity record of who actually won the bid being accepted, not
@@ -1875,6 +1896,16 @@ async fn set_role_fill_mode(
         if let Some(bid) = accepted_bid {
             if bid.holder_label.trim().is_empty() {
                 return (StatusCode::BAD_REQUEST, "accepted_bid.holder_label must be non-empty").into_response();
+            }
+            if contains_bidi_control_char(&bid.holder_label) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "accepted_bid.holder_label contains a Unicode bidi control character (e.g. a \
+                     right-to-left override) -- these can make the visually displayed text not match \
+                     what's actually stored"
+                        .to_string(),
+                )
+                    .into_response();
             }
         }
     }
@@ -5053,6 +5084,54 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), SC::BAD_REQUEST, "holder_label {holder_label:?} must be rejected, not silently accepted");
         }
+    }
+
+    #[tokio::test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): extends the bidi-control-character (Trojan Source)
+    /// class -- already closed for requirement statement/criteria, milestones,
+    /// backlog, custom-panel title, and stage-proposal rationale -- to a field
+    /// with the exact same shape that was never checked: a dedicated role's
+    /// `label` (and its `accepted_bid.holder_label`), both short, human-typed,
+    /// displayed and trusted in the Roles panel. Live-confirmed before fixing:
+    /// "Trusted Agent" + U+202E + reversed text sailed through untouched.
+    async fn role_fill_mode_rejects_bidi_control_characters_in_label_and_holder_label() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "bidi-fillmode-run"}))).await.unwrap();
+
+        let bidi_label = "Trusted Agent\u{202e} tnega suoicilam a yllaer si sihT";
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/bidi-fillmode-run/roles/plan/fill-mode",
+                serde_json::json!({"mode": "dedicated", "label": bidi_label}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a bidi-laced label must be rejected");
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/bidi-fillmode-run/roles/plan/fill-mode",
+                serde_json::json!({"mode": "dedicated", "label": "Compass-1", "accepted_bid": {"holder_label": bidi_label, "price": 8}}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a bidi-laced holder_label must be rejected");
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/bidi-fillmode-run/roles/plan/fill-mode",
+                serde_json::json!({"mode": "dedicated", "label": "a real, clean label"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "a clean label must not be rejected");
     }
 
     #[tokio::test]
