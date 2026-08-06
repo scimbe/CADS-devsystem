@@ -109,7 +109,7 @@ not just referenced:
 
 | Term | Working definition for this project | Where it's checked today |
 |---|---|---|
-| **Anerkannte Regeln der Technik** (recognized rules of engineering) | Follows this ecosystem's own established, load-bearing patterns (hermetic gates, no secrets in git, real tests over mocks) | Partially — `check-no-secrets.sh`, the hermetic gate; no single explicit gate role |
+| **Anerkannte Regeln der Technik** (recognized rules of engineering) | Follows this ecosystem's own established, load-bearing patterns (hermetic gates, no secrets in git, real tests over mocks) | **Partially, corrected 2026-08-06** — this row's own `check-no-secrets.sh` claim was stale: that script never actually existed in this repo (a different project's convention referenced but never built here, confirmed live). `scripts/check-no-secrets.sh` now genuinely exists and runs in real CI (`CADS-devsystem@3a6f390`); the hermetic build/test gate is real and covered elsewhere in this table. Still no single explicit gate role for "load-bearing patterns" as a whole — that's a broader, fuzzier claim than any one mechanical check can fully close |
 | **Stand der Technik** (state of the art) | Current, non-deprecated dependencies and idioms at time of delivery | **Partially checked** — this row's own "no gate exists" claim was stale: `.github/dependabot.yml` (`CADS-devsystem@9c97211`/`8949cbf`) already runs a real weekly `cargo` freshness check against both crates plus GitHub Actions versions, confirmed live 2026-08-06 — three real, currently-open PRs exist right now (`rand` 0.8.7→0.10.2 in both crates, `ed25519-dalek` 2.2.0→3.0.0 in `web`). What's still genuinely open: those PRs are opened, not enforced — nothing blocks a merge to `main` while one sits open, and reviewing/merging them is the operator's own call (out of scope here — they're not scimbe-authored, and a major-version bump like `ed25519-dalek` 2→3 needs a real compatibility read, not a rubber-stamp merge) |
 | **Vertragsgemäße / Sachmangelfreie Leistung** (contract-conforming, defect-free delivery) | Satisfies every declared acceptance criterion, zero known open defects at delivery | Requirements/acceptance-criteria machinery exists; **partially checked as of `CADS-devsystem@9f9f5d2`** -- a `succeeded: true` iteration whose own feedback admits a known defect (`DEFECT_ADMISSION_PHRASES`) is now flagged as a real risk. Advisory, not a hard block, and beatable by phrasing a real defect without those exact words -- not the whole gap closed |
 | **Fachgerecht / Fachmännisch** (professionally correct) | Passes the same review bar a competent human reviewer would apply | The `review` stage exists as a role; not mandatory for every change today |
@@ -970,6 +970,32 @@ comment in `.gitignore` says real run history is meant to be committed, and the 
 `webconference-android` run genuinely is, with real commit history) -- scratch/stress-test runs are
 correctly left uncommitted, not a gap. Thirty-five real stress-test investigations; this one
 produced infrastructure rather than a fixed bug, so the gap tally stays at thirty-four closed.
+
+**The stress test's thirty-sixth real run, 2026-08-06**: completing run 35's own work rather than
+leaving it a script someone has to remember to run -- wired `incompetent-agent-stress-test.sh` into
+real CI (`pipeline-ci.yml`'s `web` job), run against the actual `devsystem-web:ci` image built two
+steps earlier in the same job, not a mock. Verified locally before pushing (built the image fresh,
+ran it on an alternate port, 13/13 pass end-to-end), then pushed and watched the real, actual GitHub
+Actions run for this exact push to completion (`CADS-devsystem@3a8e177`) -- confirmed **green**, not
+just assumed from the local run. A PR that reintroduces one of the thirteen already-fixed lazy
+shortcuts now fails CI instead of waiting for the next manual stress-test firing to notice.
+
+**The stress test's thirty-seventh real run, 2026-08-06**: investigating what was left of §5's
+quality-bar table found its "Anerkannte Regeln der Technik" row's own claim was stale --
+"`check-no-secrets.sh`, the hermetic gate" cited a script that, confirmed live, never actually
+existed in this repo at all. That was CADS-Tunnel's own convention, referenced in this doc's prose
+but never actually built here -- a real public GitHub repo with real credential-shaped env vars
+(`DEVSYSTEM_GITHUB_TOKEN`, `CT_CHANNEL_NOISE_KEY`/`HOLDER_KEY`, `DOCUMENT_EXTRACTION_CHANNEL_*`,
+`RAG_EMBEDDING_API_KEY`, `RAG_UNSTRUCTURED_API_KEY`) had nothing scanning for one accidentally
+landing in a commit. Built a real `scripts/check-no-secrets.sh`, adapted (not copied) to this
+project's own actual credential shapes -- PEM keys, AWS/Google API keys, GitHub tokens, and a
+var-name-anchored 64-hex check for this project's own `*_KEY`/`*_GRANT` env vars, anchored so it
+doesn't false-positive on this codebase's many bare 64-hex public keys/hashes elsewhere. A
+self-test mode proves both the true positives and the no-false-positive case. Wired into a new,
+independent `secrets` CI job (`CADS-devsystem@3a6f390`) -- no Rust toolchain needed, fails fast and
+separately from a real compile/test problem. Verified live: self-test passes, a real run against
+this actual repo reports clean. Thirty-seven real stress-test investigations, thirty-four real gaps
+found and closed (runs 35-37 built and wired real infrastructure rather than fixing new bugs).
 
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
