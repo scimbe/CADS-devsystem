@@ -493,6 +493,26 @@ unceilinged. The pre-fix version of this check would have silently hidden this t
 fetched fresh, currently shows exactly this and `touches auth/security` -- two honest, currently-true
 findings, not zero.
 
+**The stress test's eleventh real run, 2026-08-06**: went after a different failure mode than the
+prior ten -- not a risk annotation losing a finding, but a real *write path* accepting garbage
+outright. The role-filler's own iteration-embedded `proposals` field applies immediately to the
+live `PipelineSpec`, no human review step at all (the whole point of that path, per "Why
+role-filler proposals skip the queue" -- see [How the pipeline proposes and grows its own
+stages](https://scimbe.github.io/CADS-devsystem-docs/explanation/self-optimizing-pipeline/)), yet
+had zero content validation, while `devsystem.assistant`'s own gated `propose_stage` handler
+already rejected an empty `stage_id`/`tag`/`rationale` before this run. Backwards: the
+higher-trust, immediately-applied path had a *weaker* bar than the lower-trust, gated one. Live-
+verified before the fix: `POST .../iterate` with `proposals: [{"stage_id":"","tag":"","rationale":
+"",...}]` returned a real `200` and permanently added a `ServiceType::Custom("")` role with an
+empty tag to the run's spec -- and there is no "remove a stage" mechanism anywhere to undo that
+kind of damage once it lands. Fixed by validating `body.proposals` in `iterate_run` before
+`run_iteration` ever runs, matching `propose_stage`'s own check exactly -- same bar, applied
+consistently to both paths now (`CADS-devsystem@78f4dab`). Re-verified live against the exact same
+submission: now a real `400`, `spec.roles` unaffected; a genuine, substantive proposal submitted
+right after still applies cleanly. Also checked the real `webconference-android` run's own spec
+directly for a pre-existing garbage role from before this fix -- none found, nothing to clean up
+there. Eleven real stress-test runs, eleven real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
