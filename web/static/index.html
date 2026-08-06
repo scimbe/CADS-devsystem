@@ -3182,6 +3182,18 @@ async function submitIteration(id) {
       status.className = 'status-line err';
       return;
     }
+    // DAU-lens gap found live 2026-08-06 (#382 goal doc §8), same "no client-side
+    // early feedback" class as the units check just below: the server now rejects
+    // a Unicode bidi control character in an embedded proposal's rationale (Trojan
+    // Source class, the same rule already applied to requirement statement/
+    // criteria, milestones, backlog, and panel titles), but this form gave no
+    // early warning -- a scrambled rationale used to silently round-trip to the
+    // server before failing.
+    if (/[\u202A-\u202E\u2066-\u2069]/.test(rationale)) {
+      status.textContent = 'Rationale contains a Unicode bidi control character -- its displayed text may not match what would actually be stored.';
+      status.className = 'status-line err';
+      return;
+    }
     const existingService = document.getElementById('pr-existing-service').value.trim();
     const priceCeiling = document.getElementById('pr-price-ceiling').value.trim();
     // DAU-lens gap found live 2026-08-06 (#382 goal doc §8), the same class already
