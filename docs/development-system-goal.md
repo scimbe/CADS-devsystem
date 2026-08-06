@@ -1587,4 +1587,18 @@ investigations, forty-three real gaps found and closed.
     fix's deliberate scope (individual criteria remain ungated, same as the existing human-click
     precedent). Fourteen real stress-test runs, all fourteen real gaps now closed.
 
+**Docs-loop firing, 2026-08-06**: validating the docs site's own "PDF/DOCX only" claim for the
+`devsystem.document_extraction` channel path against the actual current code (post-PR #17) surfaced
+a real, live bug beyond the docs gap itself: `devsystem_document_extraction_client`'s own
+`mime_type_for()` -- the function that decides what `mime_type` actually gets sent over the wire,
+based on a file's extension -- was never updated when the handler gained real `.doc` support. A
+real `.doc` file would have fallen through to `application/octet-stream` and been rejected by the
+handler as unsupported, despite the handler genuinely supporting it -- the same "fixed at one end,
+not the whole real path" bug class this project's stress-test methodology keeps finding elsewhere.
+Fixed (`CADS-devsystem@1712448`), plus a stale doc comment on `upload_rag_file` itself
+(`CADS-devsystem@8fcaff9`), redeployed to `devsystem-web`, and the full 33-assertion stress-test
+harness re-run clean against the fresh deployment (no regression). Docs site updated to match
+(`CADS-devsystem-docs@34571a1`): `_how-to/manage-rag-documents.md`, `_reference/rest-api.md`, and a
+new dated entry in `_explanation/self-optimizing-pipeline.md`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
