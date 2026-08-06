@@ -811,6 +811,18 @@ struct UpdateCriteriaRequest {
     checkin_every: u32,
 }
 
+/// Real, generous-but-finite ceiling on any single `AbortCriteria` field (#382
+/// goal doc §8, stress-test finding, 2026-08-06). `update_criteria` already
+/// rejected `0` (an immediately-dead run), but had no upper bound at all --
+/// live-verified before this fix: `{"max_iterations": 4294967295, ...}` (u32::MAX)
+/// got a real `200`, turning this run's "bounded super loop" -- #382's own
+/// stated, central architectural principle -- into one that's unbounded for any
+/// practical purpose. Ten thousand is deliberately generous (real runs in this
+/// project use single- or low-double-digit values), not a tight arbitrary
+/// limit -- a run that ever genuinely needed more than this would already have
+/// needed real human reconfiguration long before hitting it.
+const MAX_ABORT_CRITERIA_VALUE: u32 = 10_000;
+
 /// The "customize" half of "control and customize the pipeline for actual use" (#382):
 /// every run starts on [`AbortCriteria::default`], but a run that's earned trust (or
 /// needs a tighter leash) can have its own bounded-loop criteria tuned here, persisted
@@ -829,6 +841,17 @@ async fn update_criteria(
     }
     if body.max_iterations == 0 || body.max_consecutive_failures == 0 {
         return (StatusCode::BAD_REQUEST, "max_iterations and max_consecutive_failures must be at least 1").into_response();
+    }
+    if body.max_iterations > MAX_ABORT_CRITERIA_VALUE || body.max_consecutive_failures > MAX_ABORT_CRITERIA_VALUE || body.checkin_every > MAX_ABORT_CRITERIA_VALUE {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!(
+                "max_iterations, max_consecutive_failures, and checkin_every must each be at most \
+                 {MAX_ABORT_CRITERIA_VALUE} -- this run's bounded super loop needs a real, finite bound, \
+                 not a number so large it's unbounded in practice"
+            ),
+        )
+            .into_response();
     }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
@@ -5714,6 +5737,39 @@ exit 1"#);
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    /// Real gap found live by the incompetent-agent stress test (#382 goal doc
+    /// §8, 2026-08-06): update_criteria rejected 0, but had no upper bound at
+    /// all -- live-verified before this fix, {"max_iterations": 4294967295,
+    /// ...} (u32::MAX) got a real 200, turning this run's "bounded super loop"
+    /// -- #382's own stated, central architectural principle -- into one
+    /// that's unbounded for any practical purpose.
+    async fn update_criteria_rejects_a_value_so_large_the_loop_is_unbounded_in_practice() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "huge-criteria-run"}))).await.unwrap();
+
+        for bad in [
+            serde_json::json!({"max_iterations": u32::MAX, "max_consecutive_failures": 3, "checkin_every": 5}),
+            serde_json::json!({"max_iterations": 20, "max_consecutive_failures": u32::MAX, "checkin_every": 5}),
+            serde_json::json!({"max_iterations": 20, "max_consecutive_failures": 3, "checkin_every": u32::MAX}),
+        ] {
+            let response = app.clone().oneshot(json_request("POST", "/api/runs/huge-criteria-run/criteria", bad)).await.unwrap();
+            assert_eq!(response.status(), SC::BAD_REQUEST, "a value so large the bounded loop is unbounded in practice must be rejected");
+        }
+
+        // A real, generous, still-genuinely-finite value must still work.
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/huge-criteria-run/criteria",
+                serde_json::json!({"max_iterations": 10000, "max_consecutive_failures": 10000, "checkin_every": 10000}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "the real ceiling value itself must still be accepted, not just values strictly under it");
     }
 
     #[tokio::test]
