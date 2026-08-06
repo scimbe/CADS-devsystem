@@ -2683,4 +2683,24 @@ practical impact narrowed without a status update yet) -- trusting the real, dir
 behavior over the secondhand incident label, same discipline this session has applied throughout
 (live-verify, don't assume). No new operator input on any of the three open `#382` checkpoints.
 
+**Goal-driven-loop firing, 2026-08-06 (vv) -- one small real gap left by the bidi sweep, plus a real
+CI-vs-outage finding**: no new operator input on any of the three open `#382` checkpoints. CI is
+moving again for the first time this session (a run genuinely completed, another in progress) --
+checked one real `failure` conclusion directly rather than trusting the label: `gh run view` showed
+its `test` job actually passed, while `web`/`secrets` failed with "the job was not acquired by
+Runner of type hosted even after multiple attempts" -- a real runner-dispatch symptom of the still-
+`major_outage`-labeled incident, not a code defect. Continuing to rely on local hermetic + live
+verification as the trustworthy signal; will treat "confirmed green in real CI" as a normal
+close-out step again once a run actually completes clean.
+
+Closing out firing (tt)'s own sweep left one real spot unchecked: the New Iteration panel's
+embedded-proposal form is the *only* GUI surface that submits a stage-proposal `rationale` at all
+(`propose_stage` itself has no direct human form, only `devsystem.assistant`'s chat path) -- and its
+`rationale` field had no client-side early warning for the server's bidi check, unlike its sibling
+`units` field right below it. Fixed (`CADS-devsystem@081e9e7`); live-verified via Playwright against
+the real redeployed site: the bidi-laced rationale is rejected immediately on submit, zero console
+errors, and the run's own `history`/`added_stages` stayed empty (confirmed nothing reached the
+server). This closes out the bidi-control-character class's GUI-side coverage completely, not just
+its API-side coverage.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
