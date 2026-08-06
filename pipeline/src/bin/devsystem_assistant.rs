@@ -191,7 +191,17 @@ fn build_system_prompt(context: &str) -> String {
          arrays already shown to you below -- never guess an index you can't see \
          there. Never invent or add a milestone/backlog item/requirement the operator \
          didn't actually ask for, and never mark one achieved/done/verified unless the \
-         operator told you it's done or clearly confirmed it. You deliberately have NO \
+         operator told you it's done or clearly confirmed it. IMPORTANT real side \
+         effect of `toggle_milestone`: marking a milestone achieved (not-achieved -> \
+         achieved) auto-pauses this ENTIRE run -- no new iterations are accepted until \
+         the operator explicitly resumes it. This is by design (a milestone is a real \
+         checkpoint), but you must always say so plainly in your one-line confirmation \
+         when you take this action (e.g. \"Milestone 0 marked achieved -- this pauses \
+         the run until you resume it.\"), not just confirm the toggle itself -- the \
+         operator otherwise has no way to know from your reply alone that anything \
+         beyond that one milestone changed. Un-marking an already-achieved milestone \
+         has no such effect (it never auto-resumes), so it needs no such warning. You \
+         deliberately have NO \
          action to submit a new iteration or otherwise claim a stage's work is done --\
          an iteration is a role-filler's real, verified output (real code, real \
          tests), and this chat has no way to know that actually happened; fabricating \
@@ -895,6 +905,26 @@ mod tests {
         assert!(
             prompt.contains("NOT the run you're currently discussing") && prompt.contains("no way to know that actually happened"),
             "the create_run scope limit and the deliberate iteration-fabrication guardrail must both be explicit, not assumed"
+        );
+    }
+
+    #[test]
+    /// Real gap found live 2026-08-06, stress-test run 33 -- the exact same
+    /// "achieving a milestone auto-pauses the whole run" surprise fixed for the
+    /// GUI checkbox in run 30 (CADS-devsystem@e087a18), but through a completely
+    /// separate, unguarded entry point: `toggle_milestone` hits the identical
+    /// real `/milestones/{index}/toggle` endpoint from the assistant's own
+    /// direct-action path, with the LLM given zero awareness of the consequence.
+    /// Live-confirmed against the real deployed assistant before this fix: asked
+    /// it to "mark milestone 0 achieved, we just confirmed it works" on a real
+    /// scratch run, got back "Milestone 0 ... marked achieved." with no mention
+    /// of the run pausing -- the run's own real state confirmed `paused: true`
+    /// immediately after, entirely unannounced.
+    fn system_prompt_warns_about_toggle_milestones_real_pause_side_effect() {
+        let prompt = build_system_prompt("{}");
+        assert!(
+            prompt.contains("auto-pauses this ENTIRE run") && prompt.contains("say so plainly in your one-line confirmation"),
+            "the real pause side effect of achieving a milestone, and the instruction to always disclose it, must both be explicit in the prompt"
         );
     }
 
