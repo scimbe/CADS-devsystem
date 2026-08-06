@@ -514,8 +514,18 @@ code-level gate holds regardless of how well any given LLM call behaves.
    requirement's Requirements-panel entry now expands into a real "decision basis" -- the actual
    feedback and real constraints from every iteration that claimed to address it, right there,
    instead of sending someone to piece it together from the separate History/Memory Log panels.
-   Still open: the assistant's own chat exchanges aren't pulled in yet, only iteration history --
-   the "chat/docs" half of this gap's own description.
+   **Second slice done** (`CADS-devsystem@b124cd9`): the real structural blocker on the "chat/docs"
+   half -- zero chat-exchange persistence existed anywhere -- is closed. `RunState.chat_history`
+   (bounded, rolling, `MAX_CHAT_HISTORY = 50`) now persists every real `/ask` exchange's actual
+   instruction and response, reusing gap #5's own established pattern. Re-read gap #5's own doc
+   comment before starting, rather than trusting it: it had assumed a full chat replay "already
+   exists, informally" -- that was always the browser's own ephemeral tab, never persisted
+   server-side; closing the tab lost it for good. Verified live through the real
+   `/api/runs/{id}/assistant` proxy route (not the assistant bridge's own `/ask` directly -- caught
+   and corrected that exact mistake in this same increment): two real exchanges persist in order
+   with their real text. Still open: this is the persistence half only -- the decision-basis view
+   itself doesn't pull `chat_history` in yet, so a requirement's expandable panel still shows only
+   iteration history, not chat exchanges. GUI wiring is the real next slice, not claimed done here.
 7. ~~**A real requirements export**~~ — **done** (`CADS-devsystem@950931a`): `GET
    /api/runs/{id}/requirements/export` renders a real Markdown document (statement, a real
    verified checklist per acceptance criterion, provenance from gap #1), real `Content-Disposition`
