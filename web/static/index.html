@@ -3889,6 +3889,20 @@ function initProcessPrompt() {
       showPromptStatus(runCommand(command));
     }
   });
+
+  // DAU lens (#382 goal doc §7/§8, 2026-08-06): the refresh-interval and
+  // fill-mode popovers only ever closed on an outside click -- a user who
+  // reflexively hits Escape (the universal "close this" convention every
+  // native <dialog>/browser popup already honors) found it did nothing and
+  // had to go hunt for where to click instead. Deliberately NOT gated on the
+  // `typing` check above: Escape must close the popover even while its own
+  // dedicated-label <input> is focused, unlike the other global shortcuts
+  // that must stay out of normal typing.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (document.getElementById('fillmode-popover')) { closeFillModePopover(); return; }
+    if (document.getElementById('refresh-popover')) { closeRefreshPopover(); }
+  });
 }
 
 // Real identity or nothing -- the gate's X-Gate-Email header, relayed by
