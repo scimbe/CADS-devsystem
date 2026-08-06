@@ -332,10 +332,23 @@ check "both distinct admitted defects are flagged, not just the most recent" "2"
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$defect_run"
 
 echo
+echo "[24] adding a requirement with multiple simultaneously-bad acceptance criteria must report ALL of them in one response, not just the first"
+multibad_run="${RUN}-multi-bad-criteria-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$multibad_run\"}"
+too_long_criterion=$(python3 -c 'print("x" * 501)')
+multibad_body=$(curl -s -X POST "$BASE/api/runs/$multibad_run/requirements" -H 'content-type: application/json' \
+  -d "{\"statement\":\"WHEN a user does X, THE SYSTEM SHALL do Y (a real statement)\",\"acceptance_criteria\":[\"ok\",\"$too_long_criterion\",\"a real checkable criterion\"]}")
+has_short=$(echo "$multibad_body" | grep -c '"ok"')
+has_long=$(echo "$multibad_body" | grep -c 'over 500 characters')
+check "the short/uncheckable criterion is named in the one response" "1" "$has_short"
+check "the over-length criterion is ALSO named in the same response, not a separate retry" "1" "$has_long"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$multibad_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the thirty-four gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the thirty-five gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
