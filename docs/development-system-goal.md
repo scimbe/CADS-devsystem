@@ -513,6 +513,29 @@ right after still applies cleanly. Also checked the real `webconference-android`
 directly for a pre-existing garbage role from before this fix -- none found, nothing to clean up
 there. Eleven real stress-test runs, eleven real gaps found and closed.
 
+**The stress test's twelfth real run, 2026-08-06**: went back at the eleventh run's own fix and
+found it was incomplete, not wrong. `78f4dab` validated `POST /api/runs/{id}/iterate`
+(`devsystem-web`) -- but `devsystem_iterate <run_id> <record.json>` (no `--remote`), a genuinely
+separate real entry point that calls `run_iteration`/`apply_proposal` directly against
+`runs/<run_id>/` on disk with no HTTP layer at all, was never touched. Live-verified before this
+fix: the exact same garbage proposal (`stage_id`/`tag`/`rationale` all `""`) that `devsystem-web`'s
+own iterate endpoint already rejects with a real `400` still sailed straight through the local CLI
+binary and permanently wrote a `ServiceType::Custom("")` role into a real run's `spec.json` on disk.
+Root-caused this time, not just patched at the second call site: the actual bug was validation logic
+living in exactly one of two real entry points, with no shared enforcement point either was required
+to use. Extracted a real `pub fn validate_proposals` into `pipeline/src/lib.rs` (byte-identical logic
+to the eleventh run's inline check, just pulled out), and made both `web/src/main.rs`'s `iterate_run`
+*and* `devsystem_iterate`'s `run_local` call it -- the local path checks before any write happens
+(memory log append, `persist_run`), matching the HTTP path's own all-or-nothing behavior
+(`CADS-devsystem@5b0dc34`). Re-verified live against both real entry points after rebuilding: the
+local CLI now exits with a real failure and creates no run directory at all for the garbage
+submission, while a genuine proposal still applies correctly end to end; the HTTP path's behavior is
+unchanged post-refactor, confirmed against a fresh run. The honest lesson worth naming: a fix that
+closes a bug at the one call site you tested it against isn't the same as closing the *bug class* --
+this project has two real, independent entry points into the same mutable state, and a check has to
+live somewhere both are forced to go through it, or it will be found missing again at whichever one
+wasn't checked. Twelve real stress-test runs, twelve real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
