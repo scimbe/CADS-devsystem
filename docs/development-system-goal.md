@@ -1048,6 +1048,27 @@ run `31088287929` (commit `5c05f77`, the fix itself) shows a real `conclusion: "
 GitHub API right now, while the four pre-fix runs continued unaffected exactly as expected. The fix
 genuinely works, not just reasoned about.
 
+**The stress test's forty-second real run, 2026-08-06**: every per-run list in this codebase
+already has a real defensive cap (`MAX_LIST_ITEMS`, closed across all six queues earlier this
+session) -- `create_run` itself had none at all on the total NUMBER of runs. Confirmed live: this
+deployment already carries 110 real run directories on a host at 91% disk. The sharper real risk
+isn't disk (each run averages ~15KB): `list_runs` does a real `fs::read_dir` + a full state load
+for EVERY run on EVERY single `GET /api/runs` call (the Runs panel's own refresh) -- a script
+hammering `POST /api/runs` with unique ids unboundedly would make that call, and so the whole
+dashboard, linearly slower for every real user, with zero protection. Added `MAX_TOTAL_RUNS = 2000`
+(`CADS-devsystem@377325c`), same reasoning as `MAX_LIST_ITEMS`; the real delete-run endpoint (run
+31) is named in the real `400`'s own error message as the intended way to stay under it. Hermetic:
+seeded `MAX_TOTAL_RUNS` fake run directories directly on disk rather than 2000 real HTTP round
+trips, keeping the new test fast -- 162/162 web crate tests pass, clippy clean. Deployed and
+live-verified: a real create with the deployment's actual 110 runs still succeeds, and the full
+`incompetent-agent-stress-test.sh` harness (eighteen checks) still passes end to end against the
+deployed change. Honestly **not** added to the harness itself: testing the cap for real needs
+either 2000 real scratch runs against the live deployment (worsening the exact clutter problem run
+31 exists to fix) or direct filesystem seeding, which a live-HTTP-only script against a remote
+deployment can't do -- covered by the hermetic Rust test instead, a real but different kind of
+proof than the harness's own live-HTTP checks. Forty-two real stress-test investigations,
+thirty-five real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
