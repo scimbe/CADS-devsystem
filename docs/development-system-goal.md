@@ -2245,6 +2245,11 @@ GitHub's own incident resolves, and repeatedly retrying against a known outage i
 progress. Continuing to rely on local hermetic tests + live redeploy/Playwright verification (this
 session's own established first and second verification layers) as the trustworthy signal for any
 further work while this incident is active, exactly as reasoned through earlier this session before
-the root cause was this clear.
+the root cause was this clear. Surfaced to the operator on
+[`CADS-Tunnel#382`](https://github.com/scimbe/CADS-Tunnel/issues/382#issuecomment-5207753710) --
+genuinely new, actionable information (also flags that `CADS-devsystem-docs`'s own GitHub Pages
+hosting may currently be delayed for the same reason, even though every docs commit this session
+has been hermetically built and verified locally before shipping) -- no action needed from them,
+just not left unexplained.
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).
