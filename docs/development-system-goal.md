@@ -1701,4 +1701,25 @@ standalone view, the queue genuinely empties after deleting it). Stress-harness 
 (`CADS-devsystem@7144b1f`) as a permanent regression guard -- 42/42 assertions, confirmed green in
 the real GitHub Actions run against the deployed Docker image.
 
+**Goal-driven-loop firing, 2026-08-06 (d) -- a clean stress-test round, honestly reported as such**:
+`propose_next_step`'s two real guardrails (only at a genuine checkpoint; always 2-3 SEPARATE
+options, never one collapsed into a single draft) had only ever been tested via direct API calls
+seeding drafts by hand -- the actual LLM-driven path (the assistant deciding, on its own reasoning,
+to invoke the action) had never been exercised live. Closed that verification gap with two real,
+live `devsystem.assistant` round-trips against the actual deployment, not simulated:
+1. A genuinely paused run (achieved via the real milestone-toggle trigger, not faked), asked "what
+   should I do next?" -- the real reply drafted exactly three separate, concrete, state-grounded
+   options (set `repo_url`, write EARS requirements, propose a build stage), confirmed as three real
+   entries in `pending_next_step_drafts` afterward, not summarized-then-dropped.
+2. The identical question against a genuinely un-paused run -- the real reply correctly emitted zero
+   `propose_next_step` actions and said so explicitly ("the run isn't paused, so there's no
+   checkpoint to plan past"), confirmed empty `pending_next_step_drafts` afterward.
+Both guardrails hold with a real LLM, not just the deterministic validation already covered by
+harness checks [18]/[19]. No new gap found -- this is deliberately reported as a clean round rather
+than manufacturing an unneeded change, matching this project's own standing discipline (documented
+earlier in this file: "explicitly chose to report the clean negative result rather than force/
+fabricate a fix"). Consistent with why this specific behavior was never a harness candidate to begin
+with: the stress-test script's own header already excludes LLM-dependent, non-deterministic checks
+by design, needing periodic live re-verification like this instead of a fast boolean gate.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
