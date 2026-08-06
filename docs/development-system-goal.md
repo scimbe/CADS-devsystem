@@ -2724,4 +2724,13 @@ normal API -- injected a bidi-laced milestone directly into a scratch run's `sta
 by the container, written via a root-context Docker container, not the API) and confirmed the real
 `GET /api/runs/{id}` response surfaces the exact expected risk, then cleaned up.
 
+**Docs-loop firing, 2026-08-06 (xx) -- documented firing (ww)'s retroactive bidi risk check**:
+`CADS-devsystem-docs` extended `risk-annotations.md`'s history-only-checks list with the new
+`stored text contains a Unicode bidi control character` finding (`CADS-devsystem-docs@7cb0e1a`),
+including the real 110-file audit and how live verification required simulating pre-existing
+contaminated data. Hermetically built clean; verified the cross-link to `requirements-and-automode`
+resolves. No new operator input on any of the three open `#382` checkpoints; GitHub's incident still
+`major_outage` per the status page, though the real deployed docs site continues serving correctly
+(spot-checked again this firing).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
