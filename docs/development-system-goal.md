@@ -3410,4 +3410,17 @@ Two real gaps of the identical shape remain, deliberately deferred: `update_crit
 thought before treating it as a safe direct action (it governs the run's own abort/pause safety
 bounds, not just inert metadata).
 
+**Docs-loop firing, 2026-08-06 -- a real bug found and fixed while documenting firing (bbbb), not
+just a docs gap**: this page's own established "ask the real assistant, don't guess" pattern for its
+action-type count (already documented as a real gap twice before, in different firings) caught a
+third instance the moment it was re-checked: `ToggleRequirementAutoJudge`'s addition grew the real
+action count to 16, but the system prompt's own hardcoded self-description sentence still said
+"fifteen." Live-confirmed before fixing (the real, already-redeployed assistant genuinely answered
+"15 total action types," not a hypothetical), fixed
+(`CADS-devsystem@bfe5cc5`), and live-confirmed again after redeploy ("sixteen action types," matching
+the real enum). 48/48 `devsystem_assistant` tests, hermetic clippy clean. Documented in
+`CADS-devsystem-docs@19c599b`. Worth naming as its own pattern now, having recurred three times: any
+future firing that adds a new `Action` variant should treat this hardcoded count as part of the same
+change, not a separate thing to remember.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
