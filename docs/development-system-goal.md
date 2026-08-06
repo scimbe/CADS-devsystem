@@ -2003,4 +2003,19 @@ this project's *third* verification layer (after local hermetic tests and live r
 the only one, so work did not stop for it. But several entries in this log are now recorded without
 the usual "confirmed green in real GitHub Actions CI" close-out, honestly, until the queue clears.
 
+**Goal-driven-loop firing, 2026-08-06 (o) -- surfacing a real checkpoint instead of guessing**: this
+firing's own increment is a decision surfaced, not code shipped. Item 11's "harder half" (turning
+`no_review_for_succeeded_work` from an advisory risk into a real, structural hard block, deliberately
+deferred in the firing that added the advisory check) is exactly the kind of behavior-affecting-every-
+existing-run call this loop's own standing instructions say belongs to the operator, not something to
+unilaterally build and ship. Checked first that it hadn't already been surfaced (searched
+CADS-Tunnel#382's own comment history) -- it hadn't. Posted a real, scoped comment
+(`CADS-Tunnel#382`, [2026-08-06](https://github.com/scimbe/CADS-Tunnel/issues/382#issuecomment-5207252162))
+naming the concrete impact (the flagship `webconference-android` run itself would be immediately,
+retroactively affected -- it already has several `succeeded: true` iterations with no
+`devsystem.review` iteration in its history) and three real options (hard-block outright,
+hard-block-but-forward-looking via an opt-in, or leave it advisory) without picking one. This is the
+third open, non-urgent decision point now sitting on that issue alongside the M1 checkpoint and the
+OIDC credential note -- all correctly left for the operator, not guessed at.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
