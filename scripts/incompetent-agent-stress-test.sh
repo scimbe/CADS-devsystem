@@ -156,6 +156,13 @@ fi
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$injection_run"
 
 echo
+echo "[10] a proposed GitHub issue must not be able to target an arbitrary repo"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/issues/propose" -H 'content-type: application/json' -d '{"repo":"someone-else/arbitrary-repo","title":"spam","body":"spam body"}')
+check "proposing an issue against a repo outside the real allowlist is rejected" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$RUN/issues/propose" -H 'content-type: application/json' -d '{"repo":"scimbe/CADS-webconference-demo","title":"real bug","body":"a real, specific bug report"}')
+check "proposing against the real allowed repo still works" "200" "$status"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
