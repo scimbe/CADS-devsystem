@@ -2,26 +2,32 @@
 //! (issue #7): spawns a real `ct-agent channel` process, sends a real document
 //! (base64, since the MCP `service/<slug>` schema fixes the request shape to a
 //! single string -- `ct_common::mcp::register_service_tools`'s own doc comment),
-//! and prints whatever extracted text comes back. Same proven pattern as
-//! `github_issue_channel_client.rs` (#48) -- this file exists so wiring devsystem-web
-//! to a real extraction agent, once one exists and wins the role's auction, is the
-//! same "small, mechanical step" that comment already called out, not a new
-//! integration effort at that point.
+//! and prints whatever extracted text comes back.
 //!
-//! Deliberately NOT wired into `web/src/rag.rs` yet: `devsystem.document_extraction`
-//! is a declared role with no real filler behind it today (no agent has bid on or
-//! won the auction). This binary is the caller-side half, provable on its own via a
-//! stand-in `ct-agent` script (same hermetic-test discipline as #48's pair), ready
-//! for real use the moment a real handler exists on the other end.
+//! **Real correction, 2026-08-06 (issue #14)**: this used to be a thin wrapper
+//! around `ct-agent channel`'s *direct-address* dial mode, the same shape
+//! `github_issue_channel_client.rs` (#48) uses -- copied from that binary's own
+//! established pattern without checking it actually fit this integration's real
+//! constraint. It didn't: the real winning bidder for this role has no dialable
+//! public address (no port forwarding on their dev box), which direct-address
+//! mode has no answer for. Empirically confirmed against the real `ct-agent`
+//! binary (not assumed) that the *broker-mediated* mode, real relay-only
+//! (`CT_CHANNEL_RELAY_ONLY=1`), is what actually supports a member with no
+//! dialable address -- and this deployment's own caller identity has the same
+//! constraint (devsystem-web isn't dialable from the open internet either), so
+//! relay-only is this binary's only real mode now, not a config choice.
 //!
 //! Usage:
 //!   devsystem_document_extraction_client <file-path>
-//! Channel connection parameters come from the same env vars `ct-agent` itself
-//! already uses, and the same ones `github_issue_channel_client` reads (so this
-//! binary is a thin, real wrapper, not a reimplementation): `CT_CHANNEL_ADDR`,
-//! `CT_CHANNEL_NOISE_KEY`, `CT_CHANNEL_PEER_NOISE_KEY`, and either
-//! `CT_CHANNEL_PEER_CERT` or `CT_CHANNEL_PEER_CERT_FILE`. `CT_AGENT_BIN` optionally
-//! overrides the `ct-agent` binary path (default: `ct-agent` on `PATH`).
+//! Channel connection parameters, real broker-mediated shape (matching this
+//! host's own already-working `alice` identity's config, not the direct-address
+//! one `github_issue_channel_client` uses -- these are two genuinely different,
+//! non-interchangeable connection models, not two names for the same thing):
+//! `CT_CHANNEL_BROKER`, `CT_CHANNEL_RELAY`, `CT_CHANNEL_GRANT` (the real
+//! `SignedChannelGrant` this caller identity was issued), `CT_CHANNEL_HOLDER_KEY`
+//! (this caller identity's own real private key), `CT_CHANNEL_NOISE_KEY`.
+//! `CT_AGENT_BIN` optionally overrides the `ct-agent` binary path (default:
+//! `ct-agent` on `PATH`).
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -74,24 +80,18 @@ fn required_env(name: &str) -> Result<String, String> {
     env::var(name).map_err(|_| format!("{name} is not set -- required to dial the channel"))
 }
 
-/// Same shape as `github_issue_channel_client::resolve_peer_cert` -- see that
-/// file's doc comment for why a respawn-loop's cert needs to be read fresh from a
-/// file rather than configured once.
-fn resolve_peer_cert() -> Result<String, String> {
-    if let Ok(literal) = env::var("CT_CHANNEL_PEER_CERT") {
-        return Ok(literal);
-    }
-    let path = required_env("CT_CHANNEL_PEER_CERT_FILE")
-        .map_err(|_| "neither CT_CHANNEL_PEER_CERT nor CT_CHANNEL_PEER_CERT_FILE is set -- one is required to dial the channel".to_string())?;
-    std::fs::read_to_string(&path).map(|s| s.trim().to_string()).map_err(|e| format!("could not read CT_CHANNEL_PEER_CERT_FILE ({path}): {e}"))
-}
-
 /// Same real, live-verified shape as `github_issue_channel_client::call_with` --
 /// reads stdout line by line rather than trusting the child to exit
 /// (`wait_with_output` would hang, per that file's own doc comment on the real
 /// upstream `ct-agent channel` behavior this defends against), returns as soon as
 /// one line parses as a real `ExtractionResponse`, then kills the child outright.
-fn call_with(ct_agent_bin: &str, addr: &str, noise_key: &str, peer_noise_key: &str, peer_cert: &str, req: &ExtractionRequest) -> Result<ExtractionResponse, String> {
+///
+/// Real broker-mediated dial (see the module doc for why, not direct-address):
+/// `CT_CHANNEL_RELAY_ONLY=1` is hardcoded, not read from the environment --
+/// this binary's own real deployment constraint (devsystem-web has no dialable
+/// public address either) makes relay-only the only mode that's ever actually
+/// correct here, so there's no real config value in making it optional.
+fn call_with(ct_agent_bin: &str, broker: &str, relay: &str, grant: &str, holder_key: &str, noise_key: &str, req: &ExtractionRequest) -> Result<ExtractionResponse, String> {
     let body = serde_json::to_string(req).expect("ExtractionRequest always serializes");
     if body.len() > MAX_INPUT_BYTES {
         return Err(format!("request ({} bytes) exceeds MAX_INPUT_BYTES ({MAX_INPUT_BYTES}) -- the server-side MCP dispatch would reject this anyway", body.len()));
@@ -100,10 +100,12 @@ fn call_with(ct_agent_bin: &str, addr: &str, noise_key: &str, peer_noise_key: &s
     let mut child = Command::new(ct_agent_bin)
         .arg("channel")
         .env("CT_CHANNEL_ROLE", "initiate")
-        .env("CT_CHANNEL_ADDR", addr)
+        .env("CT_CHANNEL_BROKER", broker)
+        .env("CT_CHANNEL_RELAY", relay)
+        .env("CT_CHANNEL_GRANT", grant)
+        .env("CT_CHANNEL_HOLDER_KEY", holder_key)
         .env("CT_CHANNEL_NOISE_KEY", noise_key)
-        .env("CT_CHANNEL_PEER_NOISE_KEY", peer_noise_key)
-        .env("CT_CHANNEL_PEER_CERT", peer_cert)
+        .env("CT_CHANNEL_RELAY_ONLY", "1")
         .env("CT_CHANNEL_CALL_SERVICE", CALL_SERVICE)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -147,11 +149,12 @@ fn mime_type_for(path: &std::path::Path) -> &'static str {
 }
 
 fn call(req: &ExtractionRequest) -> Result<ExtractionResponse, String> {
-    let addr = required_env("CT_CHANNEL_ADDR")?;
+    let broker = required_env("CT_CHANNEL_BROKER")?;
+    let relay = required_env("CT_CHANNEL_RELAY")?;
+    let grant = required_env("CT_CHANNEL_GRANT")?;
+    let holder_key = required_env("CT_CHANNEL_HOLDER_KEY")?;
     let noise_key = required_env("CT_CHANNEL_NOISE_KEY")?;
-    let peer_noise_key = required_env("CT_CHANNEL_PEER_NOISE_KEY")?;
-    let peer_cert = resolve_peer_cert()?;
-    call_with(&ct_agent_bin(), &addr, &noise_key, &peer_noise_key, &peer_cert, req)
+    call_with(&ct_agent_bin(), &broker, &relay, &grant, &holder_key, &noise_key, req)
 }
 
 fn main() -> std::process::ExitCode {
@@ -224,7 +227,7 @@ echo '{"status":"extracted","text":"real extracted text"}'"#,
         );
 
         let req = ExtractionRequest { filename: "spec.pdf".to_string(), mime_type: "application/pdf".to_string(), content_base64: "cmVhbCBieXRlcw==".to_string() };
-        let response = call_with(&bin, "127.0.0.1:19999", "noise-priv", "peer-pub", "deadbeef", &req).expect("fake ct-agent always succeeds");
+        let response = call_with(&bin, "127.0.0.1:4435", "127.0.0.1:4436", "fake-grant", "fake-holder-key", "noise-priv", &req).expect("fake ct-agent always succeeds");
         assert_eq!(response, ExtractionResponse::Extracted { text: "real extracted text".to_string() });
 
         let stdin_capture = fs::read_to_string(format!("{bin}.stdin")).expect("fake ct-agent must have captured real stdin");
@@ -248,7 +251,7 @@ echo '{"status":"extracted","text":"x"}'"#,
         );
 
         let req = ExtractionRequest { filename: "f.txt".to_string(), mime_type: "text/plain".to_string(), content_base64: "eA==".to_string() };
-        call_with(&bin, "127.0.0.1:19999", "k", "pk", "cert", &req).expect("fake ct-agent always succeeds");
+        call_with(&bin, "127.0.0.1:4435", "127.0.0.1:4436", "fake-grant", "fake-holder-key", "k", &req).expect("fake ct-agent always succeeds");
 
         let envcheck = fs::read_to_string(format!("{bin}.envcheck")).unwrap();
         assert!(envcheck.contains("svc=devsystem_document_extraction"), "must use the real declared role's service slug, not a guessed one: {envcheck}");
@@ -264,7 +267,7 @@ echo '{"status":"extracted","text":"x"}'"#,
 echo '{"status":"error","error":"unsupported document format"}'"#);
 
         let req = ExtractionRequest { filename: "f.bin".to_string(), mime_type: "application/octet-stream".to_string(), content_base64: "AA==".to_string() };
-        let response = call_with(&bin, "127.0.0.1:19999", "k", "pk", "cert", &req).expect("a well-formed error response still parses as Ok");
+        let response = call_with(&bin, "127.0.0.1:4435", "127.0.0.1:4436", "fake-grant", "fake-holder-key", "k", &req).expect("a well-formed error response still parses as Ok");
         assert_eq!(response, ExtractionResponse::Error { error: "unsupported document format".to_string() });
         fs::remove_dir_all(&dir).ok();
     }
@@ -276,7 +279,7 @@ echo '{"status":"error","error":"unsupported document format"}'"#);
         // "does-not-exist" as the binary proves this never even tries to spawn a
         // process -- if it did, this would fail with "could not start", not the
         // real MAX_INPUT_BYTES message asserted below.
-        let err = call_with("this-binary-does-not-exist", "127.0.0.1:1", "k", "pk", "cert", &req).expect_err("an oversized request must be rejected locally");
+        let err = call_with("this-binary-does-not-exist", "127.0.0.1:4435", "127.0.0.1:4436", "fake-grant", "fake-holder-key", "k", &req).expect_err("an oversized request must be rejected locally");
         assert!(err.contains("MAX_INPUT_BYTES"), "got: {err}");
     }
 
@@ -290,11 +293,32 @@ echo '{"status":"error","error":"unsupported document format"}'"#);
     }
 
     #[test]
-    fn resolve_peer_cert_reports_honestly_when_neither_env_var_is_configured() {
+    /// Real correction, 2026-08-06 (issue #14): proves the actual real
+    /// connection shape this binary now speaks -- broker/relay/grant/
+    /// holder-key, relay-only hardcoded -- reaches the real spawned
+    /// `ct-agent channel` subprocess, not the old direct-address shape.
+    fn call_with_sends_the_real_broker_mediated_relay_only_env_to_ct_agent() {
         let _guard = SUBPROCESS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        env::remove_var("CT_CHANNEL_PEER_CERT");
-        env::remove_var("CT_CHANNEL_PEER_CERT_FILE");
-        let err = resolve_peer_cert().expect_err("no cert source configured must be a real, clear error");
-        assert!(err.contains("CT_CHANNEL_PEER_CERT") && err.contains("CT_CHANNEL_PEER_CERT_FILE"));
+        let dir = std::env::temp_dir().join(format!("doc-extraction-client-test-{}-4", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let bin = fake_ct_agent(
+            &dir,
+            r#"cat > /dev/null
+echo "role=$CT_CHANNEL_ROLE broker=$CT_CHANNEL_BROKER relay=$CT_CHANNEL_RELAY grant=$CT_CHANNEL_GRANT holder=$CT_CHANNEL_HOLDER_KEY noise=$CT_CHANNEL_NOISE_KEY relay_only=$CT_CHANNEL_RELAY_ONLY" > "$0.envcheck"
+echo '{"status":"extracted","text":"x"}'"#,
+        );
+
+        let req = ExtractionRequest { filename: "f.txt".to_string(), mime_type: "text/plain".to_string(), content_base64: "eA==".to_string() };
+        call_with(&bin, "real-broker:4435", "real-relay:4436", "real-grant-hex", "real-holder-key-hex", "real-noise-key", &req).expect("fake ct-agent always succeeds");
+
+        let envcheck = fs::read_to_string(format!("{bin}.envcheck")).unwrap();
+        assert!(envcheck.contains("role=initiate"), "got: {envcheck}");
+        assert!(envcheck.contains("broker=real-broker:4435"), "got: {envcheck}");
+        assert!(envcheck.contains("relay=real-relay:4436"), "got: {envcheck}");
+        assert!(envcheck.contains("grant=real-grant-hex"), "got: {envcheck}");
+        assert!(envcheck.contains("holder=real-holder-key-hex"), "got: {envcheck}");
+        assert!(envcheck.contains("noise=real-noise-key"), "got: {envcheck}");
+        assert!(envcheck.contains("relay_only=1"), "relay-only must always be set -- this binary's own real deployment has no dialable address either: {envcheck}");
+        fs::remove_dir_all(&dir).ok();
     }
 }

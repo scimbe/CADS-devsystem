@@ -40,12 +40,22 @@ COPY web ./web
 # (crate source downloads) was doing anything. CARGO_TARGET_DIR redirects both
 # cargo invocations' real output to the one directory the mount actually is.
 ENV CARGO_TARGET_DIR=/work/target
+#
+# Real gap found and fixed (2026-08-06, issue #14): devsystem_document_extraction_client
+# (extract_via_channel's own real subprocess -- upload_rag_file's fallback path
+# when RAG_UNSTRUCTURED_API_KEY isn't configured) was never built into this
+# image at all -- the code path existed and was even hermetically tested, but
+# a real deployment would have hit "could not run the document-extraction
+# channel client: No such file or directory" the moment DOCUMENT_EXTRACTION_*
+# was ever fully configured, since the binary genuinely didn't exist in the
+# container. Same fix shape as github_issue_channel_client below.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/work/target \
     cargo build --release --manifest-path web/Cargo.toml --jobs 1 \
-    && cargo build --release --manifest-path pipeline/Cargo.toml --jobs 1 --bin github_issue_channel_client \
+    && cargo build --release --manifest-path pipeline/Cargo.toml --jobs 1 --bin github_issue_channel_client --bin devsystem_document_extraction_client \
     && cp /work/target/release/devsystem-web /tmp/devsystem-web \
-    && cp /work/target/release/github_issue_channel_client /tmp/github_issue_channel_client
+    && cp /work/target/release/github_issue_channel_client /tmp/github_issue_channel_client \
+    && cp /work/target/release/devsystem_document_extraction_client /tmp/devsystem_document_extraction_client
 
 # Real fix (2026-08-05): rust:1-slim above now tracks Debian 13 (trixie,
 # glibc 2.41) upstream, not bookworm -- discovered the hard way when this
@@ -59,6 +69,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /app
 COPY --from=builder /tmp/devsystem-web /app/devsystem-web
 COPY --from=builder /tmp/github_issue_channel_client /app/github_issue_channel_client
+COPY --from=builder /tmp/devsystem_document_extraction_client /app/devsystem_document_extraction_client
 COPY web/static /app/web/static
 ENV DEVSYSTEM_STATIC_DIR=/app/web/static
 ENV DEVSYSTEM_RUNS_DIR=/app/runs
@@ -70,5 +81,10 @@ ENV DEVSYSTEM_RUNS_DIR=/app/runs
 # scripts/github_issue_agent_serve_loop.sh's own doc comment for the matching
 # handler-side contract), same as this image never bakes in DEVSYSTEM_GITHUB_TOKEN.
 ENV ISSUE_CHANNEL_CLIENT_BIN=/app/github_issue_channel_client
+# Same real reasoning as ISSUE_CHANNEL_CLIENT_BIN above -- only the binary
+# path is baked in; CT_AGENT_BIN/CT_CHANNEL_BROKER/CT_CHANNEL_RELAY/the real
+# grant+key material stay real, host-specific/secret values supplied at
+# `docker run` time.
+ENV DOCUMENT_EXTRACTION_CLIENT_BIN=/app/devsystem_document_extraction_client
 EXPOSE 8790
 CMD ["/app/devsystem-web"]

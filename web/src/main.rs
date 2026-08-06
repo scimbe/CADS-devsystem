@@ -153,24 +153,26 @@ struct IssueChannelConfig {
     peer_cert_file: Arc<str>,
 }
 
-/// See `AppState::document_extraction_channel`'s doc comment. Same real shape
-/// as `IssueChannelConfig`, one real field added: `grant_hex`/`holder_key_hex`
-/// -- this channel is grant-gated (`ct-agent channel grant`, unlike the older
-/// issue-channel relay), so this deployment's own real signed
+/// See `AppState::document_extraction_channel`'s doc comment. Real
+/// broker-mediated shape (issue #14, 2026-08-06 correction) -- NOT the same
+/// shape as `IssueChannelConfig`, on purpose: this project has two genuinely
+/// different, non-interchangeable Agent-Fabric connection models
+/// (direct-address, what `IssueChannelConfig` uses; broker-mediated relay-only,
+/// what this one uses), confused once already this session. This channel is
+/// grant-gated (`ct-agent channel grant`) -- this deployment's own real signed
 /// `SignedChannelGrant` and the real private holder key it was issued to both
-/// have to reach the spawned `ct-agent channel` subprocess too (inherited via
+/// have to reach the spawned `ct-agent channel` subprocess (inherited via
 /// explicit `.env(...)`, matching this file's own "every env var explicit,
-/// never left to ambient inheritance" convention -- see `call_extraction_channel`).
+/// never left to ambient inheritance" convention -- see `extract_via_channel`).
 #[derive(Clone)]
 struct DocumentExtractionChannelConfig {
     client_bin: Arc<str>,
     ct_agent_bin: Arc<str>,
-    addr: Arc<str>,
-    noise_key: Arc<str>,
-    peer_noise_key: Arc<str>,
-    peer_cert_file: Arc<str>,
+    broker: Arc<str>,
+    relay: Arc<str>,
     grant_hex: Arc<str>,
     holder_key_hex: Arc<str>,
+    noise_key: Arc<str>,
 }
 
 fn unix_now() -> u64 {
@@ -387,19 +389,18 @@ async fn main() {
         Some(DocumentExtractionChannelConfig {
             client_bin: nonempty_env("DOCUMENT_EXTRACTION_CLIENT_BIN")?,
             ct_agent_bin: nonempty_env("CT_AGENT_BIN")?,
-            addr: nonempty_env("CT_CHANNEL_ADDR")?,
-            noise_key: nonempty_env("DOCUMENT_EXTRACTION_CHANNEL_NOISE_KEY")?,
-            peer_noise_key: nonempty_env("DOCUMENT_EXTRACTION_CHANNEL_PEER_NOISE_KEY")?,
-            peer_cert_file: nonempty_env("DOCUMENT_EXTRACTION_CHANNEL_PEER_CERT_FILE")?,
+            broker: nonempty_env("CT_CHANNEL_BROKER")?,
+            relay: nonempty_env("CT_CHANNEL_RELAY")?,
             grant_hex: nonempty_env("DOCUMENT_EXTRACTION_CHANNEL_GRANT")?,
             holder_key_hex: nonempty_env("DOCUMENT_EXTRACTION_CHANNEL_HOLDER_KEY")?,
+            noise_key: nonempty_env("DOCUMENT_EXTRACTION_CHANNEL_NOISE_KEY")?,
         })
     })();
     if document_extraction_channel.is_some() {
-        println!("document-extraction channel fully configured -- a RAG upload will fall back to devsystem.document_extraction over a real channel when Unstructured isn't configured");
+        println!("document-extraction channel fully configured -- a RAG upload will fall back to devsystem.document_extraction over a real broker-mediated channel when Unstructured isn't configured");
     } else {
         println!(
-            "document-extraction channel not fully configured (need DOCUMENT_EXTRACTION_CLIENT_BIN, CT_AGENT_BIN, CT_CHANNEL_ADDR, DOCUMENT_EXTRACTION_CHANNEL_NOISE_KEY, DOCUMENT_EXTRACTION_CHANNEL_PEER_NOISE_KEY, DOCUMENT_EXTRACTION_CHANNEL_PEER_CERT_FILE, DOCUMENT_EXTRACTION_CHANNEL_GRANT, DOCUMENT_EXTRACTION_CHANNEL_HOLDER_KEY all set) -- a RAG upload without RAG_UNSTRUCTURED_API_KEY stays a real 503"
+            "document-extraction channel not fully configured (need DOCUMENT_EXTRACTION_CLIENT_BIN, CT_AGENT_BIN, CT_CHANNEL_BROKER, CT_CHANNEL_RELAY, DOCUMENT_EXTRACTION_CHANNEL_GRANT, DOCUMENT_EXTRACTION_CHANNEL_HOLDER_KEY, DOCUMENT_EXTRACTION_CHANNEL_NOISE_KEY all set) -- a RAG upload without RAG_UNSTRUCTURED_API_KEY stays a real 503"
         );
     }
     let state = AppState {
@@ -2898,13 +2899,16 @@ async fn post_issue_via_channel(cfg: &IssueChannelConfig, repo: &str, title: &st
 }
 
 /// See `AppState::document_extraction_channel`'s doc comment. Same real
-/// subprocess-shape as `post_issue_via_channel`, one real difference:
-/// `devsystem_document_extraction_client`'s own CLI contract is a real file
-/// *path* (it reads the file itself, to derive `mime_type` from the real
-/// extension -- see that binary's own `mime_type_for`), not stdin/argv content,
-/// so the real uploaded bytes are written to a real temp file first, named to
-/// preserve the original extension, and always cleaned up (`defer`-style via
-/// the `_cleanup` guard) whether the call succeeds or fails.
+/// subprocess-shape as `post_issue_via_channel`, two real differences:
+/// (1) `devsystem_document_extraction_client`'s own CLI contract is a real
+/// file *path* (it reads the file itself, to derive `mime_type` from the
+/// real extension -- see that binary's own `mime_type_for`), not stdin/argv
+/// content, so the real uploaded bytes are written to a real temp file
+/// first, named to preserve the original extension, and always cleaned up
+/// (`defer`-style via the `_cleanup` guard) whether the call succeeds or
+/// fails. (2) This is the broker-mediated relay-only connection model, not
+/// direct-address -- see `DocumentExtractionChannelConfig`'s own doc comment
+/// for why these two models aren't interchangeable.
 async fn extract_via_channel(cfg: &DocumentExtractionChannelConfig, filename: &str, bytes: &[u8]) -> Result<String, String> {
     let ext = std::path::Path::new(filename).extension().and_then(|e| e.to_str()).unwrap_or("bin");
     let tmp_path = std::env::temp_dir().join(format!("devsystem-rag-upload-{:016x}.{ext}", rand::random::<u64>()));
@@ -2922,12 +2926,11 @@ async fn extract_via_channel(cfg: &DocumentExtractionChannelConfig, filename: &s
     let output = tokio::process::Command::new(cfg.client_bin.as_ref())
         .arg(&tmp_path)
         .env("CT_AGENT_BIN", cfg.ct_agent_bin.as_ref())
-        .env("CT_CHANNEL_ADDR", cfg.addr.as_ref())
-        .env("CT_CHANNEL_NOISE_KEY", cfg.noise_key.as_ref())
-        .env("CT_CHANNEL_PEER_NOISE_KEY", cfg.peer_noise_key.as_ref())
-        .env("CT_CHANNEL_PEER_CERT_FILE", cfg.peer_cert_file.as_ref())
+        .env("CT_CHANNEL_BROKER", cfg.broker.as_ref())
+        .env("CT_CHANNEL_RELAY", cfg.relay.as_ref())
         .env("CT_CHANNEL_GRANT", cfg.grant_hex.as_ref())
         .env("CT_CHANNEL_HOLDER_KEY", cfg.holder_key_hex.as_ref())
+        .env("CT_CHANNEL_NOISE_KEY", cfg.noise_key.as_ref())
         .stdin(std::process::Stdio::null())
         .output()
         .await;
@@ -3413,12 +3416,11 @@ mod tests {
         state.document_extraction_channel = Some(DocumentExtractionChannelConfig {
             client_bin: Arc::from(client_bin),
             ct_agent_bin: Arc::from("fake-ct-agent"),
-            addr: Arc::from("127.0.0.1:1"),
-            noise_key: Arc::from("fake-noise-priv"),
-            peer_noise_key: Arc::from("fake-noise-peer-pub"),
-            peer_cert_file: Arc::from("/nonexistent/fake-cert-file"),
+            broker: Arc::from("127.0.0.1:4435"),
+            relay: Arc::from("127.0.0.1:4436"),
             grant_hex: Arc::from("fake-grant-hex"),
             holder_key_hex: Arc::from("fake-holder-key-hex"),
+            noise_key: Arc::from("fake-noise-priv"),
         });
         (state, dir)
     }
