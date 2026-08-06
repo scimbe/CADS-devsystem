@@ -1806,4 +1806,20 @@ of attack the original test proved the older ones resist, not assumed to inherit
 free. No new gap found -- reported honestly as a clean round, same discipline already applied to
 other clean audits this session.
 
+**Goal-driven-loop firing, 2026-08-06 (g) -- the other named LLM-dependent behavior, re-verified
+against the now-larger system prompt**: the previous firing re-tested prompt-injection resistance
+against ground it never originally covered; this one re-tests the other real behavior §8's own
+harness names as deliberately excluded (needs a real, non-deterministic reply a human judges, not a
+mechanical check) -- the assistant's milestone-pause disclosure, last proven live before the
+system prompt grew substantially (the "state all three real categories" and `propose_next_step`
+guardrail text added since). A real, live re-check, not assumed to still hold just because it did
+once: created a fresh run, added a real milestone, asked the actual assistant via chat to mark it
+achieved. The real reply disclosed the consequence plainly in its one-line confirmation ("this
+auto-pauses the entire run; no new iterations are accepted until you explicitly resume it") --
+confirmed against real server-side state afterward, not just trusted from the LLM's own claim:
+`paused: true`, `pause_reason: "milestone achieved: ..."`, an exact match. Both of §8's own explicitly
+named LLM-dependent gaps (injection resistance, pause disclosure) are now freshly re-verified against
+the current, grown system prompt, not left resting on an older proof that predates significant later
+changes to the same prompt.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
