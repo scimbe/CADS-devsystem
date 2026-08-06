@@ -730,6 +730,23 @@ that were missing it (`CADS-devsystem@1e22640`). Re-verified live against the ex
 the bug: seeded a fresh run to exactly 500 custom panels, the 501st now gets a real `400`. Twenty-two
 real stress-test investigations, twenty-two real gaps found and closed.
 
+**The stress test's twenty-third real run, 2026-08-06**: found same-day against gap #6's own
+just-shipped fourth slice (real per-requirement chat attribution, `CADS-devsystem@e70827d`) --
+`requirement_indices_touched` computed from the LLM's own emitted `Action`s alone, before
+`apply_actions` resolved whether the real server call behind each one actually succeeded. Live-
+confirmed: asked the real deployed assistant to toggle acceptance criterion #7 of requirement #0 (a
+real requirement, a genuinely out-of-range criterion) -- a real `404` came back, but
+`requirement_indices` still reported `[0]`, attributing the exchange to a requirement's decision
+basis that nothing had actually happened to. The exact "wrong decision basis" outcome that slice's
+own doc comment named as the risk to avoid, reintroduced by the slice itself. Fixed by threading
+`apply_actions`' own real `results` (parallel to `actions`, same order) through, excluding any index
+whose result started with `apply_action`'s own `"FAILED to "` prefix (`CADS-devsystem@2f8bc34`).
+Re-verified live against the identical failing request: `requirement_indices` is now `[]`. A concrete
+instance of this session's own recurring lesson applied to itself: shipping a real fix doesn't mean
+its own edge cases are automatically covered -- worth stress-testing a feature the same day it ships,
+not just the ones already live for a while. Twenty-three real stress-test investigations, twenty-three
+real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
