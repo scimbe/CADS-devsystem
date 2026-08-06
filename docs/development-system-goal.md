@@ -2169,4 +2169,20 @@ whole emoji (`"emoji test 😀 more t…"`) with no replacement character. 57/57
 assertions still clean (pure frontend change, no API behavior affected, so no new harness check
 applies -- same precedent as the pause-reason disclosure fix).
 
+**Combined docs/main-dev/goal-driven firing, 2026-08-06 (y)**: no new operator input on any of the
+three open `CADS-Tunnel#382` checkpoints; issues #13/#14 unchanged. Docs-loop shipped the
+`truncate()` fix's write-up on [See a requirement's real decision
+basis]({{ '/how-to/see-a-requirements-decision-basis/' | relative_url }}) (well, its own site --
+`CADS-devsystem-docs@99fa999`) with a real screenshot proving the emoji survives the cut. Separately,
+found a real CI-reliability signal while re-confirming the Android README fix's own CI state:
+`verify-native-bridge` (the real from-source rebuild + byte-for-byte artifact diff job,
+`CADS-webconference-android`) was `cancelled` mid-`cargo`/`rustc` run with **no newer commit to
+explain a supersession** -- genuinely different from this session's own well-understood
+`scimbe/CADS-devsystem` runner-queue delay. Checked the workflow file directly for a self-inflicted
+cause (a `timeout-minutes` set too low, an overly aggressive `concurrency:` group) -- neither exists
+in `android-ci.yml`, ruling out a config bug on this repo's own side. Re-ran just the failed job
+(`gh run rerun --failed`, a safe, reversible, bounded action, not a code change) to distinguish a
+one-off GitHub infrastructure hiccup from a real, reproducible problem -- in progress as of this
+entry.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
