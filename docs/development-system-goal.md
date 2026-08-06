@@ -536,6 +536,25 @@ this project has two real, independent entry points into the same mutable state,
 live somewhere both are forced to go through it, or it will be found missing again at whichever one
 wasn't checked. Twelve real stress-test runs, twelve real gaps found and closed.
 
+**The stress test's thirteenth real run, 2026-08-06**: went back at the EARS gate itself
+(`CADS-devsystem@17339d0`, stress-test run seven) rather than a new area -- `.to_lowercase()
+.contains("shall")` has the exact false-positive shape any raw substring search does: it matches
+inside completely unrelated words, not just the real EARS keyword. Live-verified before this fix:
+"Do a shallow implementation of the login flow for now" -- zero trigger/behavior clause, not
+remotely EARS-shaped -- got a real `200`, purely because "shallow" contains "shall" as a substring;
+"Marshall"-style false positives have the same shape. Worth naming honestly: this isn't even
+necessarily adversarial -- an agent genuinely describing scope as "shallow" would accidentally clear
+a gate meant to catch exactly this class of non-attempt. Fixed by splitting the statement on
+non-alphanumeric boundaries and requiring "shall" as an exact word, reusing the same word-splitting
+convention `distinct_word_count` already established elsewhere in this codebase (case-insensitive,
+punctuation-collapsing) -- "SHALL," / "shall." / "shall/could" still correctly match, "shallow"/
+"Marshall" no longer do (`CADS-devsystem@49a5265`). Re-verified live against the exact same
+submission that got a `200` before: now a real `400`; a genuine EARS statement submitted right after
+still gets a clean `200`. Checked the real `webconference-android` run's own requirements for a
+pre-existing false-positive from before this fix -- it has zero requirements defined yet, so nothing
+to find; reported that honestly rather than fabricating a finding. Thirteen real stress-test runs,
+thirteen real gaps found and closed.
+
 1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
