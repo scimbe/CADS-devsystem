@@ -2252,4 +2252,22 @@ hosting may currently be delayed for the same reason, even though every docs com
 has been hermetically built and verified locally before shipping) -- no action needed from them,
 just not left unexplained.
 
+**Combined docs/goal-driven firing, 2026-08-06 (cc)**: GitHub's own Actions/Pages incident still
+active as of this firing (checked directly again, `major_outage` on both) -- continuing to rely on
+local hermetic + live Playwright verification, no CI blocking taken. Docs-loop shipped the
+criteria-bounds fix's write-up on [Why did my run pause itself?]({{ '/how-to/why-did-my-run-pause/' | relative_url }})
+(`CADS-devsystem-docs@8c92134`) with a real screenshot. Continuing the same DAU-lens sweep into the
+Roles panel's quick-offer form found one more real, live instance of the identical "no upper bound,
+client-side" gap: `units` had a client-side `min` (plus a matching JS check) but no `max`, even
+though the server enforces a real `MAX_ROLE_UNITS` (100) -- live-confirmed `units:99999`
+round-tripped to a real `400` with no earlier warning. This form (unlike Health & Criteria's plain
+button) is a genuine `<form>` with a real `submit` event, so `max="100"` actually works here on its
+own -- added it, plus a matching explicit JS-level check for a clearer message, same "attribute for
+what it's worth, real check for what actually blocks it" shape (`CADS-devsystem@f34d0b7`). Deployed,
+live-verified with a real Playwright run against the actual redeployed container: typing `99999` and
+clicking Submit now gets blocked by the browser's own native validation popup ("Value must be less
+than or equal to 100.") before the request is ever sent -- even more immediate than the criteria
+panel's own JS-level catch, confirmed via a real screenshot. 57/57 stress-harness assertions still
+clean; no new harness check needed (pure frontend change).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
