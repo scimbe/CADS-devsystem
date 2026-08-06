@@ -1665,9 +1665,20 @@ async fn set_role_fill_mode(
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
     }
-    if let SetRoleFillModeRequest::Dedicated { label, .. } = &body {
+    if let SetRoleFillModeRequest::Dedicated { label, accepted_bid } = &body {
         if label.trim().is_empty() {
             return (StatusCode::BAD_REQUEST, "label must be non-empty for a dedicated role").into_response();
+        }
+        // Real gap found live 2026-08-06 (stress-test run 53): the outer `label`
+        // above was already validated non-empty, but `accepted_bid.holder_label` --
+        // a real identity record of who actually won the bid being accepted, not
+        // decorative -- had zero validation. Live-confirmed before this fix: both a
+        // byte-empty and a whitespace-only holder_label got a real 200, silently
+        // recorded as if a real bidder's name.
+        if let Some(bid) = accepted_bid {
+            if bid.holder_label.trim().is_empty() {
+                return (StatusCode::BAD_REQUEST, "accepted_bid.holder_label must be non-empty").into_response();
+            }
         }
     }
     let _guard = state.write_lock.lock().await;
@@ -4482,6 +4493,31 @@ mod tests {
         let body = body_json(response).await;
         assert_eq!(body["fill_mode"]["accepted_bid"]["holder_label"], "abc123");
         assert_eq!(body["fill_mode"]["accepted_bid"]["price"], 8);
+    }
+
+    #[tokio::test]
+    /// Real gap found live 2026-08-06 (stress-test run 53): the outer `label` was
+    /// already validated non-empty for a dedicated role, but `accepted_bid`'s own
+    /// `holder_label` -- a real identity record of who actually won the bid, not
+    /// decorative -- had zero validation. Live-confirmed before this fix: both a
+    /// byte-empty and a whitespace-only holder_label got a real 200.
+    async fn accepting_a_bid_with_an_empty_or_whitespace_only_holder_label_is_rejected() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "empty-holder-run"}))).await.unwrap();
+
+        for holder_label in ["", "   "] {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/runs/empty-holder-run/roles/plan/fill-mode",
+                    serde_json::json!({"mode": "dedicated", "label": "Compass-1", "accepted_bid": {"holder_label": holder_label, "price": 8}}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::BAD_REQUEST, "holder_label {holder_label:?} must be rejected, not silently accepted");
+        }
     }
 
     #[tokio::test]
