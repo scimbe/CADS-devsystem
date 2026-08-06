@@ -2990,7 +2990,7 @@ function renderNewIterationPanel(id, data) {
       <label>Existing service to reuse (leave blank if a new one must be built)</label>
       <input id="pr-existing-service" placeholder="optional">
       <label>Units</label>
-      <input id="pr-units" type="number" min="1" value="1">
+      <input id="pr-units" type="number" min="1" max="100" value="1">
       <label>Price ceiling (leave blank for none -- preflight will flag that; a real 0 is flagged
         exactly the same way, not treated as "no budget" -- nothing here actually enforces this
         number either way, so it's honestly just a stated intent)</label>
@@ -3140,13 +3140,29 @@ async function submitIteration(id) {
     }
     const existingService = document.getElementById('pr-existing-service').value.trim();
     const priceCeiling = document.getElementById('pr-price-ceiling').value.trim();
+    // DAU-lens gap found live 2026-08-06 (#382 goal doc §8), the same class already
+    // fixed for the Health & Criteria and quick-offer forms: `pr-units` had a
+    // client-side `min` but no `max`, even though the server enforces a real
+    // MAX_ROLE_UNITS (100) on every embedded proposal too. Live-confirmed before
+    // this fix: units:99999 in an embedded proposal round-tripped to a real 400 with
+    // no earlier warning. Also, `parseInt(...) || 1` silently coerced a deliberately
+    // typed 0 (or a genuinely invalid value) to 1 with zero feedback -- fixed to
+    // validate explicitly instead of silently overriding whatever was actually typed.
+    // Submit is a plain button click here too (not a real <form> submit), so the
+    // `max="100"` attribute above needs this real check to actually do anything.
+    const units = parseInt(document.getElementById('pr-units').value, 10);
+    if (!Number.isInteger(units) || units < 1 || units > 100) {
+      status.textContent = 'Units must be a whole number between 1 and 100.';
+      status.className = 'status-line err';
+      return;
+    }
     proposals.push({
       proposed_by: stage,
       stage_id: stageId,
       tag,
       rationale,
       use_existing_service: existingService || null,
-      units: parseInt(document.getElementById('pr-units').value, 10) || 1,
+      units,
       price_ceiling: priceCeiling ? parseInt(priceCeiling, 10) : null,
     });
   }
