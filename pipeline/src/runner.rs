@@ -936,6 +936,45 @@ pub fn validate_requirement_indices(state: &RunState, indices: &[usize]) -> Resu
     }
 }
 
+/// A fourth gap of the identical "two real entry points, one bug class" shape (#382
+/// goal doc §8, 2026-08-06), deliberately deferred out of the `paused`-check fix
+/// (firing ttt) rather than bundled in, since it protects a different and less severe
+/// failure mode: `web/src/main.rs`'s `iterate_run` refuses a submission that's
+/// byte-identical to the run's own immediately-preceding history entry (real
+/// idempotency guard, found necessary live 2026-08-05 -- a same-day window of
+/// overlapping `devsystem-web` container instances during a redeploy let two
+/// functionally-identical iterations both land with the same computed iteration
+/// number), but that check lived inline in the HTTP handler only.
+/// `devsystem_iterate`'s local, non-`--remote` CLI path had no equivalent at all --
+/// a client retry (or a script accidentally re-running the same `record.json` twice)
+/// would silently append a second, indistinguishable history entry rather than being
+/// refused. Takes the individual fields rather than a shared record/request type
+/// since the HTTP handler's own check runs *before* it constructs its `IterationRecord`
+/// (it only has the raw request body fields at that point), while the local CLI's own
+/// `record` already exists in full by the time this runs -- a shared function over the
+/// bare fields lets both real call sites use the identical comparison without either
+/// one reshaping its own control flow to match the other.
+pub fn duplicate_of_last_iteration(
+    history: &[IterationRecord],
+    stage: &str,
+    feedback: &str,
+    succeeded: bool,
+    proposals: &[crate::StageProposal],
+    requirement_indices: &[usize],
+) -> Option<u32> {
+    let last = history.last()?;
+    if last.stage == stage
+        && last.feedback == feedback
+        && last.succeeded == succeeded
+        && last.proposals == proposals
+        && last.requirement_indices == requirement_indices
+    {
+        Some(last.iteration)
+    } else {
+        None
+    }
+}
+
 /// What the runner decided after folding in one [`IterationRecord`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunOutcome {
@@ -1639,6 +1678,50 @@ mod tests {
         let err = validate_requirement_indices(&state, &[0, 5, 12]).expect_err("out-of-range indices must be rejected");
         assert!(err.contains('5') && err.contains("12"), "every real out-of-range index must be named, not just the first: {err}");
         assert!(!err.contains(", 0]") && !err.contains("[0,"), "the one genuinely in-range index must not be named as bad: {err}");
+    }
+
+    #[test]
+    fn duplicate_of_last_iteration_flags_a_byte_identical_resubmission_and_only_that() {
+        let mut history = vec![IterationRecord {
+            run_id: "run-dup".into(),
+            stage: "devsystem.plan".into(),
+            iteration: 1,
+            feedback: "planned the thing".into(),
+            succeeded: true,
+            proposals: vec![],
+            requirement_indices: vec![0],
+        }];
+
+        assert_eq!(
+            duplicate_of_last_iteration(&history, "devsystem.plan", "planned the thing", true, &[], &[0]),
+            Some(1),
+            "a byte-identical resubmission of the run's own last entry must be flagged, naming its real iteration number"
+        );
+        assert_eq!(
+            duplicate_of_last_iteration(&history, "devsystem.plan", "planned the thing, more precisely", true, &[], &[0]),
+            None,
+            "genuinely different feedback must not be flagged as a duplicate"
+        );
+        assert_eq!(
+            duplicate_of_last_iteration(&[], "devsystem.plan", "planned the thing", true, &[], &[0]),
+            None,
+            "an empty history (the run's first-ever iteration) has nothing to be a duplicate of"
+        );
+
+        history.push(IterationRecord {
+            run_id: "run-dup".into(),
+            stage: "devsystem.implement".into(),
+            iteration: 2,
+            feedback: "implemented it".into(),
+            succeeded: true,
+            proposals: vec![],
+            requirement_indices: vec![],
+        });
+        assert_eq!(
+            duplicate_of_last_iteration(&history, "devsystem.plan", "planned the thing", true, &[], &[0]),
+            None,
+            "only the run's own immediately-preceding entry counts -- an earlier, now-superseded entry with the same content must not be flagged"
+        );
     }
 
     #[test]

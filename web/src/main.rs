@@ -19,7 +19,7 @@ use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::{preflight_annotations, process_annotations};
 use devsystem_pipeline::runner::{
-    load_or_init_run, persist_run, push_chat_exchange, qualifying_review_evidence, render_requirements_markdown, run_iteration, toggle_acceptance_criterion,
+    duplicate_of_last_iteration, load_or_init_run, persist_run, push_chat_exchange, qualifying_review_evidence, render_requirements_markdown, run_iteration, toggle_acceptance_criterion,
     toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, valid_run_id, validate_requirement_indices, BacklogItem, CustomPanel,
     Milestone, PendingIssueProposal, PendingNextStepDraft, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal, Requirement,
     RoleFillMode, RunOutcome, RunState,
@@ -992,19 +992,25 @@ async fn iterate_run(
     // requirement_indices) to the run's own immediately-preceding entry is rejected
     // outright, regardless of *why* a duplicate arrived (a client retry, an overlapping
     // deploy, two callers doing the same real work independently).
-    if let Some(last) = run_state.history.last() {
-        if last.stage == body.stage
-            && last.feedback == body.feedback
-            && last.succeeded == body.succeeded
-            && last.proposals == body.proposals
-            && last.requirement_indices == body.requirement_indices
-        {
-            return (
-                StatusCode::CONFLICT,
-                format!("this submission is byte-identical to iteration {}, the run's own immediately-preceding entry -- refusing to record it as a distinct, new iteration", last.iteration),
-            )
-                .into_response();
-        }
+    //
+    // Now calls the shared `duplicate_of_last_iteration` (pipeline crate) instead of
+    // keeping this comparison duplicated inline -- see its own doc comment: this was a
+    // fourth "two real entry points, one bug class" gap, and `devsystem_iterate`'s
+    // local, non-`--remote` CLI path had zero protection against a re-run/retried
+    // record.json until that shared function existed.
+    if let Some(dup_iteration) = duplicate_of_last_iteration(
+        &run_state.history,
+        &body.stage,
+        &body.feedback,
+        body.succeeded,
+        &body.proposals,
+        &body.requirement_indices,
+    ) {
+        return (
+            StatusCode::CONFLICT,
+            format!("this submission is byte-identical to iteration {dup_iteration}, the run's own immediately-preceding entry -- refusing to record it as a distinct, new iteration"),
+        )
+            .into_response();
     }
 
     let iteration = run_state.history.len() as u32 + 1;

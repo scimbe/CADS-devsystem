@@ -101,6 +101,18 @@ fn run_local(run_id: &str, record_path: &str) -> std::process::ExitCode {
         eprintln!("rejected: {e}");
         return std::process::ExitCode::FAILURE;
     }
+    // Real gap found live 2026-08-06 (#382 goal doc §8), same "two real entry
+    // points, one bug class" shape as the three checks above -- see
+    // duplicate_of_last_iteration's own doc comment (pipeline crate) for why this
+    // matters and why it was deliberately deferred out of the `paused` fix just
+    // above rather than bundled in. Checked before any write happens, same as the
+    // three checks above.
+    if let Some(dup_iteration) =
+        devsystem_pipeline::runner::duplicate_of_last_iteration(&state.history, &record.stage, &record.feedback, record.succeeded, &record.proposals, &record.requirement_indices)
+    {
+        eprintln!("rejected: this submission is byte-identical to iteration {dup_iteration}, the run's own immediately-preceding entry -- refusing to record it as a distinct, new iteration");
+        return std::process::ExitCode::FAILURE;
+    }
 
     // devsystem.remember, made real: every iteration's zylos envelope is appended to
     // the run's durable memory log before anything else happens to `record`.
