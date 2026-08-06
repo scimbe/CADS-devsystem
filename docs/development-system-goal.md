@@ -1943,4 +1943,28 @@ the empty-field proposal and the zero-units proposal named in the one `400` body
 check [25] added (`CADS-devsystem@0335802`), 52/52 assertions passing locally; real GitHub Actions
 CI confirmed green for both commits.
 
+**Goal-driven-loop firing, 2026-08-06 (m) -- a full fresh sweep across both crates found the fourth,
+and (pending) final, real instance**: with (k) and (l) closed out, re-ran the same survey (`grep -rn
+"\.find(" pipeline/src web/src`) across every remaining call site in both crates. Most are legitimate
+find-by-unique-id lookups or genuinely single-fact checks (already individually audited and closed
+out this session). One real instance remained: `iterate_run`'s own `requirement_indices` bounds
+check (`web/src/main.rs`) -- `requirement_indices: Vec<usize>` is a real batch (a role-filler can
+claim several requirements addressed in one iteration), and the check `find`s and rejects on the
+first out-of-range index only. Live-confirmed before fixing: `[99, 150]` against a run with zero
+requirements only ever named `99`. Fixed (`CADS-devsystem@609e170`) the identical way: collect every
+out-of-range index into one message. No test depended on the old message text. New regression test
+(`iterate_run_reports_every_out_of_range_requirement_index_not_just_the_first`); hermetic web suite
+179/179 (was 178, no regressions), hermetic clippy clean. Deployed, live-verified against the real
+running container (both `99` and `150` named in the one `400` body). Stress-harness check [26] added
+(`CADS-devsystem@39c37cd`), 54/54 assertions passing locally. Both the code fix and the docs-site
+documentation of it (`CADS-devsystem-docs@04a847b`, alongside the belated docs write-up for firing
+(l)'s own `validate_proposals` fix) shipped this same firing. Honest note on verification depth:
+unlike every other fix this session, real GitHub Actions CI for this commit (`gh run
+31117221812`) sat `queued` for over ten minutes with no progress -- an apparent GitHub-side runner
+delay, not anything wrong with the run itself (no other run is blocking the repo's own concurrency
+group, confirmed via the Actions API) -- so this entry is recorded on the strength of the local
+hermetic suite, hermetic clippy, live redeploy verification, and the local stress-harness run, not
+yet a confirmed-green CI run. Will confirm CI explicitly once it clears the queue rather than assume
+it matches the others.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
