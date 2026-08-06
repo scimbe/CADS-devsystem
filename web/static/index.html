@@ -394,6 +394,10 @@ let criteriaOpen = false;
 // every re-render call site that isn't the edit form's own Save/Cancel, so it
 // never lingers stale across a run switch or an unrelated refresh.
 let editingCustomPanelId = null;
+// "Stack mode" slice 2 -- which entry of the current run's real open-points
+// queue is showing right now. Reset to 0 on every run switch (selectRun) so
+// switching runs never leaves a stale index pointing past a shorter queue.
+let openPointIndex = 0;
 
 // -------------------- panel/dock system --------------------
 // Every functional area is its own window: draggable by its header, resizable
@@ -428,6 +432,14 @@ const PANEL_DEFAULTS = {
   // vertical overlap with either exists before any cascade even runs.
   flow:       { title: 'Flow',               x: 16,   y: 1108, w: 620, h: 400 },
   usage:      { title: 'Assistant Usage',    x: 1420, y: 952,  w: 340, h: 260 },
+  // "Stack mode" slice 2 (operator ask, 2026-08-06): a guided queue through
+  // GET /api/runs/{id}/open-points (slice 1, CADS-devsystem@6a68223) -- one
+  // real open point at a time (a pending proposal, or the paused checkpoint),
+  // with its own real approve/reject/resume action wired to the exact same
+  // endpoint the other panels already use for it. Not in DEFAULT_VISIBLE_PANELS
+  // below -- same reasoning as every other non-starter panel, one chip click
+  // away rather than force-opened on a first-time user.
+  openpoints: { title: 'Open Points',        x: 1064, y: 952,  w: 340, h: 300 },
 };
 
 // Real gap found 2026-08-05, simulating a genuinely fresh first-time user via
@@ -504,6 +516,7 @@ const REFRESHABLE_PANELS = {
   history: (data) => renderHistoryPanel(data),
   flow: (data) => renderFlowPanel(currentRun, data),
   usage: (data) => renderUsagePanel(data),
+  openpoints: (data) => renderOpenPointsPanel(currentRun, data),
 };
 const REFRESH_INTERVALS = [
   { seconds: 0, label: 'off' },
@@ -1439,10 +1452,11 @@ async function selectRun(id) {
   if (switching) {
     resetAssistantTranscript(id);
     editingCustomPanelId = null;
+    openPointIndex = 0;
     for (const pid of Object.keys(REFRESHABLE_PANELS)) lastRefreshedAt[pid] = Date.now();
   }
   await refreshRunsList();
-  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow', 'usage']) {
+  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow', 'usage', 'openpoints']) {
     document.getElementById(`body-${panelId}`).innerHTML = '<span class="lede">Loading…</span>';
   }
   try {
@@ -1457,6 +1471,7 @@ async function selectRun(id) {
     renderBacklogPanel(id, data);
     renderMilestonesPanel(id, data);
     renderRequirementsPanel(id, data);
+    renderOpenPointsPanel(id, data);
     document.getElementById('body-checkin').innerHTML = `<button class="secondary" id="view-checkin">View check-in</button><div id="checkin-view"></div>`;
     document.getElementById('view-checkin').onclick = () => viewCheckin(id);
     document.getElementById('body-memory').innerHTML = `<button class="secondary" id="view-memory">View memory log</button><div id="memory-view"></div>`;
@@ -2218,6 +2233,95 @@ async function togglePause(id, pause) {
   } catch (e) {
     const body = document.getElementById('body-healthcrit');
     body.insertAdjacentHTML('afterbegin', `<div class="status-line err">${escapeHtml(e.message)}</div>`);
+  }
+}
+
+// Kind -> label + the real proposal-approve/reject path segment each already
+// uses elsewhere in this file (panels/proposals, panels/removal-proposals,
+// panels/edit-proposals, stages/proposals, issues/proposals) -- this panel
+// invents no new mutation endpoint, it just steps through the same real
+// approve/reject/resume actions the other panels already wire up, one open
+// point at a time (operator ask, 2026-08-06: "stack mode", guided one at a
+// time rather than a human having to notice each across five separate panels).
+const OPEN_POINT_KIND_LABELS = {
+  paused_checkpoint: 'Paused checkpoint',
+  panel_proposal: 'New custom panel proposal',
+  panel_removal_proposal: 'Panel removal proposal',
+  panel_edit_proposal: 'Panel edit proposal',
+  stage_proposal: 'New pipeline stage proposal',
+  issue_proposal: 'GitHub issue proposal',
+};
+const OPEN_POINT_APPROVE_PATHS = {
+  panel_proposal: 'panels/proposals',
+  panel_removal_proposal: 'panels/removal-proposals',
+  panel_edit_proposal: 'panels/edit-proposals',
+  stage_proposal: 'stages/proposals',
+  issue_proposal: 'issues/proposals',
+};
+
+async function renderOpenPointsPanel(id, data) {
+  const body = document.getElementById('body-openpoints');
+  let points;
+  try {
+    points = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/open-points`);
+  } catch (e) {
+    body.innerHTML = `<div class="status-line err">${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  if (!points.length) {
+    body.innerHTML = `<span class="lede">Nothing open right now -- every real proposal is reviewed, and this run isn't paused.</span>`;
+    return;
+  }
+  if (openPointIndex >= points.length) openPointIndex = points.length - 1;
+  if (openPointIndex < 0) openPointIndex = 0;
+  const p = points[openPointIndex];
+
+  const actionsHtml = p.kind === 'paused_checkpoint'
+    ? `<button type="button" id="op-act-resume">Resume run</button>`
+    : `<button type="button" id="op-act-approve">Approve</button>
+       <button type="button" class="secondary" id="op-act-reject">Reject</button>`;
+
+  body.innerHTML = `
+    <div class="lede" style="margin-bottom:.4rem">open point <b>${openPointIndex + 1}</b> of <b>${points.length}</b></div>
+    <div class="role-card">
+      <div class="role-card-head"><span class="role">${escapeHtml(OPEN_POINT_KIND_LABELS[p.kind] || p.kind)}</span></div>
+      <div class="role-meta">${escapeHtml(p.summary)}</div>
+    </div>
+    <div style="margin-top:.4rem;display:flex;gap:.4rem;flex-wrap:wrap">${actionsHtml}</div>
+    <div id="op-status" class="status-line"></div>
+    <div style="margin-top:.6rem;display:flex;gap:.4rem">
+      <button type="button" class="secondary" id="op-prev" ${openPointIndex === 0 ? 'disabled' : ''}>&larr; Prev</button>
+      <button type="button" class="secondary" id="op-next" ${openPointIndex === points.length - 1 ? 'disabled' : ''}>Next &rarr;</button>
+    </div>
+  `;
+  document.getElementById('op-prev').onclick = () => { openPointIndex--; renderOpenPointsPanel(id, data); };
+  document.getElementById('op-next').onclick = () => { openPointIndex++; renderOpenPointsPanel(id, data); };
+
+  const statusEl = document.getElementById('op-status');
+  async function runOpenPointAction(fn) {
+    statusEl.textContent = '';
+    statusEl.className = 'status-line';
+    try {
+      await fn();
+      // Full refresh, not just this panel -- an approve/reject/resume here
+      // changes real state other panels (Pipeline, Custom Panels, Health &
+      // Criteria) already show, same as every other action in this file that
+      // mutates run state.
+      await selectRun(id);
+    } catch (e) {
+      statusEl.textContent = e.message;
+      statusEl.className = 'status-line err';
+    }
+  }
+
+  if (p.kind === 'paused_checkpoint') {
+    document.getElementById('op-act-resume').onclick = () => runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/resume`, { method: 'POST' }));
+  } else {
+    const base = OPEN_POINT_APPROVE_PATHS[p.kind];
+    document.getElementById('op-act-approve').onclick = () =>
+      runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/${base}/${encodeURIComponent(p.id)}/approve`, { method: 'POST' }));
+    document.getElementById('op-act-reject').onclick = () =>
+      runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/${base}/${encodeURIComponent(p.id)}/reject`, { method: 'POST' }));
   }
 }
 
