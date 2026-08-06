@@ -1025,7 +1025,14 @@ passing locally against the real deployment. Also confirmed live: the CI run for
 (the `secrets` job plus check [8]) is genuinely green in real GitHub Actions. Thirty-nine real
 stress-test investigations, thirty-four real gaps found and closed.
 
-1. ~~**Provenance on `Requirement`**~~ — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
+**The stress test's fortieth real run, 2026-08-06**: extended the harness with another real,
+mechanical, security-relevant gate it didn't cover -- `propose_issue`'s own repo allowlist.
+Without it, a role-filler could draft a real GitHub issue against ANY repo, not just this project's
+own `scimbe/CADS-webconference-demo`, a real abuse/spam vector the allowlist exists specifically to
+close. Live-confirmed before writing the check: proposing against an arbitrary repo gets a real
+`400`; the real allowed repo still works. Added as check [10] (`CADS-devsystem@82ae701`); the
+harness now covers sixteen real checks, 18/18 individual assertions passing locally against the
+real deployment. Forty real stress-test investigations, thirty-four real gaps found and closed. — **done** (`CADS-devsystem@b58aef4`): `proposed_by`
    distinguishes LLM-proposed from human-authored, surfaced in the GUI.
 2. ~~**A mandatory quality gate**~~ — **done** (2026-08-05, `toggle_requirement`'s real review gate):
    a run that declares
