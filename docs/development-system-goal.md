@@ -5268,4 +5268,34 @@ This closes out the entire persona-testing batch from earlier this session: `#19
 `#23`, and now `#24` are all genuinely fixed, not just flagged -- `#20` is the one item correctly left
 open, out of this repo's own scope.
 
+**Main-dev-loop firing, 2026-08-07 (ll) -- real live investigation of a new evaluator report
+(`#26`), honestly reported as unreproduced rather than guessed at.** State check: no new operator
+input on any of the three standing `#382` decision points, `#14`/`#18` still unanswered, CI green.
+One genuinely new issue arrived since the persona batch closed: `#26`, a claim that the Maximize
+toggle (`▢` button / `./max` command) silently no-ops on its first invocation per page load and only
+actually resizes on a second click, with the same misleading "maximized: X" status text either way.
+
+Read `toggleMaximize()`/`panelRect()`/`createPanel()`/`showPanel()` end to end first -- nothing in the
+code read as an obvious bug (no re-creation of the panel node after the resize, no stale-`z`/`w`/`h`
+write-back gap like the real one found in `#21`). Rather than guess at a fix from a code read alone,
+live-verified against the actual running `devsystem-web` container (commit `3f14107`, confirmed via
+`git diff` to have byte-identical `toggleMaximize`/`panelRect`/`createPanel`/`showPanel` code to
+current `HEAD`) with four separate, deliberately different real reproduction attempts: a raw button
+click on an already-visible default panel as the literal first mouse interaction on a freshly loaded
+page; the exact `./max history` command path against a not-default-visible panel; a raw JS
+`element.click()` bypassing Playwright's own event synthesis; and a near-zero-settle-time click
+(`waitUntil:'load'`, no wait for network/render) to approximate an impatient real user. All four
+showed the toggle resizing correctly on the very first invocation, every time.
+
+Posted an honest investigation comment on `#26` (not a fix, not a dismissal) laying out exactly what
+was tried, sharing the specific dimensions/state confirming correct behavior, and asking for the
+detail that would actually narrow this down next time (browser/OS, whether "first" means the whole
+session or per-panel, and what `localStorage`'s `devsystem-panel-layout-v1` entry shows for that
+panel right after a "failed" first click, which would distinguish a real toggle-logic bug from a
+stale/duplicated DOM node). This is a deliberate application of this project's own honesty standard
+to itself, same as the `[3]`-`[35]` mutation-test backlog and the earlier self-corrected "every check
+has real, live proof" overclaim: a live-verified "I could not reproduce this" is worth more than a
+fabricated patch for a bug that may not exist as described, or that exists somewhere this session's
+four repro attempts didn't reach.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
