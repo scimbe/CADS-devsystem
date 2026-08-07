@@ -4978,4 +4978,45 @@ claim actually needs.
 redesign -- new screenshots against the real redeployed flagship run, a new section on the
 click-outside-to-close fix, updated prose throughout.
 
+**Main-dev-loop firing, 2026-08-07 (dd) -- a real CI failure fixed and confirmed green, plus a real
+host disk-full incident found and safely resolved along the way.** State check: no new operator
+input on any of the four standing decision points; `main`'s own CI had gone from queued to actually
+running (the earlier session-long runner-queue stall was long since cleared), but the last two real
+runs had failed.
+
+Traced it, not guessed: check `[48]` (this session's own git-SHA verification work) was failing in
+CI specifically, not locally -- the CI job's own `docker build` step for `devsystem-web` had never
+been updated to pass `--build-arg GIT_SHA`, unlike the real `deploy-devsystem-web.sh` this whole
+mechanism was built around. The CI-built image was doing exactly what its own honest-fallback design
+says to do with that var unset: report `"unknown"`. Not a bug in the check, or the app -- only in a
+CI step that had quietly drifted from what a real deploy actually does. Fixed
+(`CADS-devsystem@21e085a`) by matching the deploy script's own build-arg, verified locally first with
+the exact same build command CI runs (a scratch container on a throwaway port, cleaned up after)
+before trusting the real run -- then actually watched the real GitHub Actions run to completion
+rather than assuming: `31159348939` came back `success`.
+
+**A real, live host resource incident, found and fixed along the way, not just noted**: attempting a
+local hermetic `cargo test` for a planned mutation-test round on check `[3]` hit a genuine
+`No space left on device` mid-build. Root cause, confirmed directly: the host's own root filesystem
+was already at 100% (72G, 33MB free) before this build even started, and the ad-hoc `docker run`
+invocation hadn't set `CARGO_TARGET_DIR`, so its `target/` output landed on the host bind-mount
+(`/home/becke/workspace/CADS-devsystem/web/target`, 2.7G before the build failed) instead of a named
+volume -- exactly the "target/ as host bind-mount causes accumulation" failure mode already known
+from earlier in this session, repeated here by not applying it to an ad-hoc verification build.
+Reverted the in-progress mutation cleanly from a pre-mutation backup (no source change was ever
+committed), removed the root-owned `web/target` via a throwaway root container (matching this
+project's own established artifact-cleanup pattern), then found the real, larger cause via
+`docker system df`: 16GB of genuinely unused (not just cached) Docker images and ~2GB of stale build
+cache, none of it tied to any running container. Pruned both safely (`docker image prune -f`,
+`docker builder prune -f`) -- real disk recovered from 33MB to 4.6GB free, without touching any
+volume or image a live service (this host runs `ct-selfhost-control-plane-1`, `devsystem-web`,
+`devsystem-demo-origin`, and several other demo tunnels) actually depends on. ~14GB more sits in
+tagged-but-currently-unused images, a real, known, deliberately-not-pursued-this-firing opportunity
+for a future round -- riskier to prune blind without confirming which of those images nothing still
+expects to find cached.
+
+Check `[3]`'s own mutation-test round is deferred to a future firing, honestly, rather than forced
+through on tight disk headroom right after a real space incident on the same host live services run
+on.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
