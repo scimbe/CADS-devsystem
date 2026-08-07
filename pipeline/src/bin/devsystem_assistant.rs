@@ -263,8 +263,9 @@ fn build_system_prompt(context: &str) -> String {
          silently decide the run's direction yourself. Never emit this action on a run \
          that isn't paused -- there is no checkpoint to plan past yet. In summary, if \
          asked to describe your own real capabilities, state all THREE real categories, \
-         not just the first two: (1) direct actions on the thirteen milestone/backlog/ \
-         requirement/repo_url/create_run/role-fill-mode/abort-criteria/pause-state \
+         not just the first two: (1) direct actions on the fourteen milestone/backlog/ \
+         requirement/repo_url/create_run/role-fill-mode/abort-criteria/pause-state/ \
+         checkin-acknowledgment \
          action types, applied immediately; (2) the \
          six propose_* actions (custom panel add/edit/remove, stage, issue, run \
          deletion), queued \
@@ -277,7 +278,7 @@ fn build_system_prompt(context: &str) -> String {
          real bidder sees, and a vague/speculative issue wastes a human reviewer's \
          time. If a request is ambiguous, or you're not confident it's safe to act on, \
          say so in prose and ask instead of emitting an action. You have NO other tool \
-         or system access in this version -- only these twenty action types against \
+         or system access in this version -- only these twenty-one action types against \
          these nine kinds of data (milestones, backlog items, requirements, repo_url, \
          runs, custom panels, stages, issues, next-step drafts); for anything else \
          (e.g. an actual code change, or \
@@ -454,6 +455,18 @@ enum Action {
     /// apply immediately -- see `RunState::pending_delete_run_proposal`'s own
     /// doc comment.
     ProposeDeleteRun { rationale: String },
+    /// Real gap closed (#382 goal doc §8, 2026-08-07): the check-in-pending
+    /// signal added the same day (`RunState::checkin_acknowledged_through`,
+    /// `POST /checkin/acknowledge`) had no matching assistant action at all,
+    /// found by the same "cross-check every real human-editable/actionable
+    /// GUI control against this enum" discipline already used for
+    /// `SetRoleFillMode`/`UpdateCriteria`/`SetPaused`. Given `SetPaused`'s own
+    /// direct-action treatment, not `ProposeDeleteRun`'s propose-then-approve
+    /// one: acknowledging is explicit, idempotent, and never destructive --
+    /// the same reasoning `SetPaused`'s own doc comment gives. No fields:
+    /// the real endpoint takes none either, it always acknowledges through
+    /// the run's current iteration count.
+    AcknowledgeCheckin,
 }
 
 fn default_stage_units() -> u64 {
@@ -663,6 +676,12 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
             format!("{base}/api/runs/{run_id}/delete-proposal"),
             serde_json::json!({"rationale": rationale}),
             "proposed",
+        ),
+        Action::AcknowledgeCheckin => (
+            "acknowledge this run's most recently fired check-in".to_string(),
+            format!("{base}/api/runs/{run_id}/checkin/acknowledge"),
+            serde_json::json!({}),
+            "done",
         ),
     };
     // Real gap #10 (#382 goal doc §8, fourteenth stress-test run, 2026-08-06):
@@ -1098,8 +1117,9 @@ mod tests {
                 && prompt.contains("set_role_fill_mode")
                 && prompt.contains("update_criteria")
                 && prompt.contains("set_paused")
-                && prompt.contains("propose_delete_run"),
-            "all twenty real action types must be documented"
+                && prompt.contains("propose_delete_run")
+                && prompt.contains("checkin-acknowledgment"),
+            "all twenty-one real action types must be documented"
         );
         assert!(
             prompt.contains("state.paused is true") && prompt.contains("2-3 SEPARATE"),
@@ -1111,8 +1131,8 @@ mod tests {
         );
         assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these nine data kinds");
         assert!(
-            prompt.contains("twenty action types") && prompt.contains("these nine kinds of data"),
-            "real gap found live 2026-08-06: propose_next_step's own addition (fifteenth action type, ninth kind of data -- next-step drafts) updated the action-type count but left the kinds-of-data count at the stale pre-next-step value of eight, so the live assistant's own self-description contradicted itself (\"Eight kinds of data\" followed by a table that itself summed to nine) -- must state nine, matching the real count. Same class of bug found again live 2026-08-06 (docs-loop firing): ToggleRequirementAutoJudge's own addition (sixteenth action type, still the same nine kinds of data -- no new kind, just a new action on the existing requirements kind) left this count stale at fifteen; the live assistant's own self-report ('15 total action types') was checked and found wrong before this fix, not assumed. SetRoleFillMode (seventeenth action type, still nine kinds of data -- roles aren't a new kind, this session already treats role/auction state as covered by the existing surface) grew the count again in the same firing this comment was written, updated together this time rather than in a later separate fix. UpdateCriteria (eighteenth action type, still nine kinds of data -- abort criteria are per-run metadata, already covered by the existing \"runs\" kind) closes the last of §7's own three previously-deferred gaps; count updated in this same commit, not a later separate fix. SetPaused (nineteenth action type, still nine kinds of data -- a run's paused/pause_reason are per-run metadata, the same \"runs\" kind update_criteria already covers) closes the §7.2 gap #2 audit's newest finding; count updated in this same commit, not a later separate fix. ProposeDeleteRun (twentieth action type, still nine kinds of data -- deleting a run is still about the \"runs\" kind, not a new one) closes the SAME audit's other real finding, found in the SAME firing that added SetPaused; count updated together, not split across two commits. This same audit also found (and fixed in this commit) a FIFTH, older instance of this exact bug class that predates this specific test's own history: a separate sentence describing category (1)'s own direct-action count had silently stayed at \"nine\" (the real count when ToggleRequirementAutoJudge/SetRoleFillMode/UpdateCriteria/SetPaused were still direct actions not yet added) instead of the real thirteen -- found by actually counting the enum's own direct-action variants, not trusted from the sentence itself"
+            prompt.contains("twenty-one action types") && prompt.contains("these nine kinds of data"),
+            "real gap found live 2026-08-06: propose_next_step's own addition (fifteenth action type, ninth kind of data -- next-step drafts) updated the action-type count but left the kinds-of-data count at the stale pre-next-step value of eight, so the live assistant's own self-description contradicted itself (\"Eight kinds of data\" followed by a table that itself summed to nine) -- must state nine, matching the real count. Same class of bug found again live 2026-08-06 (docs-loop firing): ToggleRequirementAutoJudge's own addition (sixteenth action type, still the same nine kinds of data -- no new kind, just a new action on the existing requirements kind) left this count stale at fifteen; the live assistant's own self-report ('15 total action types') was checked and found wrong before this fix, not assumed. SetRoleFillMode (seventeenth action type, still nine kinds of data -- roles aren't a new kind, this session already treats role/auction state as covered by the existing surface) grew the count again in the same firing this comment was written, updated together this time rather than in a later separate fix. UpdateCriteria (eighteenth action type, still nine kinds of data -- abort criteria are per-run metadata, already covered by the existing \"runs\" kind) closes the last of §7's own three previously-deferred gaps; count updated in this same commit, not a later separate fix. SetPaused (nineteenth action type, still nine kinds of data -- a run's paused/pause_reason are per-run metadata, the same \"runs\" kind update_criteria already covers) closes the §7.2 gap #2 audit's newest finding; count updated in this same commit, not a later separate fix. ProposeDeleteRun (twentieth action type, still nine kinds of data -- deleting a run is still about the \"runs\" kind, not a new one) closes the SAME audit's other real finding, found in the SAME firing that added SetPaused; count updated together, not split across two commits. This same audit also found (and fixed in this commit) a FIFTH, older instance of this exact bug class that predates this specific test's own history: a separate sentence describing category (1)'s own direct-action count had silently stayed at \"nine\" (the real count when ToggleRequirementAutoJudge/SetRoleFillMode/UpdateCriteria/SetPaused were still direct actions not yet added) instead of the real thirteen -- found by actually counting the enum's own direct-action variants, not trusted from the sentence itself. AcknowledgeCheckin (twenty-first action type, still nine kinds of data -- a run's checkin_acknowledged_through is per-run metadata, the same \"runs\" kind every other per-run-metadata action already covers) closes the check-in-pending gate's own action-set gap, found and fixed in the SAME firing the gate itself shipped in; count updated together here too, continuing this file's own established discipline of never letting the two numbers land in separate commits."
         );
         assert!(prompt.contains("none takes effect by itself"), "the panel/panel-removal/panel-edit/stage/issue-proposal approval gate must be explicit, not implied");
         assert!(
@@ -1190,8 +1210,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_actions_parses_all_twenty_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"},{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"alice\"},{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5},{\"type\":\"set_paused\",\"paused\":true},{\"type\":\"propose_delete_run\",\"rationale\":\"testing only, real reason\"}]\n```";
+    fn extract_actions_parses_all_twenty_one_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"},{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"alice\"},{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5},{\"type\":\"set_paused\",\"paused\":true},{\"type\":\"propose_delete_run\",\"rationale\":\"testing only, real reason\"},{\"type\":\"acknowledge_checkin\"}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -1231,6 +1251,7 @@ mod tests {
                 Action::UpdateCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 5 },
                 Action::SetPaused { paused: true },
                 Action::ProposeDeleteRun { rationale: "testing only, real reason".to_string() },
+                Action::AcknowledgeCheckin,
             ]
         );
     }
@@ -1625,6 +1646,21 @@ mod tests {
         let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
         assert_eq!(method, "POST");
         assert_eq!(url, "/api/runs/my-run/resume");
+    }
+
+    #[test]
+    /// Real gap closed (#382 goal doc §8, 2026-08-07, same firing as the
+    /// check-in-pending gate itself): see `Action::AcknowledgeCheckin`'s own
+    /// doc comment for why this gets `SetPaused`'s direct-action treatment,
+    /// not a proposal gate -- acknowledging is explicit and never destructive.
+    fn apply_action_posts_the_real_acknowledge_checkin_request() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let result = apply_action(&client, &addr, "my-run", &Action::AcknowledgeCheckin);
+        assert!(result.starts_with("done:"));
+        let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/checkin/acknowledge");
     }
 
     #[test]
