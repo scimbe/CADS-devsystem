@@ -6085,4 +6085,39 @@ snapshot, so un-achieving can't leave it stale either) remains real, open, large
 (the mandatory review gate keys on an unvalidated `stage` field) also remains open, real, and
 unaddressed -- next in line.
 
+**Main-dev-loop firing, 2026-08-07 (rrr) -- issue #49: the review gate's own `stage` field is now
+validated against real vocabulary, not accepted verbatim.** State check: `#382`'s three checkpoints
+and `#14` still unanswered (last replies unchanged); CI on `scimbe/CADS-devsystem` has cleared its
+earlier queue backlog (most recent `Pipeline CI` run: success). Issue #49's own "Part 1" claim (the
+mandatory review gate itself correctly rejects six separate fake-review attempts) was already sound
+and not re-litigated; this firing addressed "Part 2" -- the field that gate reads had zero validation
+of any kind. Live-confirmed before fixing: `stage: ""`, `stage: "   "`, and a 5,000-character `stage`
+all got a real `200`; `stage: "devsystem.architekt-undeclared-probe"` (naming no role this run ever
+declared) was accepted identically to a real role's own tag; `"  DEVSYSTEM.REVIEW  "` (case/whitespace
+near-miss) got a real `200` and a history entry that *reads* as a completed review while the gate's
+own exact-match comparison silently never counts it.
+
+New `devsystem_pipeline::validate_stage` rejects empty/whitespace/oversized/bidi-laced stages, and
+requires the rest to name a role already declared in the run's own spec, a stage proposed in the same
+submission (the self-optimizing pipeline's own real propose-and-report-in-one-request pattern), or one
+of the seven canonical `ALL_STAGES` names. That last clause was the one real bug I caught myself before
+shipping: an earlier, stricter draft (spec-roles/same-submission-proposals only) broke 20 real hermetic
+web-crate tests, and rather than just patching the tests, checked the actual live flagship
+`webconference-android` run first -- confirmed its own real history genuinely uses
+`devsystem.improve` without that ever being a declared auction-backed role, which is architecturally
+correct (it's the self-optimization mechanism that proposes other roles, so requiring it pre-declared
+would be circular). Fixed by accepting `ALL_STAGES` too, then updated the handful of test fixtures
+that had relied on an undeclared shorthand stage name nothing had ever actually enforced.
+
+Wired into both real entry points that accept a stage (the web API and the local, non-remote
+`devsystem_iterate` CLI path). `CADS-devsystem@2c40250`. Added 7 dedicated pipeline-crate unit tests
+for `validate_stage` directly (previously had none) and stress-harness check `[50]` covering every
+repro case above. 144/144 pipeline lib tests, 203/203 web tests, both crates build with zero warnings
+under `RUSTFLAGS=-D warnings`. Live-verified against the actual deployment: all six of the issue's own
+repro cases now behave correctly (four real `400`s, two real `200`s for the legitimate canonical
+cases). Full stress harness now at 108/108.
+
+`#49`'s own suggestion #3 (record which real account/role actually filled a stage, not just the stage
+name) remains real, open work -- depends on `#40` (no actor field on iteration records yet).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
