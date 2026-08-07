@@ -1011,10 +1011,12 @@ pub fn duplicate_of_last_iteration(
 /// `stage_id` with no entry there at all (pre-existing data from before that field
 /// existed). A later, real re-proposal for the same `stage_id` supersedes an
 /// earlier one, matching `preflight::no_price_ceiling`'s own established "last
-/// match wins" fix (#382 goal doc §8, twenty-seventh stress-test run). Shared here
-/// (2026-08-07) so that risk check and the real direct-accept price-ceiling
-/// enforcement below (`set_role_fill_mode`, `web/src/main.rs`) read the identical
-/// real ceiling -- one bug class if they ever drifted apart, not two.
+/// match wins" fix (#382 goal doc §8, twenty-seventh stress-test run). Used by
+/// `no_price_ceiling` itself and by the GUI's `fix_target` (stage_id/tag,
+/// #382 goal doc §7). **Not** used by [`price_ceiling_for`] below, which needs a
+/// different, more conservative "last one that actually set a real ceiling"
+/// search instead -- see its own doc comment for the real gap that distinction
+/// closes.
 pub fn latest_proposal_for_stage<'a>(state: &'a RunState, stage_id: &str) -> Option<&'a crate::StageProposal> {
     state
         .approved_stage_proposals
@@ -1033,8 +1035,40 @@ pub fn latest_proposal_for_stage<'a>(state: &'a RunState, stage_id: &str) -> Opt
 /// actually bounds what a directly-accepted bid can cost, closing the honest gap
 /// `no_price_ceiling`'s own doc comment named -- price_ceiling was stored and shown,
 /// never compared against anything, anywhere, until this.
+///
+/// **Deliberately NOT `latest_proposal_for_stage(...).price_ceiling`, found live the
+/// same day**: that function's own "last proposal wins" is correct for RISK
+/// FLAGGING (a later re-proposal's own current intent is what should be shown as
+/// live/unbounded), but wrong for ENFORCEMENT -- a careless later re-proposal that
+/// simply omits `price_ceiling` (never claims to remove it, just doesn't mention it)
+/// would silently un-bound a role that a real, earlier proposal had genuinely
+/// bounded. Live-confirmed before this fix: proposed+approved a role with
+/// `price_ceiling: 50`, then a second, careless re-proposal of the identical
+/// `stage_id` with NO `price_ceiling` field at all -- a `999`-priced direct-accept
+/// that should have stayed blocked got a real `200` instead, even though the risk
+/// panel kept correctly showing `no price ceiling set` (that check's own "last
+/// wins" is right for flagging, just not for this). Fixed by searching backward
+/// through every real proposal for this `stage_id` (approved list first, falling
+/// back to history) for the LAST ONE THAT ACTUALLY SET a real ceiling, skipping any
+/// later re-proposal that simply didn't address it -- a real, positive ceiling, once
+/// genuinely set, stays enforced until a later proposal explicitly sets a different
+/// one, never silently by omission.
 pub fn price_ceiling_for(state: &RunState, stage_id: &str) -> Option<u64> {
-    latest_proposal_for_stage(state, stage_id).and_then(|p| p.price_ceiling).filter(|&c| c > 0)
+    state
+        .approved_stage_proposals
+        .iter()
+        .rev()
+        .filter(|p| p.stage_id == stage_id)
+        .find_map(|p| p.price_ceiling.filter(|&c| c > 0))
+        .or_else(|| {
+            state
+                .history
+                .iter()
+                .rev()
+                .flat_map(|h| h.proposals.iter().rev())
+                .filter(|p| p.stage_id == stage_id)
+                .find_map(|p| p.price_ceiling.filter(|&c| c > 0))
+        })
 }
 
 /// What the runner decided after folding in one [`IterationRecord`].
@@ -1812,6 +1846,53 @@ mod tests {
             price_ceiling: Some(50),
         });
         assert_eq!(price_ceiling_for(&state, "devsystem.new_role"), Some(50), "the LATER, real proposal wins over the earlier unbounded one");
+    }
+
+    #[test]
+    fn price_ceiling_for_does_not_let_a_careless_re_proposal_silently_un_bound_a_real_ceiling() {
+        // Real gap found live, same day price_ceiling_for shipped: a later
+        // re-proposal that simply omits price_ceiling (never claims to widen it,
+        // just doesn't mention it) must not silently remove an earlier, genuine
+        // ceiling -- see this function's own doc comment.
+        let mut state = RunState::new("run-ceiling-widen");
+        state.approved_stage_proposals.push(crate::StageProposal {
+            proposed_by: STAGE_IMPLEMENT.into(),
+            stage_id: "devsystem.bounded_role".into(),
+            tag: "bounded_role".into(),
+            rationale: "first real proposal, genuinely bounded".into(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: Some(50),
+        });
+        assert_eq!(price_ceiling_for(&state, "devsystem.bounded_role"), Some(50));
+
+        // A careless re-proposal of the identical stage_id, price_ceiling left unset.
+        state.approved_stage_proposals.push(crate::StageProposal {
+            proposed_by: STAGE_IMPLEMENT.into(),
+            stage_id: "devsystem.bounded_role".into(),
+            tag: "bounded_role".into(),
+            rationale: "a careless re-propose, forgot the ceiling this time".into(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: None,
+        });
+        assert_eq!(
+            price_ceiling_for(&state, "devsystem.bounded_role"),
+            Some(50),
+            "the real, earlier ceiling must still apply -- an omission is not the same as an explicit removal"
+        );
+
+        // A later proposal that DOES explicitly set a different real ceiling still wins for real.
+        state.approved_stage_proposals.push(crate::StageProposal {
+            proposed_by: STAGE_IMPLEMENT.into(),
+            stage_id: "devsystem.bounded_role".into(),
+            tag: "bounded_role".into(),
+            rationale: "a real, deliberate re-bound".into(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: Some(80),
+        });
+        assert_eq!(price_ceiling_for(&state, "devsystem.bounded_role"), Some(80), "an explicit later ceiling still supersedes an earlier one");
     }
 
     #[test]

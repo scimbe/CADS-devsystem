@@ -3967,4 +3967,36 @@ own real acceptance point, which lives in CADS-Tunnel's `ct_common::pipeline`, a
 cross-repo increment than this one -- left for a dedicated future firing, named here rather than
 silently dropped.
 
+**Goal-driven-loop firing, 2026-08-07 -- the stress test applied to the enforcement gate it just
+shipped, same day, and it found a real bypass.** State check: no new operator input on any of the
+three open `#382` checkpoints, no new PRs, CI healthy (`in_progress`/`success`, cleared its earlier
+queue) -- 84/84 stress harness clean before starting.
+
+Per the standing incompetent-agent mandate, tried the next realistic move against the price_ceiling
+enforcement gate the previous firing shipped: propose a role with a real, genuine `price_ceiling: 50`
+(approved), then a SECOND, careless re-proposal of the identical `stage_id` -- not malicious, just an
+agent re-proposing for an unrelated reason and forgetting to repeat the ceiling. **It worked** -- a
+real `200` on a `999`-priced direct-accept that should have stayed blocked at `50`. Root cause: the
+enforcement gate reused `latest_proposal_for_stage`'s own "last proposal wins" lookup, which is
+correct for RISK FLAGGING (a later proposal's own current intent should drive what the risk panel
+shows) but wrong for ENFORCEMENT -- an omission is not the same as an explicit removal, and treating
+them the same let a single careless re-propose silently undo a real safety bound.
+
+Fixed with a distinct, more conservative lookup: `price_ceiling_for` now searches backward through
+every real proposal for a `stage_id` (approved list first, falling back to history, same precedence
+as before) for the LAST ONE THAT ACTUALLY SET a real, positive ceiling, skipping any later
+re-proposal that simply didn't address it. A real, later proposal that DOES explicitly set a
+different ceiling still wins, exactly as before -- only a silent omission stops counting as removal.
+The risk panel's own `no_price_ceiling` check is deliberately untouched: its "last wins" is correct
+for its own purpose (still correctly re-flagged `no price ceiling set` even during the live
+reproduction above, while enforcement was silently bypassed underneath it -- the two checks answer
+different questions and needed different fixes, not one shared one).
+
+Hermetic `cargo test`/`clippy` clean on both crates (122/122 pipeline, 196/196 web, 0 warnings) -- new
+test proves the exact regression: ceiling set, careless omission, ceiling still enforced; a later
+EXPLICIT re-bound still wins. Redeployed; live-verified end to end against the real container:
+reproduced the exact bypass first (a real `200` on the over-ceiling accept), confirmed the fix closes
+it (`400`, same real numbers stated). Added stress-harness check `[42]` (85/85 total) so this exact
+bypass can never silently regress unnoticed again.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).

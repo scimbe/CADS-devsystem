@@ -565,10 +565,27 @@ check "a role with no real price_ceiling set is not blocked -- nothing real to e
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$ceiling_run"
 
 echo
+echo "[42] a careless later re-proposal that simply omits price_ceiling must NOT silently un-bound a role a real, earlier proposal genuinely bounded (found live the same day check [41] shipped, #382 goal doc §7.2/§8, 2026-08-07)"
+widen_run="${RUN}-price-ceiling-widen-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$widen_run\"}"
+widen_prop1=$(curl -s -X POST "$BASE/api/runs/$widen_run/stages/propose" -H 'content-type: application/json' \
+  -d '{"stage_id":"devsystem.bounded_role","tag":"bounded","rationale":"incompetent-agent stress harness probe, first real proposal","units":1,"price_ceiling":50}')
+widen_prop1_id=$(echo "$widen_prop1" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null)
+curl -s -o /dev/null -X POST "$BASE/api/runs/$widen_run/stages/proposals/$widen_prop1_id/approve"
+widen_prop2=$(curl -s -X POST "$BASE/api/runs/$widen_run/stages/propose" -H 'content-type: application/json' \
+  -d '{"stage_id":"devsystem.bounded_role","tag":"bounded","rationale":"incompetent-agent stress harness probe, a careless re-propose with no price_ceiling","units":1}')
+widen_prop2_id=$(echo "$widen_prop2" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null)
+curl -s -o /dev/null -X POST "$BASE/api/runs/$widen_run/stages/proposals/$widen_prop2_id/approve"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$widen_run/roles/bounded/fill-mode" \
+  -H 'content-type: application/json' -d '{"mode":"dedicated","label":"Compass-1","accepted_bid":{"holder_label":"abc123","price":999}}')
+check "the real, earlier ceiling still applies after a careless omission -- not silently un-bounded" "400" "$status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$widen_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the forty-one gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the forty-two gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
