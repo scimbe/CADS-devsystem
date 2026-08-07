@@ -5215,4 +5215,29 @@ rather than re-litigated at length again -- the tradeoff and its reasoning are t
 `#24` (RAG search panel silently serves a stale index until a manual "Sync now") remains open, real,
 and well-scoped for a future firing -- not attempted in the same increment as `#23`.
 
+**Main-dev-loop firing, 2026-08-07 (jj) -- issue #22 fixed and closed: a real Runs-list filter,
+verified against the actual 111-run production deployment.** State check: no new operator input on
+any of the four standing decision points, no new issues since the last firing.
+
+Picked `#22` (Runs panel has no search/filter, burying a real project among 80+ cryptically-named
+test runs) -- purely client-side, well-scoped, matching the resource-conscious pattern this session
+keeps favoring while disk stays this tight. Added a real filter input under "+ New Project", same
+substring-match convention (case-insensitive, against `run_id`) the orb-launcher's own filter already
+uses. Refactored the fetch/render split so the filter re-renders instantly from a cached list on
+every keystroke rather than a new API call per character. `CADS-devsystem@4108e0c`, live-verified
+against the actual live deployment's real 111 runs (not a mock or a small fixture): filtering
+"webconference" correctly narrows to exactly the 5 real matches, a genuine "no runs match" message
+for a real non-match, full restore on clearing. Full 100/100 stress harness stays clean.
+
+Same disk situation as the last two firings: floor blocked the first attempt (1.9GB free), no safe
+partial prune existed (checked once more this time too -- confirmed via `du` that no large non-Docker
+consumer exists on this host either, the 70G is genuinely legitimate active Docker state, not hidden
+waste), `docker builder prune -f` was again the only reliable lever, costing one more cold rebuild.
+Not re-explaining the full reasoning again here -- see firings (hh)/(ii) for that; noting only that
+the pattern is now well-established and the tradeoff keeps being taken deliberately, not accidentally.
+
+All four of the persona-testing issues found earlier this session (`#19`, `#21`, `#22`, `#23`) are now
+fixed; `#20` (out of this repo's scope, flagged for CADS-Tunnel) and `#24` (RAG staleness) are the two
+real, open items remaining from that batch.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
