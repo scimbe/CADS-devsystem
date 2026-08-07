@@ -440,6 +440,31 @@ pub struct IterationRecord {
     /// already stamps every other real `*_at` field in this codebase.
     #[serde(default, deserialize_with = "deserialize_zero_as_none")]
     pub submitted_at: Option<u64>,
+    /// Real evaluator finding, issue #40: the platform's own stated premise is a crew
+    /// auction -- distinct crews bid for and win roles -- but until this field, the
+    /// winning crew's identity was never written into the work record it produced.
+    /// The only place any bidder identity ever appeared was the live auction view
+    /// (`GET /api/runs/{id}/auction`), and every bid there expires 300 seconds after
+    /// being issued -- so "who submitted iteration N" became permanently unanswerable
+    /// the moment that window passed, for every iteration, on every run. Confirmed
+    /// live against `webconference-android`: iteration 17's authorizing bid had long
+    /// expired, and the role's current holder was a completely different, unrelated
+    /// bidder -- no record anywhere still connected that iteration to the crew that
+    /// actually produced it.
+    ///
+    /// `Some(the real, gate-verified x-gate-email)` when a signed-in browser session
+    /// submitted the iteration -- the same source `/api/me` and `owner_email` already
+    /// use, deliberately never trusted from the request body itself (a client could
+    /// claim to be anyone). `None`, honestly, for the local `devsystem_iterate` CLI
+    /// path (no browser session exists there at all) and for `--remote` M2M
+    /// bearer-token submissions (a service-account credential, not a human identity --
+    /// fabricating a person's name for it would be worse than an honest gap). This is
+    /// a label ("which account's browser session submitted this"), not the winning
+    /// bid's own identity (issue #40's suggestion #2, separate and not yet done): a
+    /// role can be filled by an unattended agent process with no browser session at
+    /// all, which this field alone cannot capture.
+    #[serde(default)]
+    pub submitted_by: Option<String>,
 }
 
 fn deserialize_id_or_empty_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -895,6 +920,36 @@ mod tests {
         assert!(serialized.get("id").is_some(), "the field must still be present in the JSON, not omitted");
         assert!(serialized["id"].is_null(), "and its value must be a real, visible null a consumer can branch on");
         assert!(serialized["submitted_at"].is_null());
+    }
+
+    #[test]
+    /// Real evaluator finding, issue #40: a pre-existing history entry (before this
+    /// field existed) has no `submitted_by` key at all -- must load as an honest
+    /// `None`, not error out or silently invent an identity.
+    fn a_record_with_no_submitted_by_field_deserializes_as_none() {
+        let json = r#"{"run_id":"r","stage":"devsystem.plan","iteration":1,"feedback":"f",
+            "proposals":[],"succeeded":true,"requirement_indices":[]}"#;
+        let record: IterationRecord = serde_json::from_str(json).expect("pre-#40 record must still load");
+        assert_eq!(record.submitted_by, None);
+    }
+
+    #[test]
+    fn a_real_submitted_by_round_trips_unchanged() {
+        let json = r#"{"run_id":"r","stage":"devsystem.plan","iteration":1,"feedback":"f",
+            "proposals":[],"succeeded":true,"requirement_indices":[],"submitted_by":"scimbe@gmail.com"}"#;
+        let record: IterationRecord = serde_json::from_str(json).expect("real record must load");
+        assert_eq!(record.submitted_by, Some("scimbe@gmail.com".to_string()));
+        let serialized = serde_json::to_value(&record).unwrap();
+        assert_eq!(serialized["submitted_by"], "scimbe@gmail.com");
+    }
+
+    #[test]
+    fn a_none_submitted_by_serializes_as_a_real_visible_null_not_an_omitted_field() {
+        let record = IterationRecord { run_id: "r".into(), stage: "devsystem.plan".into(), iteration: 1, feedback: "f".into(), succeeded: true, ..Default::default() };
+        assert_eq!(record.submitted_by, None);
+        let serialized = serde_json::to_value(&record).unwrap();
+        assert!(serialized.get("submitted_by").is_some(), "must still be present, not omitted");
+        assert!(serialized["submitted_by"].is_null());
     }
 
     #[test]

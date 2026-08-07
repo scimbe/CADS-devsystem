@@ -804,10 +804,24 @@ check "an implement-stage iteration that actually ships a known defect is still 
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$defect_run"
 
 echo
+echo "[56] a real iteration's own submitted_by must be the real, gate-verified identity of the actual signed-in session -- never a value the client claims in its own request body -- and an honest null when no session exists at all (the local devsystem_iterate CLI, or an M2M/--remote bearer-token caller). issue #40: 'who submitted iteration N' was permanently unanswerable on every run once the auction's own 300s bid-expiry window passed (#382 goal doc §8, 2026-08-07)"
+actor_run="actor-identity-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$actor_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$actor_run/iterate" -H 'content-type: application/json' -H 'x-gate-email: real-crew@example.com' \
+  -d '{"stage":"devsystem.implement","feedback":"real work","succeeded":true,"submitted_by":"client-forged@example.com"}'
+real_submitter=$(curl -s "$BASE/api/runs/$actor_run" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"]["history"][0].get("submitted_by"))' 2>/dev/null)
+check "the real gate-verified header identity is stamped, never the client-claimed one in the request body" "real-crew@example.com" "$real_submitter"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$actor_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"real work, no session","succeeded":true}'
+no_session_submitter=$(curl -s "$BASE/api/runs/$actor_run" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"]["history"][1].get("submitted_by"))' 2>/dev/null)
+check "no gate header means an honest None, never a fabricated identity" "None" "$no_session_submitter"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$actor_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the fifty-five gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the fifty-six gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."

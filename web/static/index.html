@@ -4404,9 +4404,18 @@ function renderHistoryPanel(data) {
   const requirementRefsHtml = (indices) => (indices || []).length
     ? `<div class="lede" style="font-size:.72rem;margin-top:.2rem">addresses: ${indices.map(i => escapeHtml(requirements[i] ? truncate(requirements[i].statement, 60) : `requirement #${i} (removed)`)).join('; ')}</div>`
     : '';
+  // Real evaluator finding, issue #40: "who submitted this" was unanswerable for
+  // every iteration on every run -- the only bidder identity anywhere lived in the
+  // auction view and expired 300s after issue. submitted_by is a real, gate-verified
+  // label (the signed-in browser session that actually called /iterate), honestly
+  // absent (not fabricated) for the local CLI path and for M2M/--remote bearer-token
+  // submissions, where no human browser session exists to attribute to.
+  const submittedByHtml = (by) => by
+    ? ` · submitted by ${escapeHtml(by)}`
+    : ` · <span class="lede" style="font-size:.7rem">submitted by: not recorded (local CLI or M2M submission)</span>`;
   const history = [...data.state.history].reverse().map(h => `
     <div class="iter">
-      <div class="head"><span>iteration ${h.iteration} · ${h.stage}</span>
+      <div class="head"><span>iteration ${h.iteration} · ${h.stage}${submittedByHtml(h.submitted_by)}</span>
         <span class="${h.succeeded ? 'ok' : 'fail'}">${h.succeeded ? 'ok' : 'FAILED'}</span></div>
       <div>${escapeHtml(h.feedback)}</div>
       ${renderProposals(h.proposals)}

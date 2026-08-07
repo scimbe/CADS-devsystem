@@ -1290,6 +1290,13 @@ async fn iterate_run(
     // rand::random::<u64>())` convention every other real id in this
     // codebase already uses -- deliberately never accepted from the request
     // body, so a role-filler/client cannot forge or collide it.
+    // Real evaluator finding, issue #40: the same real, gate-verified identity
+    // `/api/me` and `owner_email` already use -- deliberately never trusted from the
+    // request body, so a client cannot claim to be someone else. Honestly `None` for
+    // an M2M/`--remote` bearer-token caller (no browser session, no x-gate-email
+    // header): a service-account credential is not a human identity, so leaving this
+    // absent is more honest than fabricating one.
+    let submitted_by = headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
     let record = IterationRecord {
         run_id: id.clone(),
         stage: body.stage,
@@ -1300,6 +1307,7 @@ async fn iterate_run(
         requirement_indices: body.requirement_indices,
         id: Some(format!("{:016x}", rand::random::<u64>())),
         submitted_at: Some(unix_now()),
+        submitted_by,
     };
 
     let memory_path = dir.join("memory.jsonl");
@@ -8184,6 +8192,55 @@ exit 1"#);
 
         let submitted_at0 = history[0]["submitted_at"].as_u64().expect("a real submitted_at");
         assert!(submitted_at0 > 1_700_000_000, "the real submitted_at must be a genuine current unix timestamp, not the client-supplied 1: {submitted_at0}");
+    }
+
+    #[tokio::test]
+    /// Real evaluator finding, issue #40: "who submitted iteration N" was permanently
+    /// unanswerable -- the only bidder identity anywhere lived in the auction view and
+    /// expired 300s after issue. `submitted_by` is now stamped server-side from the
+    /// same real, gate-verified `x-gate-email` header `/api/me`/`owner_email` already
+    /// use -- never trusted from the request body, so a client cannot claim to be
+    /// someone else.
+    async fn iterate_run_stamps_the_real_gate_verified_submitter_never_the_client_claimed_one() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "actor-run"}))).await.unwrap();
+
+        let mut request = json_request(
+            "POST",
+            "/api/runs/actor-run/iterate",
+            serde_json::json!({"stage": "devsystem.implement", "feedback": "real work", "succeeded": true, "submitted_by": "client-forged@example.com"}),
+        );
+        request.headers_mut().insert("x-gate-email", "real-crew@example.com".parse().unwrap());
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/actor-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(
+            body["state"]["history"][0]["submitted_by"], "real-crew@example.com",
+            "the real, gate-verified header identity must be stamped, never the client-claimed one in the request body"
+        );
+    }
+
+    #[tokio::test]
+    /// The honest counterpart: no `x-gate-email` header at all (the local
+    /// `devsystem_iterate` CLI's own real submission path, and every M2M/`--remote`
+    /// bearer-token caller) must record a real, honest `None` -- never a fabricated
+    /// identity.
+    async fn iterate_run_records_submitted_by_as_none_when_no_gate_header_is_present() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "no-gate-run"}))).await.unwrap();
+
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/no-gate-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "real work", "succeeded": true})))
+            .await
+            .unwrap();
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/no-gate-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert!(body["state"]["history"][0]["submitted_by"].is_null(), "no gate header means an honest null, never a fabricated identity");
     }
 
     #[tokio::test]
