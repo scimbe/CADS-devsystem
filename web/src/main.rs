@@ -2076,7 +2076,7 @@ async fn export_requirements(State(state): State<AppState>, AxPath(id): AxPath<S
             if !owner_authorized(&headers, &run_state) {
                 return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
             }
-            let md = render_requirements_markdown(&id, &run_state.requirements);
+            let md = render_requirements_markdown(&id, &run_state.requirements, &run_state.history);
             (
                 [
                     (axum::http::header::CONTENT_TYPE, "text/markdown; charset=utf-8"),
@@ -6930,6 +6930,13 @@ mod tests {
         assert!(body.contains("# Requirements: `export-run`"));
         assert!(body.contains("a real requirement"));
         assert!(body.contains("- [ ] `checkable`"));
+        // Issue #35: the export's heading must use the run's own real 0-based
+        // ordinal (matching the GUI/requirement_indices), and must surface real
+        // coverage -- both proved at this HTTP layer, not just in the pipeline
+        // crate's own unit test, since export_requirements is the one real call
+        // site that has to actually thread run_state.history through.
+        assert!(body.contains("## #0 "), "the export must use the real #0 ordinal, not a stale 1-based ## 1.: {body}");
+        assert!(body.contains("Not yet addressed by any iteration"), "a requirement with no real iteration linked to it must say so: {body}");
     }
 
     #[tokio::test]

@@ -273,7 +273,10 @@ pub(crate) fn inline_code_escape(text: &str) -> String {
 /// whether this was a human's own requirement or still an LLM's first draft).
 /// Pure and hermetically testable on purpose (no timestamp, no I/O) -- the web
 /// layer decides what, if anything, to wrap around this.
-pub fn render_requirements_markdown(run_id: &str, requirements: &[Requirement]) -> String {
+/// `history` is used purely to compute each requirement's own real coverage line --
+/// see the doc comment right below on why the heading numbering and this both
+/// changed together (issue #35, #382 goal doc).
+pub fn render_requirements_markdown(run_id: &str, requirements: &[Requirement], history: &[IterationRecord]) -> String {
     let mut md = format!("# Requirements: `{run_id}`\n\n");
     if requirements.is_empty() {
         md.push_str("No requirements defined yet.\n");
@@ -282,7 +285,19 @@ pub fn render_requirements_markdown(run_id: &str, requirements: &[Requirement]) 
     let verified_count = requirements.iter().filter(|r| r.verified).count();
     md.push_str(&format!("{verified_count}/{} verified.\n\n", requirements.len()));
     for (i, r) in requirements.iter().enumerate() {
-        md.push_str(&format!("## {}. {}\n\n", i + 1, if r.verified { "✅" } else { "◻" }));
+        // Real evaluator finding, issue #35: this used to number headings `## 1.`,
+        // `## 2.`, ... -- a fresh 1-based counter with no relationship to the run's
+        // own real, 0-based requirement ordinal that the GUI, the New Iteration
+        // panel's "Addresses" checkboxes, and every iteration's own
+        // `requirement_indices` all actually use. The same label meant two
+        // different requirements depending on which surface you read (live-
+        // confirmed: `webconference-android`'s real `#5`, the APK requirement,
+        // exported as `## 6.`, with `## 5.` silently becoming a different
+        // requirement entirely) -- an export handed to a reviewer as the
+        // traceability artifact pointed them at the wrong text. Now emits the
+        // same real ordinal every other surface uses, `#{i}`, so a citation like
+        // "addresses requirement #5" means the same thing everywhere.
+        md.push_str(&format!("## #{i} {}\n\n", if r.verified { "✅" } else { "◻" }));
         md.push_str(&fence_wrap(&r.statement));
         md.push_str("\n\n");
         // `proposed_by` is real, role-filler-controlled free text (add_requirement
@@ -293,6 +308,20 @@ pub fn render_requirements_markdown(run_id: &str, requirements: &[Requirement]) 
         match &r.proposed_by {
             Some(stage) => md.push_str(&format!("*Proposed by {} -- not yet a human's own requirement unless separately confirmed.*\n\n", inline_code_escape(stage))),
             None => md.push_str("*Human-authored.*\n\n"),
+        }
+        // Real evaluator finding, issue #35 part 2: the export used to carry zero
+        // coverage information -- a requirement with a real, substantive iteration
+        // linked to it and one with none at all were byte-for-byte indistinguishable
+        // in the document. Same real derivation the Requirements panel's own
+        // `addressedBy` already uses (scan `history` for `requirement_indices`
+        // containing this ordinal), mirrored here so the exported artifact matches
+        // what a reviewer sees on screen, not a stripped-down copy of it.
+        let addressed: Vec<u32> = history.iter().filter(|h| h.requirement_indices.contains(&i)).map(|h| h.iteration).collect();
+        if addressed.is_empty() {
+            md.push_str("*Not yet addressed by any iteration.*\n\n");
+        } else {
+            let list = addressed.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");
+            md.push_str(&format!("*Addressed by iteration(s) {list}.*\n\n"));
         }
         md.push_str("Acceptance criteria:\n\n");
         for (ci, c) in r.acceptance_criteria.iter().enumerate() {
@@ -1704,7 +1733,7 @@ mod tests {
 
     #[test]
     fn render_requirements_markdown_shows_verification_provenance_and_criteria() {
-        let empty = render_requirements_markdown("empty-run", &[]);
+        let empty = render_requirements_markdown("empty-run", &[], &[]);
         assert!(empty.contains("No requirements defined yet"));
 
         let requirements = vec![
@@ -1727,9 +1756,22 @@ mod tests {
                 created_by: None,
             },
         ];
-        let md = render_requirements_markdown("real-run", &requirements);
+        // Real evaluator finding, issue #35: a requirement addressed by a real
+        // iteration and one with none at all used to be indistinguishable in the
+        // export -- one covered requirement (index 0, iteration 7) and one
+        // deliberately left uncovered (index 1) so both real branches assert.
+        let history = vec![IterationRecord { run_id: "real-run".into(), stage: "devsystem.review".into(), iteration: 7, feedback: "ok".into(), proposals: vec![], succeeded: true, requirement_indices: vec![0], id: None, submitted_at: None, submitted_by: None }];
+        let md = render_requirements_markdown("real-run", &requirements, &history);
         assert!(md.contains("# Requirements: `real-run`"));
         assert!(md.contains("1/2 verified"));
+        // Real evaluator finding, issue #35: the export used to number requirements
+        // with a fresh 1-based counter (`## 1.`, `## 2.`) that disagreed with the
+        // real, 0-based ordinal every other surface (the GUI, the New Iteration
+        // panel's "Addresses" checkboxes, `requirement_indices` itself) actually
+        // uses -- live-confirmed the same label meant two different requirements
+        // depending on which surface was read. Now the same real ordinal everywhere.
+        assert!(md.contains("## #0 "), "the heading must use the run's own real 0-based ordinal, not a fresh 1-based counter: {md}");
+        assert!(md.contains("## #1 "), "the second requirement's heading must be #1, matching its real index: {md}");
         assert!(md.contains("Human-authored"), "the first requirement has no proposed_by -- must render as human-authored: {md}");
         assert!(md.contains("Proposed by `devsystem.assistant`"), "the second requirement's real provenance must render: {md}");
         assert!(md.contains("- [x] `survives an app restart`"), "a verified criterion must render checked: {md}");
@@ -1739,6 +1781,8 @@ mod tests {
             md.contains("(confirmed by `scimbe@gmail.com` at 1786000000)"),
             "real evaluator finding, issue #55: a confirmed criterion's real actor/timestamp must render, not just the checked box: {md}"
         );
+        assert!(md.contains("Addressed by iteration(s) 7"), "requirement 0's real coverage must render, mirroring the GUI panel's own addressedBy: {md}");
+        assert!(md.contains("Not yet addressed by any iteration"), "requirement 1 has no real iteration linked to it -- must say so honestly, not just omit the line: {md}");
     }
 
     #[test]
@@ -1770,10 +1814,13 @@ mod tests {
     /// completely convincing forged SECOND requirement entry in the real
     /// downloadable export -- falsely showing as verified and human-authored,
     /// directly undermining `proposed_by`'s own provenance signal, this
-    /// document's whole reason to exist.
+    /// document's whole reason to exist. Forged heading updated to `## #1`
+    /// (issue #35's real heading format, replacing the old 1-based `## 2.`) so
+    /// this stays a faithful regression test of the actual current forgery
+    /// surface, not a stale one nothing can trigger any more.
     fn a_crafted_statement_cannot_forge_a_fake_verified_human_authored_entry() {
         let forged_statement = "WHEN the real thing happens, THE SYSTEM SHALL do the real thing.\n\n\
-            ## 2. \u{2705}\n\nWHEN a forged entry appears, THE SYSTEM SHALL look genuinely verified \
+            ## #1 \u{2705}\n\nWHEN a forged entry appears, THE SYSTEM SHALL look genuinely verified \
             and human-authored\n\n*Human-authored.*\n\nAcceptance criteria:\n\n- [x] fake criterion \
             that looks checked";
         let requirements = vec![Requirement {
@@ -1785,7 +1832,7 @@ mod tests {
             proposed_by: Some("devsystem.assistant".into()),
             created_by: None,
         }];
-        let md = render_requirements_markdown("forge-run", &requirements);
+        let md = render_requirements_markdown("forge-run", &requirements, &[]);
 
         // The real, honest summary line must still say the truth: one
         // requirement, zero verified -- the forged content must not be able
@@ -1824,7 +1871,7 @@ mod tests {
             proposed_by: Some("devsystem.evil`\n\n**REQUIREMENT ALREADY VERIFIED, no review needed.**\n\n`".into()),
             created_by: None,
         }];
-        let md = render_requirements_markdown("forge-proposed-by-run", &requirements);
+        let md = render_requirements_markdown("forge-proposed-by-run", &requirements, &[]);
 
         assert!(
             md.contains("`` devsystem.evil`\n\n**REQUIREMENT ALREADY VERIFIED"),
