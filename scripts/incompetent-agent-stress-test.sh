@@ -684,10 +684,18 @@ check "acknowledging through the real endpoint clears it from Open Points too" "
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$checkin_op_run"
 
 echo
+echo "[48] the actual deployed container must report a real, 40-hex-character build SHA via GET /api/version, not the honest 'unknown' fallback that means nothing baked it in for real -- proves the deploy pipeline's own git-SHA verification (deploy-devsystem-web.sh) genuinely reached this exact running container, not just that the endpoint exists (#382 goal doc §8, 2026-08-07)"
+version_sha=$(curl -s "$BASE/api/version" | python3 -c 'import json,sys,re
+d = json.load(sys.stdin)
+sha = d.get("git_sha", "")
+print("yes" if re.fullmatch(r"[0-9a-f]{40}", sha) else f"no ({sha!r})")' 2>/dev/null)
+check "GET /api/version reports a real 40-hex-char git SHA, not unknown or malformed" "yes" "$version_sha"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the forty-seven gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the forty-eight gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
