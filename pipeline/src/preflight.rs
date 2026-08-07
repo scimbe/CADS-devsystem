@@ -329,12 +329,35 @@ fn security_keyword_hit(state: &RunState) -> Vec<RiskAnnotation> {
 /// expiry security gap, the other an unfixed search crash, produced exactly
 /// one finding -- the security defect was completely hidden. Now collects
 /// every real defect-admitting succeeded iteration, not just the latest.
+///
+/// **A third real gap, issue #54, 2026-08-07**: this check had no awareness of
+/// *which stage* produced the feedback -- and a [`STAGE_REVIEW`] iteration's
+/// entire job is to find and report defects in *other* work. A real,
+/// substantive review that found and honestly documented a genuine crash
+/// (`webconference-android` iteration 22, live) got flagged identically to an
+/// implementer who shipped broken code -- the more honest and thorough a
+/// review, the more risk a run accrued, exactly backwards from what the
+/// mandatory review gate exists to encourage, and directly at odds with
+/// `no_review_for_succeeded_work` (a real review clears that risk, then
+/// immediately trades it for this one). A `STAGE_REVIEW` iteration reports a
+/// defect it found in someone else's work, not one it shipped -- succeeding
+/// at that job is not evidence of admitting shipped-defective work, so
+/// review iterations are excluded from this check entirely. Every other
+/// stage (`implement`, `test`, `verify`, ...) is unaffected -- shipping code
+/// with an admitted, unfixed defect stays flagged exactly as before.
+///
+/// Not fixed here, an honestly-named separate gap the same issue reports:
+/// the phrase list itself is trivially evaded by rewording ("not fixed" vs.
+/// "still awaits repair," semantically identical, only one flagged) -- adding
+/// one more synonym wouldn't close that, only move the goalpost, and the
+/// issue's own suggested real fix (a structural "open defect" field on the
+/// record instead of prose matching) is separate, larger work.
 fn succeeded_iteration_admits_a_defect(state: &RunState) -> Vec<RiskAnnotation> {
     state
         .history
         .iter()
         .filter(|h| {
-            h.succeeded && {
+            h.succeeded && h.stage != STAGE_REVIEW && {
                 let feedback_lower = h.feedback.to_lowercase();
                 DEFECT_ADMISSION_PHRASES.iter().any(|p| feedback_lower.contains(*p))
             }
@@ -806,6 +829,46 @@ mod tests {
         assert_eq!(defects.len(), 2, "both real, distinct, unfixed defects must be flagged, not just the most recent: {findings:?}");
         assert!(defects.iter().any(|f| f.evidence.contains("iteration 1")));
         assert!(defects.iter().any(|f| f.evidence.contains("iteration 2")));
+    }
+
+    #[test]
+    /// Real evaluator finding, issue #54, live on `webconference-android`: a
+    /// `devsystem.review` iteration's entire job is to find and report defects in
+    /// OTHER work -- doing that well used to get it flagged identically to an
+    /// implementer who shipped broken code, exactly backwards from what the
+    /// mandatory review gate exists to encourage (and directly at odds with
+    /// `no_review_for_succeeded_work`: a real review clears that risk, then
+    /// immediately trades it for this one).
+    fn a_review_iteration_reporting_a_defect_it_found_is_not_flagged() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(
+            STAGE_REVIEW,
+            1,
+            "Reviewed native-bridge/src/channel.rs. Found exactly one real defect and is reporting that \
+             defect. The review itself shipped nothing defective whatsoever. The defect it found is not \
+             fixed yet, because fixing it belongs to the implementing role rather than to the reviewer.",
+            vec![],
+        ));
+        let findings = preflight_annotations(&state);
+        assert!(
+            !findings.iter().any(|f| f.label == "succeeded iteration admits a known defect"),
+            "an honest review reporting a defect it found in someone else's work is the stage succeeding, \
+             not admitting shipped-defective work: {findings:?}"
+        );
+    }
+
+    #[test]
+    /// The exclusion is stage-specific, not a blanket exemption for the phrase --
+    /// an implementer who actually ships known-defective code must still be
+    /// flagged exactly as before.
+    fn an_implement_iteration_admitting_a_defect_is_still_flagged_even_though_review_is_exempt() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_REVIEW, 1, "Found a defect during review. Known issue: not fixed yet.", vec![]));
+        state.history.push(iteration(STAGE_IMPLEMENT, 2, "Shipped it anyway. Known issue: not fixed yet, workaround needed.", vec![]));
+        let findings = preflight_annotations(&state);
+        let defects: Vec<_> = findings.iter().filter(|f| f.label == "succeeded iteration admits a known defect").collect();
+        assert_eq!(defects.len(), 1, "only the real implement-stage admission is flagged, the review-stage one is exempt: {findings:?}");
+        assert!(defects[0].evidence.contains("iteration 2"));
     }
 
     #[test]

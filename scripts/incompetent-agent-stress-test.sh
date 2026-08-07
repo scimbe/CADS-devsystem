@@ -790,10 +790,24 @@ check "the real success actually cleared the streak, not just got let through on
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$deadlock_run"
 
 echo
+echo "[55] an honest devsystem.review iteration reporting a real, unfixed defect it found in OTHER work must not be flagged as 'succeeded iteration admits a known defect' -- that risk exists to catch shipped-defective work, and a review's whole job is finding defects, not shipping them. An implement-stage iteration that actually ships known-defective work must still be flagged exactly as before (issue #54, #382 goal doc §8, 2026-08-07)"
+defect_run="review-defect-stage-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$defect_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$defect_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.review","feedback":"Found exactly one real defect and is reporting that defect. The review itself shipped nothing defective. The defect it found is not fixed yet, because fixing it belongs to the implementing role.","succeeded":true}'
+review_flagged=$(curl -s "$BASE/api/runs/$defect_run" | python3 -c 'import json,sys; print(any(r["label"]=="succeeded iteration admits a known defect" for r in json.load(sys.stdin)["risks"]))' 2>/dev/null)
+check "an honest review reporting a defect it found is NOT flagged as admitting shipped-defective work" "False" "$review_flagged"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$defect_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"Shipped it anyway. Known issue: crashes on null id, not fixed yet, workaround needed.","succeeded":true}'
+implement_flagged=$(curl -s "$BASE/api/runs/$defect_run" | python3 -c 'import json,sys; print(any(r["label"]=="succeeded iteration admits a known defect" for r in json.load(sys.stdin)["risks"]))' 2>/dev/null)
+check "an implement-stage iteration that actually ships a known defect is still flagged -- the exemption is stage-specific, not a blanket loophole" "True" "$implement_flagged"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$defect_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the fifty-four gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the fifty-five gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
