@@ -4373,4 +4373,22 @@ already found and had to revert earlier for disk-space reasons (see the standing
 elsewhere in this file), now durably tracked instead of only living in a reverted diff. 90/90
 stress harness stays clean; no source code changed, real run state only.
 
+**Main-dev-loop firing, 2026-08-07 (e) -- a real natural checkpoint, acted on rather than left
+implicit.** State check: no new operator input on any of the four standing decision points, `#13`/
+`#14`/CI/PRs all unchanged. Re-ran ask-the-assistant.md's own documented live question against the
+current deployment (docs-loop firing, same cycle) and got a genuinely different, honest answer: the
+real M1 milestone is `achieved: true`, and nothing names a successor -- the assistant's own words,
+"the real bottleneck is that there's no next milestone defined, so the pipeline has no target beyond
+the open backlog," naming the broker-mediated-discovery backlog item as "the natural M2."
+
+This is exactly the kind of natural checkpoint the operator's own framing calls for ("let the system
+inform itself about the task and discuss next steps... at natural checkpoints") -- acted on it rather
+than leaving it as a passive observation. Declared a real M2 milestone directly from this run's own
+already-open backlog item (broker-mediated channel discovery via `ct-agent channel join`,
+`SignedChannelGrant`, rendezvous, NAT traversal, `:443` relay fallback -- the exact real mechanism
+that backlog item already names, not invented scope), via the same real `POST .../milestones`
+endpoint a human uses. No operator decision needed: naming a target from work already declared and
+open isn't a new commitment, it's making an already-real intention legible. 90/90 stress harness
+stays clean. Committed to `CADS-devsystem@267b065`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
