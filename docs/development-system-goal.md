@@ -6064,4 +6064,25 @@ both the ceiling-enforcement fix (`#46`-`#48`) and the real server-generated id/
 working end to end on the actual flagship run, not just in tests. Left the check-in for the operator's
 own real review rather than acknowledging it.
 
+**Main-dev-loop firing, 2026-08-07 (qqq) -- issue #50: milestone achievement no longer masks a real
+safety pause.** State check: `#382`'s three checkpoints and `#14` still unanswered. Two fresh issues
+had landed (`#49`, `#50`); picked `#50` for precision and direct continuity with this session's own
+`pause_reason` work -- `toggle_milestone` set `pause_reason` unconditionally on every achieve-
+transition, even when the run was already paused for a genuine safety abort. A milestone's own
+free text (self-serve, any signed-in account, on any unowned run per `#44`/`#45`) would silently
+overwrite and permanently lose the real reason -- an operator reading "milestone achieved: ..." had
+no way to know the run was actually halted on its consecutive-failure budget.
+
+Fixed at the simplest, safest level matching the issue's own suggested direction (keep the highest-
+severity reason): only ever set a new `pause_reason` on milestone achievement when the run genuinely
+wasn't already paused. `CADS-devsystem@bd805c6`. New hermetic test reproduces the exact repro; 137/137
+pipeline lib tests, 203/203 web tests. Live-verified against the actual deployment with the issue's
+own exact scenario: two real failures hit a budget, achieving a milestone afterward leaves the real
+reason intact. Full 100/100 stress harness stays clean.
+
+`#50`'s broader suggestion (recompute the displayed reason from live state rather than trust a stored
+snapshot, so un-achieving can't leave it stale either) remains real, open, larger work. `#49`
+(the mandatory review gate keys on an unvalidated `stage` field) also remains open, real, and
+unaddressed -- next in line.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
