@@ -5821,4 +5821,24 @@ implying one universal action that doesn't exist for a web-only reader. `CADS-de
 two-button Approve/Request-changes gate in the web panel, mirroring the already-working panel-proposal
 approve flow) remain real, open, larger work -- not attempted in this same bounded increment.
 
+**Main-dev-loop firing, 2026-08-07 (ggg) -- issue #43: the orb launcher's bubbles now stay live while
+open, proven with a real before/after repro.** State check: `#382`'s three checkpoints and `#14`
+(labor-setup.com) still unanswered/no new activity; CI clearing normally. A fresh, well-scoped issue
+had landed since the last check: `#43`, a real evaluator finding distinct from the already-fixed `#30`/
+`#33` -- the orb launcher's bubble `active`/"currently open" state was only computed once, when the
+launcher opened, and never refreshed while it stayed open across a viewport-fit auto-hide. Shrinking
+the window with the launcher open left every auto-hidden panel's bubble still claiming "currently
+open"; clicking one then *revealed* the hidden panel, the opposite of what the stale dot implied.
+
+Fixed `checkPanelsFitViewport()` to re-render the bubbles (and reapply whatever filter text the user
+had typed) whenever it actually changes a panel's visibility while the overlay is open -- the launcher
+is now a live view, not a snapshot taken at open time. `CADS-devsystem@0df9e4a`.
+
+Proved it the same way this session's Rust mutation-tests prove a gate has real teeth, applied here to
+a GUI bug for the first time: wrote a real Playwright repro (open the launcher, shrink the viewport,
+compare active bubbles against actually-visible panels) against the real deployed container, ran it
+against the *reverted* code first and confirmed it reproduced the exact reported defect (4 bubbles
+stayed active with 0 panels actually visible), then restored the fix, redeployed, and confirmed clean
+(0 active bubbles, 0 visible panels, zero mismatch). Full 100/100 stress harness stays clean.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
