@@ -545,8 +545,23 @@
     solid, fully-opaque part of the corner reveal (the mask's own fade only
     starts past ~576px radius, the field never gets remotely close), just
     further from the dot than the original "immediately beside it" placement. */
+ /* Real bug found live 2026-08-07, verified via elementFromPoint() at the
+    field's own screen center: #orb-bubbles is a later-in-DOM, inset:0,
+    fully-transparent layer with no pointer-events override -- it painted on
+    top of this input in hit-testing regardless of the input's own on-screen
+    position, so a mouse click here landed on the bubbles container instead
+    of the field (silently swallowed, not even the launcher-closing
+    click-outside behavior, since the click target isn't `orb-bubbles`
+    itself when a real bubble happens to be under the pointer). Existed
+    before today's reposition too -- the field only ever worked via the
+    real auto-focus on open (openOrbLauncher()'s own setTimeout(() =>
+    filter.focus(), 0)), never by a user clicking back into it after
+    clicking elsewhere. z-index makes it (and its status line) win hit-
+    testing against the bubbles layer without touching #orb-bubbles' own
+    pointer-events at all, so the deliberate "click empty space closes the
+    launcher" behavior is untouched. */
  .orb-filter{
-   position:absolute;left:150px;bottom:22px;width:230px;
+   position:absolute;left:150px;bottom:22px;width:230px;z-index:1;
    background:rgba(13,17,23,.85);backdrop-filter:blur(14px) saturate(180%);-webkit-backdrop-filter:blur(14px) saturate(180%);
    border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:.5rem .7rem;
    color:var(--text);font-family:-apple-system,BlinkMacSystemFont,var(--serif);font-size:.85rem;
@@ -557,7 +572,7 @@
  .orb-filter:focus{outline:none;border-color:var(--accent2)}
  .orb-filter::placeholder{color:var(--muted)}
  .orb-filter-status{position:absolute;left:150px;bottom:2px;font-size:.68rem;color:var(--muted);
-   font-family:var(--mono);opacity:0;transition:opacity .3s ease .1s}
+   font-family:var(--mono);opacity:0;z-index:1;transition:opacity .3s ease .1s}
  .orb-overlay.open .orb-filter-status.visible{opacity:1}
  /* Real gap, GitHub issue #30 (the residual half left open after the
     permanence fix): a panel getting auto-hidden or auto-restored by a
