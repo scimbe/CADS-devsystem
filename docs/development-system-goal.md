@@ -6270,4 +6270,37 @@ pass. Adding one more synonym wouldn't close the underlying evadability, only mo
 issue's own suggested real fix (a structural "open defect" field on the record instead of prose
 matching) is separate, larger work and remains real, open.
 
+**Main-dev-loop firing, 2026-08-07 (xxx) -- issue #40: iterations now carry the real identity of who
+submitted them.** State check: `#382`'s three checkpoints and `#14` still unanswered; no new issues
+beyond `#40` itself (already open, well-documented, and repeatedly referenced as a real dependency by
+`#49`'s own suggestion #3 and `#52`'s own notes). Also mid-firing: the operator confirmed directly
+against `origin/main` that labor-setup.com's RAG work (issue #7 / PR #8) is fully merged --
+`parse_with_unstructured`, `/rag/upload-file`, GUI wiring, Postgres+pgvector, CI, all landed. Nothing
+buildable remains there without a real `RAG_EMBEDDING_API_KEY`/`RAG_UNSTRUCTURED_API_KEY`, which no
+deployment has ever had -- correctly left alone rather than invented busywork.
+
+The platform's own stated premise is a crew auction, but the winning crew's identity was never
+written into the work record -- the only place any bidder identity ever appeared (the live auction
+view) expires 300 seconds after issue. Confirmed live before touching anything: `webconference-
+android` iteration 17's authorizing bid had long expired, and the role's current holder was a
+completely different bidder -- no record anywhere still connected that iteration to the crew that
+actually produced it, for any iteration, on any run, permanently.
+
+Added `submitted_by: Option<String>` to `IterationRecord`, stamped server-side from the same real,
+gate-verified `x-gate-email` header `/api/me`/`owner_email` already use -- never trusted from the
+request body (live-verified a client-forged value in the body is correctly ignored in favor of the
+real header). Honestly `None`, not fabricated, for the local `devsystem_iterate` CLI path and for
+M2M/`--remote` bearer-token submissions, where no human browser session exists to attribute to.
+Rendered in the History panel so the fix is actually visible, not just present in the API.
+`CADS-devsystem@94d6f3f`. New tests cover deserialization of pre-existing records, round-tripping a
+real value, `None`'s own visible-`null` serialization, and both real HTTP paths (header present,
+header absent). 157/157 pipeline lib tests, 207/207 web tests, zero warnings. Live-verified against
+the deployed container: a forged body value is ignored, a header-less submission records `null`.
+Stress harness gained check `[56]`; full suite now 122/122.
+
+The issue's own suggestion #2 (also recording the winning bid's own identity, so an unattended agent
+process with no browser session is captured too) was deliberately NOT attempted -- it needs
+correlating live auction state at accept time, which isn't durably retained today, and is materially
+harder, separate work. Remains real, open.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
