@@ -666,10 +666,28 @@ check "a genuinely later boundary re-flags, not stays silently satisfied by the 
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$checkin_run"
 
 echo
+echo "[47] a fired, unacknowledged check-in must reach Open Points too -- the one endpoint whose entire stated purpose is 'every real item this run is actually waiting on a human to decide' -- and clear from there when acknowledged, the same real signal every other vantage point already reflects (found live 2026-08-07, the same firing right after check [46] shipped, #382 goal doc §8)"
+checkin_op_run="${RUN}-checkin-open-points-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$checkin_op_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$checkin_op_run/criteria" -H 'content-type: application/json' -d '{"max_iterations":20,"max_consecutive_failures":3,"checkin_every":1}'
+op_before=$(curl -s "$BASE/api/runs/$checkin_op_run/open-points" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null)
+check "a fresh run with no crossed boundary has zero open points" "0" "$op_before"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$checkin_op_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"crosses the checkin_every: 1 boundary immediately","succeeded":true}'
+op_kind=$(curl -s "$BASE/api/runs/$checkin_op_run/open-points" | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+print(d[0]["kind"] if len(d) == 1 else f"WRONG COUNT: {len(d)}")' 2>/dev/null)
+check "the fired, unacknowledged check-in is the one real open point, kind checkin_due" "checkin_due" "$op_kind"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$checkin_op_run/checkin/acknowledge"
+op_after=$(curl -s "$BASE/api/runs/$checkin_op_run/open-points" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null)
+check "acknowledging through the real endpoint clears it from Open Points too" "0" "$op_after"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$checkin_op_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the forty-six gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the forty-seven gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
