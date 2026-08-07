@@ -4585,4 +4585,24 @@ This resolves the standing "no hermetic Android test path" gap as a real constra
 verification only -- it was never a reason a real fix couldn't ship, just a reason to route
 verification through the repo's own established CI gate instead of inventing a workaround.
 
+**Goal-driven-loop firing, 2026-08-07 (m) -- closing a real permanent-regression-coverage gap for
+the Open Points fix.** State check: no new operator input on any of the four standing decision
+points, `#13`/`#14`/PRs unchanged.
+
+Checked whether the Open Points `checkin_due` fix (shipped two firings ago) had a stress-harness
+check of its own -- it didn't. Check `[46]` proves the per-run health object and the Runs list
+badge; it never touches `GET /api/runs/{id}/open-points`, a genuinely different endpoint the later
+firing added the entry to. Added check `[47]`: a fresh run has zero open points, crossing a real
+`checkin_every: 1` boundary surfaces exactly one (`kind: "checkin_due"`), acknowledging clears it
+from Open Points too. 98/98 assertions clean.
+
+Mutation-tested the same firing: reverted `open_points()`'s `checkin_due` block to the literal
+pre-fix behavior, confirmed the hermetic test fails with the exact expected panic, rebuilt and
+redeployed the mutated binary, confirmed live check `[47]` fails on exactly its middle assertion
+while all 46 sibling checks stay green. Reverted cleanly this time by restoring from a
+pre-mutation backup file rather than `git checkout --` -- the exact command that cost real
+uncommitted work two firings ago during the analogous check-`[46]` mutation test, this time
+avoided deliberately. Rebuilt, redeployed the real fix, reconfirmed 98/98 clean. Committed to
+`CADS-devsystem@04f980e`. 46 -> 47 checks, 95 -> 98 assertions.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
