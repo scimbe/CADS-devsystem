@@ -644,7 +644,7 @@ mod tests {
     use crate::{AbortCriteria, IterationRecord, StageProposal, STAGE_REVIEW, STAGE_VERIFY};
 
     fn iteration(stage: &str, iteration: u32, feedback: &str, proposals: Vec<StageProposal>) -> IterationRecord {
-        IterationRecord { run_id: "run-preflight".into(), stage: stage.into(), iteration, feedback: feedback.into(), proposals, succeeded: true, requirement_indices: Vec::new() }
+        IterationRecord { run_id: "run-preflight".into(), stage: stage.into(), iteration, feedback: feedback.into(), proposals, succeeded: true, requirement_indices: Vec::new(), ..Default::default() }
     }
 
     #[test]
@@ -745,6 +745,7 @@ mod tests {
             succeeded: false,
             proposals: vec![],
             requirement_indices: vec![],
+            ..Default::default()
         });
         // A FAILED iteration honestly saying it's broken is exactly the honest
         // behavior this check wants to encourage -- only succeeded:true
@@ -1239,6 +1240,7 @@ mod tests {
                 proposals: vec![],
                 succeeded: false,
                 requirement_indices: Vec::new(),
+                ..Default::default()
             });
         }
         assert!(process_annotations(&spec, &state).is_empty(), "failed iterations aren't real progress -- must not count toward the threshold");

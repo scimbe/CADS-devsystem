@@ -1259,6 +1259,7 @@ mod tests {
             proposals,
             succeeded,
             requirement_indices: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -1573,6 +1574,7 @@ mod tests {
             succeeded: false,
             proposals: vec![],
             requirement_indices: vec![0],
+            ..Default::default()
         });
         assert!(toggle_requirement(&spec, &mut state, 0).is_err(), "a failed review must not satisfy the gate");
 
@@ -1584,6 +1586,7 @@ mod tests {
             succeeded: true,
             proposals: vec![],
             requirement_indices: vec![],
+            ..Default::default()
         });
         assert!(toggle_requirement(&spec, &mut state, 0).is_err(), "a review that didn't name this requirement must not satisfy the gate");
 
@@ -1598,6 +1601,7 @@ mod tests {
             succeeded: true,
             proposals: vec![],
             requirement_indices: vec![0],
+            ..Default::default()
         });
         let err = toggle_requirement(&spec, &mut state, 0).expect_err("a rubber-stamp review must not satisfy the gate");
         assert!(err.contains("too short"), "the error must explain why: {err}");
@@ -1616,6 +1620,7 @@ mod tests {
             succeeded: true,
             proposals: vec![],
             requirement_indices: vec![0],
+            ..Default::default()
         });
         let err = toggle_requirement(&spec, &mut state, 0).expect_err("a padded, repetitive review must not satisfy the gate");
         assert!(err.contains("too short or too repetitive") || err.contains("distinct word"), "the error must explain why: {err}");
@@ -1630,6 +1635,7 @@ mod tests {
             succeeded: true,
             proposals: vec![],
             requirement_indices: vec![0],
+            ..Default::default()
         });
         toggle_requirement(&spec, &mut state, 0).unwrap();
         assert!(state.requirements[0].verified);
@@ -1678,6 +1684,7 @@ mod tests {
             succeeded: true,
             proposals: vec![],
             requirement_indices: vec![0],
+            ..Default::default()
         });
         toggle_requirement(&spec, &mut state, 0).unwrap();
         assert!(state.requirements[0].verified);
@@ -1693,6 +1700,7 @@ mod tests {
             succeeded: true,
             proposals: vec![],
             requirement_indices: vec![1],
+            ..Default::default()
         });
         let err = toggle_requirement(&spec, &mut state, 1).expect_err("a review reused verbatim from an unrelated requirement must not satisfy the gate");
         assert!(err.contains("reuses feedback text verbatim"), "the error must explain why: {err}");
@@ -1707,6 +1715,7 @@ mod tests {
             succeeded: true,
             proposals: vec![],
             requirement_indices: vec![1],
+            ..Default::default()
         });
         toggle_requirement(&spec, &mut state, 1).unwrap();
         assert!(state.requirements[1].verified);
@@ -1744,6 +1753,7 @@ mod tests {
             succeeded: true,
             proposals: vec![],
             requirement_indices: vec![0, 1, 2, 3, 4],
+            ..Default::default()
         });
         let err = toggle_requirement(&spec, &mut state, 4).expect_err("a generic shotgun review of five requirements must not satisfy the gate for any of them");
         assert!(err.contains("5 requirements at once"), "the error must explain the real reason: {err}");
@@ -1760,6 +1770,7 @@ mod tests {
             succeeded: true,
             proposals: vec![],
             requirement_indices: vec![0, 1, 2, 3, 4],
+            ..Default::default()
         });
         toggle_requirement(&spec, &mut state, 4).unwrap();
         assert!(state.requirements[4].verified);
@@ -1849,6 +1860,7 @@ mod tests {
             succeeded: true,
             proposals: vec![],
             requirement_indices: vec![0],
+            ..Default::default()
         }];
 
         assert_eq!(
@@ -1875,6 +1887,7 @@ mod tests {
             succeeded: true,
             proposals: vec![],
             requirement_indices: vec![],
+            ..Default::default()
         });
         assert_eq!(
             duplicate_of_last_iteration(&history, "devsystem.plan", "planned the thing", true, &[], &[0]),

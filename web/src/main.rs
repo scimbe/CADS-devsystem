@@ -1222,6 +1222,13 @@ async fn iterate_run(
     }
 
     let iteration = run_state.history.len() as u32 + 1;
+    // Real identity (GitHub issue #38: the exact same iteration got submitted
+    // twice, byte-for-byte, into webconference-android's real history, with
+    // no field on the record to tell the two apart or say which one was
+    // real). Server-generated, the same `format!("{:016x}",
+    // rand::random::<u64>())` convention every other real id in this
+    // codebase already uses -- deliberately never accepted from the request
+    // body, so a role-filler/client cannot forge or collide it.
     let record = IterationRecord {
         run_id: id.clone(),
         stage: body.stage,
@@ -1230,6 +1237,8 @@ async fn iterate_run(
         succeeded: body.succeeded,
         proposals: body.proposals,
         requirement_indices: body.requirement_indices,
+        id: format!("{:016x}", rand::random::<u64>()),
+        submitted_at: unix_now(),
     };
 
     let memory_path = dir.join("memory.jsonl");
@@ -7930,6 +7939,50 @@ exit 1"#);
         let after = fs::read_to_string(&state_path).expect("state.json still exists");
         assert!(after.contains("\"real progress\""), "iteration feedback should be persisted to disk");
         assert!(!after.contains("\"history\": []"), "history should no longer be empty on disk");
+    }
+
+    #[tokio::test]
+    /// Real identity (GitHub issue #38: the exact same iteration got submitted
+    /// twice, byte-for-byte, into webconference-android's real history, with no
+    /// field to tell the two apart or say which one was real). Every real
+    /// submission through this real endpoint must get its own real, unique,
+    /// server-generated id and a real, non-zero submission timestamp -- and a
+    /// client-supplied id must never override the server's own.
+    async fn iterate_run_gives_every_real_submission_a_real_unique_server_generated_id() {
+        let (state, dir) = test_state();
+        let runs_dir = dir.path().to_path_buf();
+        let app = api_router(state);
+
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "id-run"}))).await.unwrap();
+
+        for i in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/runs/id-run/iterate",
+                    // A client-supplied id/submitted_at must be ignored -- the
+                    // server's own values are the only ones that count.
+                    serde_json::json!({"stage": "implement", "feedback": format!("real progress {i}"), "succeeded": true, "id": "client-forged-id", "submitted_at": 1}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::OK);
+        }
+
+        let state_path = runs_dir.join("id-run").join("state.json");
+        let persisted: serde_json::Value = serde_json::from_str(&fs::read_to_string(&state_path).unwrap()).unwrap();
+        let history = persisted["history"].as_array().expect("history is a real array");
+        assert_eq!(history.len(), 2);
+
+        let id0 = history[0]["id"].as_str().expect("a real id string");
+        let id1 = history[1]["id"].as_str().expect("a real id string");
+        assert_eq!(id0.len(), 16, "the real id must be a full 16-hex-char server-generated value: {id0}");
+        assert_ne!(id0, "client-forged-id", "a client-supplied id must never override the server's own");
+        assert_ne!(id0, id1, "two real, distinct submissions must never share an id");
+
+        let submitted_at0 = history[0]["submitted_at"].as_u64().expect("a real submitted_at");
+        assert!(submitted_at0 > 1_700_000_000, "the real submitted_at must be a genuine current unix timestamp, not the client-supplied 1: {submitted_at0}");
     }
 
     #[tokio::test]

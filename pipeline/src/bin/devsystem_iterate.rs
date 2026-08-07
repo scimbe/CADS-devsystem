@@ -49,8 +49,16 @@ fn run_local(run_id: &str, record_path: &str) -> std::process::ExitCode {
     let run_dir = PathBuf::from("runs").join(run_id);
     let (mut spec, mut state) = load_or_init_run(&run_dir, run_id).expect("load or initialize run");
 
-    let record: IterationRecord =
+    let mut record: IterationRecord =
         serde_json::from_str(&fs::read_to_string(record_path).expect("read record.json")).expect("valid record.json");
+    // Real identity (GitHub issue #38): server-generated here, the same as
+    // devsystem-web's own `iterate_run` handler -- never trusted from
+    // record.json, so a role-filler/generated file cannot forge or collide
+    // it. This is the local, non-`--remote` counterpart of that same real
+    // gap; see `IterationRecord::id`'s own doc comment (pipeline crate) for
+    // the full story.
+    record.id = format!("{:016x}", rand::random::<u64>());
+    record.submitted_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
 
     // Real gap found live 2026-08-06 (#382 goal doc §8), same "two real entry points,
     // one bug class" shape as the three checks below: `iterate_run`'s own `if
@@ -352,6 +360,7 @@ mod tests {
             }],
             succeeded,
             requirement_indices: Vec::new(),
+            ..Default::default()
         }
     }
 

@@ -145,6 +145,7 @@ mod tests {
             proposals,
             succeeded: true,
             requirement_indices: Vec::new(),
+            ..Default::default()
         }
     }
 

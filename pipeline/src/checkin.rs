@@ -229,6 +229,7 @@ mod tests {
             proposals,
             succeeded: true,
             requirement_indices: Vec::new(),
+            ..Default::default()
         });
         if let Some(p) = state.history[0].proposals.first() {
             state.added_stages.push(p.stage_id.clone());
@@ -337,6 +338,7 @@ mod tests {
             proposals: vec![],
             succeeded: true,
             requirement_indices: vec![0],
+            ..Default::default()
         });
 
         let md = render_plan_markdown(&state).expect("history is non-empty");
@@ -372,6 +374,7 @@ mod tests {
             proposals: vec![],
             succeeded: true,
             requirement_indices: Vec::new(),
+            ..Default::default()
         });
 
         let md = render_plan_markdown(&state).unwrap();
@@ -532,6 +535,7 @@ mod tests {
             proposals: vec![],
             succeeded: true,
             requirement_indices: Vec::new(),
+            ..Default::default()
         });
         let md = render_plan_markdown(&state).unwrap();
         assert!(md.contains("## Risk annotations"));
@@ -549,6 +553,7 @@ mod tests {
             proposals: vec![],
             succeeded: true,
             requirement_indices: Vec::new(),
+            ..Default::default()
         });
         // A real, substantive review iteration too -- otherwise this fixture
         // legitimately trips "no review stage for real, succeeded work"
@@ -563,6 +568,7 @@ mod tests {
             proposals: vec![],
             succeeded: true,
             requirement_indices: Vec::new(),
+            ..Default::default()
         });
         let md = render_plan_markdown(&state).unwrap();
         assert!(!md.contains("## Risk annotations"));
@@ -595,6 +601,7 @@ mod tests {
             proposals: vec![],
             succeeded: true,
             requirement_indices: Vec::new(),
+            ..Default::default()
         });
         state.history.push(IterationRecord {
             run_id: "run-multi".into(),
@@ -604,6 +611,7 @@ mod tests {
             proposals: vec![],
             succeeded: true,
             requirement_indices: Vec::new(),
+            ..Default::default()
         });
         state.added_stages.push("devsystem.test".into());
 

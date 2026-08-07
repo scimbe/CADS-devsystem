@@ -312,7 +312,7 @@ impl Default for AbortCriteria {
 
 /// One role-filler's real output for one iteration of a stage -- the unit the super
 /// loop's abort/check-in logic below actually operates on.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct IterationRecord {
     pub run_id: String,
     pub stage: String,
@@ -329,6 +329,26 @@ pub struct IterationRecord {
     /// any yet) still deserializes.
     #[serde(default)]
     pub requirement_indices: Vec<usize>,
+    /// Real identity (GitHub issue #38, a live evaluator finding: the exact same
+    /// iteration got submitted twice, byte-for-byte, into `webconference-android`'s
+    /// real history -- with no field on the record to tell the two apart, notice
+    /// the repeat, or say which one was real). Server-generated, the same
+    /// `format!("{:016x}", rand::random::<u64>())` convention every other real id
+    /// in this codebase already uses (`PendingDeleteRunProposal`, `RagDocument`,
+    /// `PendingPanelProposal`, ...) -- deliberately never accepted from a client,
+    /// so a role-filler/CLI cannot forge or collide it. `#[serde(default)]` so
+    /// every pre-existing history entry (none had an id) still deserializes as the
+    /// honest empty string -- not a fabricated retroactive identity for data that
+    /// was never actually given one.
+    #[serde(default)]
+    pub id: String,
+    /// Real submission timestamp (same gap as `id` above), unix seconds,
+    /// server-set the same way `unix_now()` already stamps every other real
+    /// `*_at` field in this codebase. `#[serde(default)]` so pre-existing history
+    /// (no real timestamp was ever recorded) deserializes as the honest `0`, not
+    /// a fabricated retroactive time.
+    #[serde(default)]
+    pub submitted_at: u64,
 }
 
 /// True when this iteration must pause for a human check-in before continuing --
@@ -644,6 +664,7 @@ mod tests {
             proposals: vec![],
             succeeded: true,
             requirement_indices: Vec::new(),
+            ..Default::default()
         };
         assert!(!should_checkin(&rec(1), &criteria));
         assert!(!should_checkin(&rec(4), &criteria));

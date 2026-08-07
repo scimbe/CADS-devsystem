@@ -34,6 +34,7 @@ mod tests {
             proposals: vec![],
             succeeded: true,
             requirement_indices: Vec::new(),
+            ..Default::default()
         }
     }
 
