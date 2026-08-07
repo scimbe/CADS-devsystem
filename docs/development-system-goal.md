@@ -6032,4 +6032,36 @@ all three real reasons are distinguishable from one response. 203/203 web tests 
 against the actual deployment: a ceiling abort and a consecutive-failures abort on two separate real
 runs each report their own distinct reason. Full 100/100 stress harness stays clean.
 
+**Main-dev-loop firing, 2026-08-07 (ppp) -- a real devsystem.android_native_bridge role-filler
+iteration: requirement #4's first bounded slice, in the flagship app itself.** State check: `#382`'s
+three checkpoints and `#14` still unanswered; no new CADS-devsystem issues; `#13` (PR review) already
+closed. With the process-level gap backlog (#44-#48) genuinely caught up for this batch, picked the
+next real thing this firing's own mandate names directly: an actual role-filler iteration against
+`CADS-webconference-android`, not just pipeline tooling.
+
+Implemented requirement #4's real first slice (per-message delivery status) directly in the Kotlin
+app: a real `MessageStatus` (`SENT`/`FAILED`) persisted per message, honestly scoped to what a
+direct, unacknowledged Noise_IK channel can actually prove -- "delivered"/"read" both need a real
+wire-level receipt protocol, deliberately not fabricated here. A real, separate gap found while
+scoping it: a failed send used to vanish completely (no thread entry, nothing persisted) -- now
+recorded and rendered as a real FAILED entry, not silently dropped. `CADS-webconference-android@7e325e6`.
+
+Honest process note: this host has no local JDK/Android SDK, and pulling one risked the tight disk
+budget documented all session (3.1GB free at the time) -- reviewed the diff carefully by hand instead
+of a local build, pushed, then watched the real `android-ci.yml` run to completion before treating this
+as done. The first push (`23852c0`) genuinely failed CI: an XML comment used `--` inside its body,
+which the XML spec forbids and Android's real resource merger correctly rejected -- caught from the
+real CI log, fixed, re-pushed, confirmed both jobs green on the second run. Not fabricated as a
+one-shot success.
+
+Submitted as a real iteration on the flagship run itself (`iteration 21`, `succeeded: true`,
+`requirement_indices: [4]`) rather than left as an unreported side-channel commit -- the run's own
+live pipeline had continued operating independently while this firing was in progress (real iterations
+19/20, both honest failures on separately-stalled stages; criteria had also been live-adjusted to
+`max_iterations: 40`/`checkin_every: 1`). This submission correctly reset `consecutive_failures` to 0
+(a real success) and correctly paused the run for its mandatory check-in -- live confirmation that
+both the ceiling-enforcement fix (`#46`-`#48`) and the real server-generated id/timestamp (`#38`) are
+working end to end on the actual flagship run, not just in tests. Left the check-in for the operator's
+own real review rather than acknowledging it.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
