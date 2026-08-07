@@ -5545,4 +5545,34 @@ truncated entries now disambiguated. Full 100/100 stress harness stays clean. Le
 silently retarget) as an honestly-named, real, separate, bigger question -- not attempted in this
 bounded increment.
 
+**Main-dev-loop firing, 2026-08-07 (ww) -- issue #31 ("automode"): a real design checkpoint
+surfaced, not guessed at.** State check: no new issues, no new operator input on `#14` or the three
+`#382` checkpoints, CI green. `#31` (filed by labor-setup.com, operator-directed) asks for a
+requirement-level "automode" flag letting a requirement flow through proposal → bidding → role-fill
+→ iteration fully unattended -- and its own body says plainly that scope needs real design, not
+assumed by whoever picks it up.
+
+Investigated before writing anything: `Requirement::auto_judge` already exists (a real operator
+decision, 2026-08-05) and its own doc comment already calls itself "automode" -- but deliberately
+wired to do nothing yet, confirmed via three live tests documented in `requirements-and-automode.md`
+(the flag's value never predicted whether the assistant actually judged a requirement). This issue is
+effectively asking for that placeholder's real logic, at a broader scope than judgment alone. Found
+the real, structural tension whoever builds this needs to resolve first: the same 2026-08-05/06 work
+also built a *mandatory* review gate specifically to stop a requirement/iteration being marked
+verified/succeeded with no real scrutiny -- applying unconditionally to `devsystem.assistant`-driven
+calls precisely because an LLM can be talked into rubber-stamping from a chat message alone. A
+careless automode that auto-submits iterations without a real review in the loop is structurally the
+same hole that gate exists to close, through a different door.
+
+Posted a real, grounded comment on `#31` rather than guess: named the existing `auto_judge`
+precedent, named the review-gate tension explicitly, and asked three concrete, scoped questions
+(reuse `auto_judge` or a separate flag; does `price_ceiling` still bound an unattended
+proposal/bid-accept; does an automode iteration still have to clear the real review gate, and if
+review itself gets automated, what stops that from becoming the exact rubber-stamp pattern the gate
+exists to prevent). Offered two concrete next steps (a safe first slice mirroring `auto_judge`'s own
+honest-placeholder pattern, or a fuller design) and asked which is more useful. No code shipped this
+half of the firing, deliberately -- per this project's own governing principle, guessing at an
+unattended-iteration path's safety bounds and shipping it anyway would be exactly the kind of
+missing-gate failure that principle exists to prevent.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
