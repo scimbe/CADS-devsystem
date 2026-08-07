@@ -1,47 +1,47 @@
 {
   "id": "devsystem-webconference-android",
-  "operator_pubkey_hex": "7e59d28d596978c27eb5faa4afa4759b7e9fc1948c7172d7ca66f6abc97d92cb",
   "roles": [
     {
-      "selection_policy": null,
       "service": {
         "Custom": "devsystem.plan"
       },
+      "units": 1,
       "tag": "plan",
-      "units": 1
+      "selection_policy": null
     },
     {
-      "selection_policy": null,
       "service": {
         "Custom": "devsystem.android_native_bridge"
       },
+      "units": 1,
       "tag": "android_native_bridge",
-      "units": 1
+      "selection_policy": null
     },
     {
-      "selection_policy": null,
       "service": {
         "Custom": "devsystem.document_extraction"
       },
+      "units": 1,
       "tag": "document_extraction",
-      "units": 1
+      "selection_policy": null
     },
     {
-      "selection_policy": null,
       "service": {
         "Custom": "devsystem.android_emulator_test"
       },
+      "units": 1,
       "tag": "android_emulator_test",
-      "units": 1
+      "selection_policy": null
     },
     {
-      "selection_policy": null,
       "service": {
         "Custom": "devsystem.review"
       },
+      "units": 1,
       "tag": "review",
-      "units": 1
+      "selection_policy": null
     }
   ],
+  "operator_pubkey_hex": "7e59d28d596978c27eb5faa4afa4759b7e9fc1948c7172d7ca66f6abc97d92cb",
   "selection_policy": "LowestFloor"
 }
