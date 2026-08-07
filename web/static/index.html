@@ -2852,6 +2852,7 @@ const OPEN_POINT_KIND_LABELS = {
   issue_proposal: 'GitHub issue proposal',
   next_step_draft: 'Draft next-step option (unresolved)',
   delete_run_proposal: 'Delete-run proposal',
+  checkin_due: 'Check-in due, unacknowledged',
 };
 const OPEN_POINT_APPROVE_PATHS = {
   panel_proposal: 'panels/proposals',
@@ -2915,8 +2916,10 @@ async function renderOpenPointsPanel(id, data) {
     ? ''
     : p.kind === 'paused_checkpoint'
       ? `<button type="button" id="op-act-resume">Resume run</button>`
-      : `<button type="button" id="op-act-approve">Approve</button>
-         <button type="button" class="secondary" id="op-act-reject">Reject</button>`;
+      : p.kind === 'checkin_due'
+        ? `<button type="button" id="op-act-acknowledge-checkin">Acknowledge check-in</button>`
+        : `<button type="button" id="op-act-approve">Approve</button>
+           <button type="button" class="secondary" id="op-act-reject">Reject</button>`;
 
   const mainContentHtml = isDraft
     ? renderNextStepDraftsHtml([draft])
@@ -2991,6 +2994,13 @@ async function renderOpenPointsPanel(id, data) {
 
   if (p.kind === 'paused_checkpoint') {
     document.getElementById('op-act-resume').onclick = () => runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/resume`, { method: 'POST' }));
+  } else if (p.kind === 'checkin_due') {
+    // No OPEN_POINT_APPROVE_PATHS entry for this kind on purpose -- there's no
+    // backing proposal to approve/reject, just a real, derived fact about the
+    // run's own history vs. its criteria (see checkin_pending's own doc
+    // comment, pipeline/src/runner.rs). Same single-action shape as the
+    // paused-checkpoint's Resume button just above.
+    document.getElementById('op-act-acknowledge-checkin').onclick = () => runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/checkin/acknowledge`, { method: 'POST' }));
   } else if (!isDraft) {
     const base = OPEN_POINT_APPROVE_PATHS[p.kind];
     const isDeleteRun = p.kind === 'delete_run_proposal';

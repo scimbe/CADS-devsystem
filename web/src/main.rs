@@ -818,6 +818,23 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
     if let Some(p) = &run_state.pending_delete_run_proposal {
         points.push(OpenPoint { kind: "delete_run_proposal", id: p.id.clone(), summary: format!("delete this run: {}", p.rationale), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None });
     }
+    // Real gap found live 2026-08-07, the same firing after the check-in-pending
+    // gate itself shipped: this endpoint's own stated purpose ("every real item
+    // this run is actually waiting on a human to decide") never gained a real
+    // entry for it -- `checkin_pending` reached the Runs list badge and the
+    // per-run health object, but not the one panel purpose-built to be "every
+    // real open item, one queue." No `id`/`proposed_at` -- unlike every other
+    // kind here, this isn't a discrete record with its own creation timestamp,
+    // it's a real, derived fact about the run's own history vs. its criteria.
+    if checkin_pending(run_state) {
+        points.push(OpenPoint {
+            kind: "checkin_due",
+            id: "checkin".to_string(),
+            summary: "this run crossed its own check-in cadence and hasn't been acknowledged yet".to_string(),
+            proposed_at: None,
+            approve_destroys_panel_title: None,
+        });
+    }
     // Real gap, live-found 2026-08-06: while paused, a next-step draft is
     // shown nested under the paused_checkpoint entry above (see the GUI's own
     // renderOpenPointsPanel) -- but resuming the run makes that entry vanish
@@ -843,8 +860,10 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
 /// `GET /api/runs/{id}/open-points` -- the real, ordered queue behind "stack
 /// mode": every item this run is actually waiting on a human to decide,
 /// paused-checkpoint first (the single highest-urgency real state a run can
-/// be in, matching `attention_priority`'s own precedence), then the five
-/// real pending-proposal queues in `pending_reviews`'s own established order.
+/// be in, matching `attention_priority`'s own precedence), then the six real
+/// pending-proposal queues in `pending_reviews`'s own established order, then
+/// a real, unacknowledged fired check-in (2026-08-07 -- see
+/// `checkin_pending`'s own doc comment), then any leftover next-step draft.
 async fn get_open_points(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
@@ -9077,6 +9096,43 @@ exit 1"#);
         assert_eq!(points[0]["kind"], "paused_checkpoint");
         assert_eq!(points[0]["summary"], "paused manually");
         assert_eq!(points[1]["kind"], "panel_proposal");
+    }
+
+    #[tokio::test]
+    /// Real gap found live 2026-08-07, the same firing right after the
+    /// check-in-pending gate itself shipped: `open_points()`'s own stated
+    /// purpose is "every real item this run is actually waiting on a human to
+    /// decide" -- a genuinely fired, unacknowledged check-in reached the Runs
+    /// list badge and the per-run health object, but never this panel.
+    async fn open_points_surfaces_a_real_pending_checkin_and_acknowledging_it_through_here_clears_it() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "checkin-points-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/checkin-points-run/criteria", serde_json::json!({"max_iterations": 20, "max_consecutive_failures": 3, "checkin_every": 1})))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/checkin-points-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "real work crossing the boundary", "succeeded": true})))
+            .await
+            .unwrap();
+
+        let response = app.clone().oneshot(Request::builder().uri("/api/runs/checkin-points-run/open-points").body(Body::empty()).unwrap()).await.unwrap();
+        let points = body_json(response).await;
+        let points = points.as_array().unwrap();
+        assert_eq!(points.len(), 1, "the fired, unacknowledged check-in is the one real open point");
+        assert_eq!(points[0]["kind"], "checkin_due");
+
+        let ack = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/checkin-points-run/checkin/acknowledge").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(ack.status(), SC::OK);
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/checkin-points-run/open-points").body(Body::empty()).unwrap()).await.unwrap();
+        let points = body_json(response).await;
+        assert_eq!(points.as_array().unwrap().len(), 0, "acknowledging must clear it from open-points too, the same real signal every other view reflects");
     }
 
     #[test]
