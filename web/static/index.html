@@ -766,6 +766,15 @@ function panelRect(id) {
     visible: saved.visible ?? DEFAULT_VISIBLE_PANELS.has(id), z: saved.z ?? (zTop++),
     minimized: saved.minimized ?? false, maximized: saved.maximized ?? false, preMax: saved.preMax ?? null,
     refreshInterval: saved.refreshInterval ?? 0,
+    // Real gap, GitHub issue #30: this field was written to `layout[id]`
+    // (checkPanelsFitViewport()) and read back off it (showPanel()) but
+    // never actually round-tripped through this function -- every caller
+    // that reads a panel's state via panelRect() (the normal, universal way
+    // every other field is read) silently got `undefined` for autoHidden,
+    // not the real persisted value. showPanel()'s own "reset an
+    // auto-hidden panel to its default position on reopen" logic has
+    // silently never fired because of this.
+    autoHidden: saved.autoHidden ?? false,
   };
 }
 
@@ -1846,15 +1855,34 @@ function checkPanelsFitViewport() {
   if (!desktop) return;
   for (const id of Object.keys(PANEL_DEFAULTS)) {
     const rect = panelRect(id);
-    if (!rect.visible) continue;
     const win = document.getElementById(`win-${id}`);
     if (!win) continue;
-    const fits = win.offsetLeft >= 0 && win.offsetTop >= 0 &&
-      win.offsetLeft + win.offsetWidth <= desktop.clientWidth &&
-      win.offsetTop + win.offsetHeight <= desktop.clientHeight;
-    if (!fits) {
-      win.style.display = 'none';
-      layout[id] = { ...rect, visible: false, autoHidden: true };
+    if (rect.visible) {
+      const fits = win.offsetLeft >= 0 && win.offsetTop >= 0 &&
+        win.offsetLeft + win.offsetWidth <= desktop.clientWidth &&
+        win.offsetTop + win.offsetHeight <= desktop.clientHeight;
+      if (!fits) {
+        win.style.display = 'none';
+        layout[id] = { ...rect, visible: false, autoHidden: true };
+      }
+    } else if (rect.autoHidden) {
+      // Real gap, GitHub issue #30 (evaluator finding, 2026-08-07): an
+      // auto-hidden panel used to stay hidden forever -- enlarging the
+      // window back, or a plain reload, never reconsidered it, so
+      // `visible:false` was effectively permanent even though nothing
+      // about the panel itself had changed. The operator's own real
+      // reason for auto-hiding still holds (a panel that no longer fits
+      // shouldn't clutter/misrender the desktop), but that's a reason to
+      // hide it temporarily, not lose it -- reversed here: if it would
+      // genuinely fit again at the current viewport, restore it
+      // automatically, using the identical real placement
+      // `ensurePanelVisible` already computes for a freshly-opened panel.
+      const placed = ensurePanelVisible({ ...rect, id });
+      if (placed.w <= desktop.clientWidth && placed.h <= desktop.clientHeight) {
+        applyRect(win, placed);
+        win.style.display = 'flex';
+        layout[id] = { ...placed, visible: true, autoHidden: false };
+      }
     }
   }
   saveLayout();
