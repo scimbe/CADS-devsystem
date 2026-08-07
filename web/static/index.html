@@ -4267,7 +4267,18 @@ function renderNewIterationPanel(id, data) {
     <input id="it-stage-custom" placeholder="e.g. devsystem.my_new_stage" style="display:none;margin-top:.4rem">
     <label>Feedback (what this stage found)</label>
     <textarea id="it-feedback" placeholder="Real, honest account of what happened this iteration…"></textarea>
-    <label><input type="checkbox" id="it-succeeded" checked style="width:auto"> succeeded</label>
+    <!-- Real gap found live by a non-technical evaluator, issue #47: this whole form is
+         regenerated from scratch (body.innerHTML above) every time this panel re-renders,
+         which happens after every real submit -- a hardcoded checked attribute here meant
+         the box re-armed itself to checked after each iteration regardless of what the
+         operator had just unchecked, and it is the ONLY control that resets
+         consecutive_failures back to 0 (a real succeeded iteration is the failure budget's
+         one real escape hatch). The evaluator hit this themselves mid-test: submitted what
+         they intended as a failing iteration, and the still-checked box silently reset the
+         streak instead. Marking work succeeded is meant to be a deliberate act -- it must
+         not be the path of least resistance on the one form that decides whether the run's
+         own safety budget holds. -->
+    <label><input type="checkbox" id="it-succeeded" style="width:auto"> succeeded</label>
 
     ${(data.state.requirements || []).length ? `
     <label style="margin-top:1rem">Addresses (real traceability -- #47 follow-up slice; leave all unchecked if this iteration doesn't speak to a specific requirement)</label>
