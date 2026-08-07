@@ -206,10 +206,28 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
         md.push('\n');
     }
 
+    // Real gap found by a non-technical evaluator reading only the web control panel, never the
+    // assistant or the CLI (issue #41, 2026-08-07): this document used to tell every reader --
+    // web included -- to `request-changes` with `--reply`, a verb that only exists in the
+    // `ecc-plan-canvas` CLI. The web panel implements neither `approve` nor `request-changes`;
+    // its only check-in action is a content-free "Acknowledge check-in" button
+    // (`POST /checkin/acknowledge`, no body). An evaluator who read this document end to end,
+    // on the run's one open operator decision, had literally nowhere to type the answer the
+    // document itself asked for. Cheapest honest fix (#41 suggestion #1): stop telling a GUI
+    // reader to do something the GUI cannot do -- name both real channels explicitly instead of
+    // implying one universal action. A real reply field in the web panel itself (#41 suggestions
+    // #2/#3) remains open, larger work.
     md.push_str("## Decision needed\n\n");
-    md.push_str("Reply `approve` to accept this iteration's proposals as-is and let the next \
-        iteration proceed, or `request-changes` with your answer/direction (this canvas \
-        live-reloads on `--reply`).\n");
+    md.push_str("**If you're reading this via `ecc-plan-canvas`** (the CLI checkpoint): reply \
+        `approve` to accept this iteration's proposals as-is and let the next iteration proceed, \
+        or `request-changes` with your answer/direction (this canvas live-reloads on \
+        `--reply`).\n\n");
+    md.push_str("**If you're reading this in the web control panel instead:** there is currently \
+        no reply field here -- a real, open gap (issue #41). The only check-in action the web \
+        panel implements is **Acknowledge check-in**, which records that you've seen this and \
+        carries no answer. If this check-in raises a question you need to answer, use \
+        `ecc-plan-canvas`, or leave your answer as a comment on the relevant GitHub issue for \
+        now.\n");
     md
 }
 
