@@ -282,6 +282,41 @@
       ],
       "id": "",
       "submitted_at": 0
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_emulator_test",
+      "iteration": 19,
+      "feedback": "Architekt iteration: drive the stalled devsystem.android_emulator_test stage. Goal -- run an automated Android emulator test harness against the current build (commit ce4aa2c, app: close MessageStore SQLiteDatabase handle in onDestroy) to validate requirement #0 (M2 broker channel exchange) and requirement #4 (per-message sent/delivered/read status). The emulator test SHALL boot an AVD, install the built APK, exercise a 1:1 message exchange between two emulator instances over the Noise_IK direct peer-to-peer channel, and assert: (a) message payload is ciphertext on the wire (no plaintext in logs/adb traffic), (b) per-message status transitions sent->delivered->read reflect real device state, (c) no crash/onDestroy leak (MessageStore handle closed). Proposal: add an emulator-test role proposal that wires instrumented androidTest against com.scimbe.webconference, runs on a headless AVD via gradle connectedCheck, and reports pass/fail per criterion back to this run. This unblocks the test gate for the APK delivery (requirement #5 blocked by artifact channel #36, but emulator-test coverage is the prerequisite that the run can satisfy on its own).",
+      "proposals": [],
+      "succeeded": false,
+      "requirement_indices": [],
+      "id": "0352308d94a39d06",
+      "submitted_at": 1786117768
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.document_extraction",
+      "iteration": 20,
+      "feedback": "Architekt iteration: drive the remaining stalled devsystem.document_extraction stage. Goal -- implement document text extraction so that shared documents (PDF, text, common office formats) sent in a 1:1 or group conversation are extracted to searchable text and indexed for in-app search, supporting requirement #9 (media/attachment sharing) and a future in-conversation document search. The stage SHALL extract plain text from common document MIME types, store the extracted text alongside the attachment metadata, and surface a search field that matches across all extracted document text in the current conversation. Proposal: add a document_extraction role proposal that wires an Android TextExtractor (PdfRenderer for PDF, plain text passthrough, Apache POI-ish fallback for office) producing a searchable text blob per attachment, persisted in the local MessageStore alongside the attachment row. This unblocks document content search and complements the media-sharing requirement.",
+      "proposals": [],
+      "succeeded": false,
+      "requirement_indices": [],
+      "id": "c365f2357781dfef",
+      "submitted_at": 1786117878
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_native_bridge",
+      "iteration": 21,
+      "feedback": "Real, bounded increment on requirement #4 (per-message delivery status): implemented the first honest slice this direct, unacknowledged Noise_IK channel can actually support -- a real sent/failed status per message, not the full sent/delivered/read/live-update text. This channel has no acknowledgement protocol above the transport layer, so \"the native sendText() call returned\" and \"it threw\" are the only two states knowable today; delivered/read both need a new, real wire-level receipt message round-tripped back over the channel, deliberately not fabricated here.\n\nReal bug found while scoping this: a failed send used to vanish completely -- no thread entry, nothing persisted, only the separate connection-status text changed, so a user had no way to tell \"this specific message never went out\" from \"it's still somewhere in flight.\" Now recorded and rendered as a real FAILED entry in the thread itself.\n\nMessageStore: new nullable status column (DB_VERSION 2, drop-and-recreate on upgrade, an acceptable stated loss of local chat history for this scaffold's current stage). insert()/loadAll() carry it through; a RECEIVED row never has one. Two new hermetic tests: status round-trips correctly for SENT/FAILED with RECEIVED honestly null, and a retried send's existing CONFLICT_REPLACE overwrites the earlier FAILED row's status too, not just its body.\n\nMainActivity.onSendClicked persists+renders the real status either way instead of the old success-only path. New message_line_sent_failed string; message_line_sent now shows an explicit \"sent\" marker instead of an unmarked line, since the requirement asks for an explicit status, not an implied one.\n\nReal verification note: this host has no local JDK/Android SDK and a documented resource constraint (this repo's own commit history), so I could not run a local hermetic build/test -- reviewed the diff carefully by hand, pushed, then watched the real android-ci.yml workflow run to completion before reporting this as done rather than assuming success. First push (23852c0) actually failed CI for a real reason: an XML comment I added used \"--\" inside the comment body, which the XML spec forbids and Android's resource merger correctly rejected -- caught immediately from the real CI log, fixed (7e325e6), re-pushed, confirmed both CI jobs (build-and-test, verify-native-bridge) green on the second run. CADS-webconference-android@7e325e6.\n\nRequirement #4 stays not-fully-met: criteria 2/3/5 (delivered, read, live-update) are real, separate, larger work needing a receipt protocol. Criteria 1 and 4's error-visibility half are now genuinely addressed.",
+      "proposals": [],
+      "succeeded": true,
+      "requirement_indices": [
+        4
+      ],
+      "id": "400048772a1a6413",
+      "submitted_at": 1786118297
     }
   ],
   "added_stages": [
@@ -330,12 +365,12 @@
     }
   ],
   "criteria": {
-    "max_iterations": 20,
+    "max_iterations": 40,
     "max_consecutive_failures": 3,
-    "checkin_every": 5
+    "checkin_every": 1
   },
-  "paused": false,
-  "pause_reason": null,
+  "paused": true,
+  "pause_reason": "paused manually",
   "backlog": [
     {
       "text": "Stage-Proposal devsystem.android_native_bridge (cf0593ebc3409cdb) prüfen und freigeben oder ablehnen - blockiert alle Android-Transportarbeit",
@@ -496,6 +531,34 @@
       "verified_criteria": [],
       "auto_judge": false,
       "proposed_by": null
+    },
+    {
+      "statement": "WHEN a user wants to share content beyond plain text in a 1:1 or group conversation, THE SYSTEM SHALL let the user attach and send an image, short video, document, or voice note from the device, and shall render it inline for the recipient with a real transfer progress indicator and an honest error state on failure -- comparably to WhatsApp/Signal -- instead of silently dropping the attachment or degrading to text-only.",
+      "acceptance_criteria": [
+        "The user can pick an image, video, document, or record a voice note from within the conversation and send it as a real attachment, not a text-only fallback.",
+        "Recipients see the attachment rendered inline (image thumbnail, playable video/audio, downloadable document) without leaving the conversation.",
+        "A visible progress indicator shows upload/download progress for the attachment, and a clear error state with retry appears when transfer fails, instead of a silent drop or indefinite spinner.",
+        "Attachments are sent over the same encrypted channel as text messages and do not leak metadata (e.g. file names, thumbnails) beyond what the recipient already sees in the conversation.",
+        "Large attachments are handled gracefully (downscaled/compressed previews, size limits surfaced honestly) without crashing the conversation or running the app out of memory."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN a user wants to converse with more than one participant at once, THE SYSTEM SHALL let the user create and join a named group conversation (multi-participant, 3+ members) where every member can send and receive text/media messages broadcast to all participants, with a real member list, a group title, add/remove-member controls, and the same per-message delivery/read status and end-to-end encryption as 1:1 chats -- comparably to WhatsApp/Signal group chats -- instead of limiting the user to 1:1 conversations only.",
+      "acceptance_criteria": [
+        "User can create a new named group with 3+ members from contacts/address book; group title is editable and visible to all members.",
+        "Any member can send a message that is broadcast to all current members; each recipient sees the same per-message sent/delivered/read status as in 1:1 chats.",
+        "Group membership is mutable: an admin/owner can add and remove members; removed members no longer receive new messages and cannot read future traffic.",
+        "Group messages use the same end-to-end encryption as 1:1 (no plaintext to broker/relay); a new member cannot read messages sent before they joined (forward secrecy across join boundary).",
+        "The group survives a member going offline and rejoining (group state is consistent across reconnects); leaving the group is explicit and confirmed."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
     }
   ],
   "assistant_usage": {
@@ -514,5 +577,5 @@
       "requirement_indices": []
     }
   ],
-  "checkin_acknowledged_through": 15
+  "checkin_acknowledged_through": 21
 }
