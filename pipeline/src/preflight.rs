@@ -69,9 +69,7 @@ const DEFECT_ADMISSION_PHRASES: [&str; 6] =
 /// Run every known check against `state` and return whatever real findings result.
 pub fn preflight_annotations(state: &RunState) -> Vec<RiskAnnotation> {
     let mut findings = Vec::new();
-    if let Some(a) = security_keyword_hit(state) {
-        findings.push(a);
-    }
+    findings.extend(security_keyword_hit(state));
     findings.extend(missing_test_before_implement(state));
     if let Some(a) = no_review_for_succeeded_work(state) {
         findings.push(a);
@@ -241,8 +239,8 @@ fn checkin_cadence_effectively_disabled(state: &RunState) -> Option<RiskAnnotati
     None
 }
 
-/// "touches auth" (proposal §5's own example): the latest iteration's feedback, or
-/// any proposal it carries, mentions a security-relevant keyword.
+/// "touches auth" (proposal §5's own example): a real iteration's feedback, or any
+/// proposal it carries, mentions a security-relevant keyword.
 ///
 /// `p.stage_id` below is `inline_code_escape`d, not raw-interpolated -- a real gap
 /// found live by the incompetent-agent stress test (#382 goal doc §8, 2026-08-06),
@@ -254,27 +252,49 @@ fn checkin_cadence_effectively_disabled(state: &RunState) -> Option<RiskAnnotati
 /// newline in a proposed `stage_id` broke out of the single-backtick span and
 /// forged a fake markdown heading into the exact file `ecc-plan-canvas` renders for
 /// a human to read and decide `approve`/`request-changes` on.
-fn security_keyword_hit(state: &RunState) -> Option<RiskAnnotation> {
-    let latest = state.history.last()?;
-    let feedback_lower = latest.feedback.to_lowercase();
-    if let Some(kw) = SECURITY_KEYWORDS.iter().find(|kw| feedback_lower.contains(**kw)) {
-        return Some(RiskAnnotation {
-            label: "touches auth/security".into(),
-            evidence: format!("iteration {}'s feedback mentions \"{kw}\"", latest.iteration),
-            fix_target: None,
-        });
-    }
-    for p in &latest.proposals {
-        let text = format!("{} {}", p.tag, p.rationale).to_lowercase();
-        if let Some(kw) = SECURITY_KEYWORDS.iter().find(|kw| text.contains(**kw)) {
-            return Some(RiskAnnotation {
+///
+/// **The fourth real instance of the same "once satisfied/flagged, forgotten"
+/// staleness bug found in one day, closed 2026-08-07**: this used to only ever
+/// check the LATEST iteration -- flagged live, then genuinely vanished the moment
+/// one completely unrelated iteration followed it, even though the real security-
+/// sensitive change was still sitting there, still unreviewed. Live-confirmed
+/// before this fix: a real iteration rewriting session auth-token handling
+/// correctly flagged `touches auth/security`; the very next, totally unrelated
+/// iteration (a README typo fix) made it disappear entirely. Unlike the
+/// `no_review_for_succeeded_work`/`missing_test_before_implement` fixes earlier the
+/// same day, this isn't a coverage-tracking question with a "since the last X"
+/// window -- a security-relevant change is a real, permanent historical fact about
+/// this run, the same as a defect admission or a bidi character. Fixed the same way
+/// `succeeded_iteration_admits_a_defect` already does: scan all of history, collect
+/// every real security-relevant iteration, not just the latest -- `Vec` instead of
+/// `Option`, same real tradeoff already accepted there (a keyword mentioned once and
+/// never actually reviewed keeps nagging; that's a smaller, named cost than silently
+/// hiding a real, still-unreviewed security-sensitive change).
+fn security_keyword_hit(state: &RunState) -> Vec<RiskAnnotation> {
+    let mut findings = Vec::new();
+    for h in &state.history {
+        let feedback_lower = h.feedback.to_lowercase();
+        if let Some(kw) = SECURITY_KEYWORDS.iter().find(|kw| feedback_lower.contains(**kw)) {
+            findings.push(RiskAnnotation {
                 label: "touches auth/security".into(),
-                evidence: format!("proposal {}'s rationale mentions \"{kw}\"", inline_code_escape(&p.stage_id)),
+                evidence: format!("iteration {}'s feedback mentions \"{kw}\"", h.iteration),
                 fix_target: None,
             });
+            continue;
+        }
+        for p in &h.proposals {
+            let text = format!("{} {}", p.tag, p.rationale).to_lowercase();
+            if let Some(kw) = SECURITY_KEYWORDS.iter().find(|kw| text.contains(**kw)) {
+                findings.push(RiskAnnotation {
+                    label: "touches auth/security".into(),
+                    evidence: format!("proposal {}'s rationale mentions \"{kw}\"", inline_code_escape(&p.stage_id)),
+                    fix_target: None,
+                });
+                break;
+            }
         }
     }
-    None
+    findings
 }
 
 /// "succeeded iteration admits a known defect" -- some `succeeded: true`
@@ -646,6 +666,29 @@ mod tests {
         let findings = preflight_annotations(&state);
         assert_eq!(findings.len(), 1);
         assert!(findings[0].evidence.contains("android_native_bridge"));
+    }
+
+    #[test]
+    /// Real gap found live 2026-08-07: a real, unreviewed security-sensitive
+    /// change used to disappear from the risk list the moment ANY unrelated
+    /// iteration followed it, even though the sensitive change itself was still
+    /// sitting there, still unreviewed. A security-relevant fact must stay
+    /// visible, the same as a defect admission does.
+    fn a_security_keyword_hit_survives_a_later_unrelated_iteration() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_IMPLEMENT, 1, "rewrote the session auth token handling, real security-sensitive change", vec![]));
+        let findings = preflight_annotations(&state);
+        assert!(
+            findings.iter().any(|f| f.label == "touches auth/security"),
+            "sanity check: the security-sensitive iteration above must genuinely flag first"
+        );
+
+        state.history.push(iteration(STAGE_IMPLEMENT, 2, "fixed an unrelated typo in the README, nothing else changed", vec![]));
+        let findings = preflight_annotations(&state);
+        assert!(
+            findings.iter().any(|f| f.label == "touches auth/security" && f.evidence.contains("iteration 1")),
+            "a real security-sensitive change must not vanish just because an unrelated iteration followed it: {findings:?}"
+        );
     }
 
     #[test]

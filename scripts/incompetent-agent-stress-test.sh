@@ -624,10 +624,24 @@ check "a second, later implement round with no fresh test is flagged on its own,
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$test_stale_run"
 
 echo
+echo "[45] a real, unreviewed security-sensitive iteration must not vanish from the risk list just because an unrelated iteration follows it -- the fourth real instance of the same staleness bug found in one day (#382 goal doc §5/§8, 2026-08-07)"
+security_stale_run="${RUN}-security-staleness-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$security_stale_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$security_stale_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"rewrote the session auth token handling, real security-sensitive change","succeeded":true}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$security_stale_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"fixed an unrelated typo in the README, nothing else changed","succeeded":true}'
+security_risk_survives=$(curl -s "$BASE/api/runs/$security_stale_run" | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+print("yes" if any(r["label"] == "touches auth/security" and "iteration 1" in r["evidence"] for r in d.get("risks", [])) else "no")' 2>/dev/null)
+check "the real security-sensitive iteration stays flagged after an unrelated iteration follows it" "yes" "$security_risk_survives"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$security_stale_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the forty-four gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the forty-five gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."

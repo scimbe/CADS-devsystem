@@ -4076,4 +4076,32 @@ security-relevant keyword") -- a real, different shape than the three bugs above
 rather than over-trusting), and not verified safe or unsafe by this firing's own audit. Worth a
 dedicated future firing's own live investigation rather than guessed at here.
 
+**Goal-driven-loop firing, 2026-08-07 -- the genuinely open question from the previous firing,
+investigated for real rather than left flagged.** State check: no new operator input on any of the
+three open `#382` checkpoints, no new PRs, CI healthy -- 89/89 stress harness clean before starting.
+
+Reproduced `security_keyword_hit`'s open question live before deciding anything: a real iteration
+rewriting session auth-token handling correctly flagged `touches auth/security`; the very next,
+completely unrelated iteration (a README typo fix) made it vanish entirely -- confirming this is a
+real, fourth instance of the same staleness bug class, not a safe design choice. Different shape from
+the other three, though: not a coverage-tracking question needing a "since the last X" window (a
+security-relevant change is a permanent historical fact, not something that gets "covered" by later
+work) -- so fixed the same way `succeeded_iteration_admits_a_defect` already does: scan all of
+history, collect every real hit, not just the latest (`Vec` instead of `Option`). Live-verified
+against the actual `webconference-android` run afterward: 7 real security-relevant iterations are now
+visible, not 1 -- a genuinely more complete, honest picture of this run's own history for a human
+doing periodic check-ins, not a synthetic example.
+
+Hermetic `cargo test`/`clippy` clean on both crates (125/125 pipeline, 196/196 web, 0 warnings) -- new
+test proves the exact scenario (security-sensitive iteration flags, survives an unrelated iteration
+right after it); every pre-existing test for this check still passes unchanged. Redeployed;
+live-verified end to end against the real container, matching the reproduction exactly. Added
+stress-harness check `[45]` (90/90 total).
+
+This closes all four real instances of the "once satisfied/flagged, forgotten" staleness bug class
+found in a single day across `preflight.rs` (`no_price_ceiling`'s careless-re-proposal bypass,
+`no_review_for_succeeded_work`, `missing_test_before_implement`, `security_keyword_hit`) -- the last
+firing's own systematic audit of every remaining check in the file found no further instances, and
+this firing's own investigation of the one real open question it named didn't find a fifth.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
