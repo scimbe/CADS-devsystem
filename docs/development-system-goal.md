@@ -4898,4 +4898,28 @@ core) remain a real, honestly-named, not-yet-mutation-tested backlog -- a natura
 firing, at whatever pace keeps each round a genuine, individually-verified proof rather than a
 rubber-stamped sweep.
 
+**Main-dev-loop firing, 2026-08-07 (bb) -- real, live operator UI feedback, addressed directly
+mid-turn: orb-launcher pictograms and spacing (`CADS-devsystem@c929882`).** State check first (no
+new input on any of the four standing decision points), then a genuine live interruption from the
+operator: "Das Menü ist weiter sehr hässlich... mehr mit sowas wie Piktogrammen, die dann mit
+mouseover den Titel angeben... mehr Benachrichtigungselemente an die Bubble, wenn es die
+Benachrichtigungen auch gibt," followed by a second message clarifying that the reference image's
+proportionally tighter spacing for smaller bubbles was also part of the ask.
+
+Traced it to the real orb-launcher (`renderOrbBubbles`, `PANEL_DEFAULTS`): every puck rendered
+either a text label (the two labeled tiers) or, on the two icon-only tiers, nothing at all -- a
+blank glass circle until hovered, the real source of "hässlich." Added one semantically-matched
+line icon per panel (20 panels), inside every tier's puck, staying inside the launcher's own
+existing dark/glass color scheme -- the operator's reference image was for the pictogram *idea*
+and its spacing, explicitly not its bright color palette. The existing `title` attribute already
+carries the mouseover label. Tightened the two icon-only tiers' own `chordBasis`/`minRadius` so
+smaller pucks pack proportionally closer, per the follow-up message. Gave the existing pending-count
+badge (trigger unchanged: only real pending counts render it) a visible pulse and separating ring so
+it reads as a real notification, not a quiet number.
+
+Live-verified via Playwright against the actual deployed flagship run before shipping (zero console
+errors), full 100/100 stress harness reconfirmed clean (pure client-side change, no backend
+touched). Sent the operator the real screenshot directly rather than only describing the change, so
+they could judge the visual result themselves rather than trust a text description of a UI change.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
