@@ -84,6 +84,50 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
         md.push('\n');
     }
 
+    // Real gap found by a non-technical evaluator reading only the live deployment
+    // (issue #34, 2026-08-07): this document had a "Requirements addressed this
+    // iteration" section, but nothing anywhere reported coverage across the whole
+    // run -- a requirement never touched by any iteration rendered as *nothing*,
+    // indistinguishable from "this section has nothing to say". At the exact
+    // moment a human is deciding whether to let a run continue, they had no way
+    // to see that most of a run's requirements -- including the one defining what
+    // "done" means -- had never been addressed by a single iteration. The
+    // Requirements panel's own card already states "not yet addressed by any
+    // iteration" explicitly per requirement (since 2026-08-04); this section
+    // brings that same real, run-wide fact into the check-in artifact itself,
+    // the one place a human is actually asked to decide.
+    if !state.requirements.is_empty() {
+        let verified_count = state.requirements.iter().filter(|r| r.verified).count();
+        md.push_str("## Requirement coverage\n\n");
+        md.push_str(&format!(
+            "{verified_count}/{} verified. Coverage across this run's whole history, not just \
+            this iteration:\n\n",
+            state.requirements.len()
+        ));
+        for (i, r) in state.requirements.iter().enumerate() {
+            let addressed: Vec<u32> = state
+                .history
+                .iter()
+                .filter(|h| h.requirement_indices.contains(&i))
+                .map(|h| h.iteration)
+                .collect();
+            let coverage = if addressed.is_empty() {
+                "**never addressed by any iteration**".to_string()
+            } else {
+                format!(
+                    "addressed by iteration(s) {}",
+                    addressed.iter().map(u32::to_string).collect::<Vec<_>>().join(", ")
+                )
+            };
+            md.push_str(&format!(
+                "- requirement #{i} ({}) -- {coverage}: {}\n",
+                if r.verified { "verified" } else { "unverified" },
+                inline_code_escape(&r.statement)
+            ));
+        }
+        md.push('\n');
+    }
+
     md.push_str(&format!("**Stage:** {}\n\n", inline_code_escape(&record.stage)));
     md.push_str("## What this stage found\n\n");
     md.push_str(&fence_wrap(&record.feedback));
@@ -369,6 +413,72 @@ mod tests {
         let state = state_with_one_iteration(vec![]);
         let md = render_plan_markdown(&state).unwrap();
         assert!(!md.contains("## Requirements addressed this iteration"));
+    }
+
+    #[test]
+    /// Real gap found by a non-technical evaluator, issue #34: coverage across
+    /// the whole run -- not just what this one iteration claims -- was invisible
+    /// at the exact moment a human decides whether to let a run continue. A
+    /// requirement no iteration had ever addressed rendered as nothing at all.
+    fn requirement_coverage_names_every_never_addressed_requirement_across_the_whole_run() {
+        let mut state = RunState::new("run-coverage-checkin");
+        state.requirements.push(Requirement {
+            statement: "covered requirement".into(),
+            acceptance_criteria: vec!["real criterion".into()],
+            verified: false,
+            verified_criteria: Vec::new(),
+            auto_judge: false,
+            proposed_by: None,
+        });
+        state.requirements.push(Requirement {
+            statement: "never touched requirement".into(),
+            acceptance_criteria: vec!["real criterion".into()],
+            verified: false,
+            verified_criteria: Vec::new(),
+            auto_judge: false,
+            proposed_by: None,
+        });
+        // Iteration 1 addresses requirement 0. Iteration 2 (the triggering
+        // iteration, what "this iteration" means below) addresses neither --
+        // coverage must still be reported from the whole run's history, not
+        // just the latest record.
+        state.history.push(IterationRecord {
+            run_id: "run-coverage-checkin".into(),
+            stage: "devsystem.implement".into(),
+            iteration: 1,
+            feedback: "addressed the first requirement".into(),
+            proposals: vec![],
+            succeeded: true,
+            requirement_indices: vec![0],
+            ..Default::default()
+        });
+        state.history.push(IterationRecord {
+            run_id: "run-coverage-checkin".into(),
+            stage: "devsystem.review".into(),
+            iteration: 2,
+            feedback: "unrelated review work".into(),
+            proposals: vec![],
+            succeeded: true,
+            requirement_indices: vec![],
+            ..Default::default()
+        });
+
+        let md = render_plan_markdown(&state).expect("history is non-empty");
+        assert!(md.contains("## Requirement coverage"));
+        assert!(md.contains("requirement #0"));
+        assert!(md.contains("addressed by iteration(s) 1"));
+        assert!(md.contains("requirement #1"));
+        assert!(
+            md.contains("**never addressed by any iteration**"),
+            "requirement 1 has zero coverage across the whole run and must say so explicitly:\n{md}"
+        );
+    }
+
+    #[test]
+    fn omits_the_requirement_coverage_section_when_the_run_has_no_requirements_at_all() {
+        let state = state_with_one_iteration(vec![]);
+        let md = render_plan_markdown(&state).unwrap();
+        assert!(!md.contains("## Requirement coverage"));
     }
 
     #[test]
