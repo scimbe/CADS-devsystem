@@ -4802,4 +4802,18 @@ confirmed the live harness fails on exactly check `[1]` while all 48 sibling che
 Reverted cleanly from a pre-mutation backup, rebuilt, redeployed the real fix, reconfirmed 100/100.
 No source change ships -- verification is a legitimate increment on its own.
 
+**Main-dev-loop firing, 2026-08-07 (x) -- mutation-testing check `[2]`, adjacent to last firing's
+check `[1]`, real teeth confirmed.** State check: no new operator input on any of the four standing
+decision points, `#13`/`#14`/PRs unchanged.
+
+Neutered `update_criteria`'s own upper-bound rejection (`max_iterations`/`max_consecutive_failures`/
+`checkin_every` each capped at `MAX_ABORT_CRITERIA_VALUE`) to the literal pre-fix "an absurdly large
+value is accepted, unbounded in practice" behavior. Confirmed the hermetic test fails with the exact
+expected panic, rebuilt and redeployed the mutated binary, confirmed the live harness fails on
+exactly check `[2]`'s second assertion while all 48 sibling checks stayed green -- precise, not
+collateral (the zero-value lower-bound assertion, a genuinely separate check in the same source
+block, correctly stayed green throughout). Reverted cleanly from a pre-mutation backup, rebuilt,
+redeployed the real fix, reconfirmed 100/100. No source change ships -- verification remains a real,
+legitimate increment on its own.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
