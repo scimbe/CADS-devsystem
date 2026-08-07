@@ -2558,10 +2558,33 @@ async function renderRagPanel(id, data) {
 // Real links, copied verbatim from bunsenbrenner.org's own support section
 // (this deployment is a tunnel hosted there, not a separate project asking
 // for its own separate support).
+//
+// Real gap, GitHub issue #28: a persona doing a deliberate, holistic
+// onboarding review found that "Support" was the only panel whose name
+// implies help, but its entire content was a donation pitch -- nowhere in
+// the live UI links to this project's own real documentation site (built
+// and shipped across many earlier firings: tutorials/how-to/reference/
+// explanation, Diátaxis-structured, covering exactly the "what is a
+// stalled role, how does bidding work" questions the report asked). First,
+// bounded step: a real, distinct Documentation section here, kept visually
+// separate from the donation ask rather than folded into or replacing it.
+// A dedicated "Help"/"How this works" panel type is a bigger lift (new
+// panel infra, launcher entry, etc.) -- a real, honestly-scoped follow-up,
+// not attempted in this same increment.
 function renderSupportPanel() {
   const body = document.getElementById('body-support');
   if (!body) return;
   body.innerHTML = `
+    <div style="font-family:var(--mono);font-size:.75rem;color:var(--accent2);font-weight:700;margin-bottom:.3rem">Documentation</div>
+    <p class="lede" style="margin-bottom:.6rem">What a run/stage/role/auction/check-in actually means,
+      how the pipeline proposes its own new stages, and a walkthrough of your first real run --
+      tutorials, how-to guides, reference, and explanation, not just this panel's own inline hints.</p>
+    <div style="display:flex;flex-direction:column;gap:.5rem;margin-bottom:1.1rem">
+      <a class="btn" href="https://scimbe.github.io/CADS-devsystem-docs/" target="_blank" rel="noopener">Documentation site &rarr;</a>
+      <a class="btn secondary" href="https://scimbe.github.io/CADS-devsystem-docs/tutorials/first-run/" target="_blank" rel="noopener">Tutorial: set up your first run &rarr;</a>
+      <a class="btn secondary" href="https://scimbe.github.io/CADS-devsystem-docs/explanation/self-optimizing-pipeline/" target="_blank" rel="noopener">How the pipeline proposes and grows its own stages &rarr;</a>
+    </div>
+    <div style="font-family:var(--mono);font-size:.75rem;color:var(--accent);font-weight:700;margin-bottom:.3rem">Support</div>
     <p class="lede" style="margin-bottom:.8rem">Bunsenbrenner is free to use and runs on donated time and
       server costs. If this pipeline helped you get something live, a small contribution keeps it going.</p>
     <div style="display:flex;flex-direction:column;gap:.5rem">
