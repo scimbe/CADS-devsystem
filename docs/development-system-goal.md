@@ -5240,4 +5240,32 @@ All four of the persona-testing issues found earlier this session (`#19`, `#21`,
 fixed; `#20` (out of this repo's scope, flagged for CADS-Tunnel) and `#24` (RAG staleness) are the two
 real, open items remaining from that batch.
 
+**Main-dev-loop firing, 2026-08-07 (kk) -- issue #24 fixed and closed: the last in-scope item from
+this session's whole persona-testing batch.** State check: no new operator input on any of the four
+standing decision points. `#20` picked up one more real comment (a deeper repro: the portal's own
+"Sign out" flow, not just the in-app one, also fails -- a real Keycloak `400 "Logout failed"` at the
+confirm step) -- still correctly CADS-Tunnel's own scope, not acted on directly, noted rather than
+re-litigated.
+
+Picked `#24` (Docs Search/RAG panel silently serves a stale index until a manual "Sync now").
+Deliberately did not implement the reporter's "auto-sync on open" suggestion: GitHub's own
+unauthenticated API allows only ~60 requests/hour, an existing constraint the Code panel's own commit
+loader already has to respect, and every real action in this GUI re-renders every visible panel --
+auto-syncing here would burn that budget on actions unrelated to docs search. Went with the
+reporter's other direction instead, both real and honest rather than fabricating a threshold: a new
+`formatRelativeAge()` helper shows a real "X ago" phrase next to the sync timestamp, and a plain
+caveat appears both under the sync line and again directly beside search results themselves
+(especially valuable for "No matches", where the honest cause could just as easily be a stale index
+as a real absence). `CADS-devsystem@4aed89a`, live-verified against the actual redeployed
+`webconference-android` run -- correctly hit via `selectRun()` directly this time after an earlier
+live-verification attempt this same firing accidentally matched a different, similarly-named run
+because Playwright's `text=` selector partial-matches and this run's own real "2 stalled" badge
+renders inline with no separator, a real methodology bug in the *verification*, caught and fixed
+before trusting the result, same discipline this document applies to the codebase now applied to
+itself. Full 100/100 stress harness stays clean.
+
+This closes out the entire persona-testing batch from earlier this session: `#19`, `#21`, `#22`,
+`#23`, and now `#24` are all genuinely fixed, not just flagged -- `#20` is the one item correctly left
+open, out of this repo's own scope.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
