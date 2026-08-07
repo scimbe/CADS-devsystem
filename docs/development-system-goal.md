@@ -6152,4 +6152,36 @@ that would contradict the self-optimizing design's own stated principle (start m
 inform itself, per #382's own reframing). This fix takes the report's alternative framing instead:
 offer the real names without pretending they're declared roles.
 
+**Main-dev-loop firing, 2026-08-07 (ttt) -- issue #53: the stalled-stage badge is no longer a one-way
+latch a single failed attempt can permanently silence.** State check: `#382`'s three checkpoints and
+`#14` still unanswered. A fresh scimbe-authored issue had landed (`#53`, the `bastler` persona's own
+real trial-and-error finding) -- picked it immediately: `stalled_stages` is the one signal in this
+whole product that says "this role has never actually delivered," and it was being cleared by the
+mere *existence* of a matching iteration record, regardless of `succeeded`. A single `succeeded:
+false` attempt -- including one whose own feedback admits it did nothing -- permanently silenced it,
+with no re-arming possible.
+
+Live-confirmed on the actual flagship `webconference-android` run before touching anything: three of
+its five added stages (`devsystem.document_extraction`, `devsystem.android_emulator_test`,
+`devsystem.android_native_build_ci` -- exactly the ones genuinely blocked on real infra, tracked as
+`#12`/`#13`/`#14`) have never once produced a successful iteration, and `stalled_stages` reported none
+of them. Fixed to key on "no *succeeded* iteration has ever run as this stage" rather than "no
+iteration record exists" -- matches the panel's own existing copy without rewording it.
+`CADS-devsystem@acc63ce`. New tests, 146/146 pipeline lib tests, 204/204 web tests, zero warnings.
+Live-verified against the deployment with the issue's own exact repro (propose → fail → still
+stalled → succeed → clears) and against the real flagship run's own state, which now correctly shows
+all three genuinely-dead stages. Stress harness gained check `[52]`; full suite now 113/113.
+
+**A real self-correction, worth naming plainly**: an earlier firing this session (task marked
+"Audited `stalled_stages` for staleness bug class -- confirmed safe") had reviewed this exact
+function for this exact bug class and judged it safe. That judgment was wrong. This evaluator finding
+is the correction, not new work layered on a clean prior result -- logged honestly rather than
+silently superseded.
+
+The report's own secondary observation (the Runs-panel badge precedence -- `paused > pending_reviews
+> needs_attention > stalled > risk_count` -- would still outrank a correctly-computed stalled badge
+on a run like `webconference-android` that also shows `needs_attention`) and its suggested pairing (a
+per-stage success count in the Roles panel, since "1 iteration(s)" today reads identically whether it
+shipped or failed) both remain real, open, un-actioned follow-ups.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
