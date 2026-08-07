@@ -269,6 +269,10 @@
     {
       "description": "1:1 Text-Messaging end-to-end: Android-Client sendet und empfängt Textnachrichten über einen CADS-Tunnel Channel (Noise_IK), Verlauf lokal persistiert",
       "achieved": true
+    },
+    {
+      "description": "M2 -- Broker-vermittelte Kanal-Discovery: Android-Client verbindet sich über den echten CADS-Tunnel Broker (ct-agent channel join, SignedChannelGrant, Rendezvous, NAT-Traversal, :443 Relay-Fallback), ohne manuellen Public-Key/Adress-Austausch wie bei M1. Naechstes echtes Ziel nach M1 (achieved), benannt vom real deployten devsystem.assistant selbst als der natuerliche naechste Meilenstein, 2026-08-07.",
+      "achieved": false
     }
   ],
   "repo_url": "https://github.com/scimbe/CADS-webconference-android",
@@ -284,12 +288,19 @@
   "pending_delete_run_proposal": null,
   "requirements": [],
   "assistant_usage": {
-    "call_count": 1,
-    "input_tokens": 2,
-    "output_tokens": 107,
-    "cache_creation_input_tokens": 22040,
-    "cache_read_input_tokens": 14184,
-    "total_cost_usd": 0.23077000000000003
+    "call_count": 2,
+    "input_tokens": 4,
+    "output_tokens": 640,
+    "cache_creation_input_tokens": 48313,
+    "cache_read_input_tokens": 28368,
+    "total_cost_usd": 0.514525
   },
-  "chat_history": []
+  "chat_history": [
+    {
+      "instruction": "What is blocking this run from reaching its milestone right now?",
+      "response": "Nothing — the run's only milestone (\"1:1 Text-Messaging end-to-end\") is already `achieved: true`, and the run isn't paused (`paused: false`, 0 consecutive failures).\n\nWhat's actually open, if you want the next target:\n\n| Item | State |\n|---|---|\n| Milestones | 1/1 achieved — no unachieved milestone exists |\n| Backlog | 3 of 6 open (broker discovery, self-reported `sender_pubkey`, unclosed `SQLiteDatabase` handle) |\n| Stalled stages | `devsystem.document_extraction`, `devsystem.android_emulator_test` — declared roles that have never produced an iteration |\n| Budget | 6 iterations to ceiling, check-in due in 1 |\n| Requirements | 0 declared — the review gate added at iteration 8 has nothing to gate |\n\nThe real bottleneck is that there's no next milestone defined, so the pipeline has no target beyond the open backlog. The broker-mediated discovery item is the one that needs a whole different crate (ct-agent) and is the natural M2.",
+      "at": 1786077029,
+      "requirement_indices": []
+    }
+  ]
 }
