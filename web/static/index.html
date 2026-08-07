@@ -4853,12 +4853,22 @@ async function loadWhoami() {
     // session too -- that's a real, separate scope the gate route itself doesn't
     // cover, so the link text says so rather than implying a full logout.
     const logoutHref = `https://bunsenbrenner.org/gate/logout?host=${encodeURIComponent(window.location.hostname)}&return=%2F`;
+    // Real gap, GitHub issue #19 (a persona-test finding against the actual
+    // gated deployment): the "not signed in" state had no visible sign-in
+    // entry point at all -- every API call just failed silently with a
+    // browser-console CORS error, and the real gate/start URL was only
+    // discoverable by reading failed request URLs in devtools. A first-time
+    // evaluator without that habit had no way to find it. Same real
+    // gate/start route the login redirect itself already uses (see
+    // access_denied_html in CADS-Tunnel's gate.rs), just made visible here
+    // too instead of only reachable by hitting a gated page cold.
+    const signinHref = `https://bunsenbrenner.org/gate/start?host=${encodeURIComponent(window.location.hostname)}&return=%2F`;
     if (data.email) {
       el.className = 'whoami signed-in';
       el.innerHTML = `<span class="dot"></span>${escapeHtml(data.email)} · <a href="${logoutHref}" title="ends this site's session only, not the shared bunsenbrenner.org login">logout</a>`;
     } else {
       el.className = 'whoami';
-      el.innerHTML = `<span class="dot"></span>not signed in`;
+      el.innerHTML = `<span class="dot"></span>not signed in · <a href="${signinHref}">Sign in</a>`;
     }
   } catch (e) {
     el.className = 'whoami';
