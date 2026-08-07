@@ -880,7 +880,30 @@ async function refreshTick() {
 
 function createPanel(id) {
   const d = PANEL_DEFAULTS[id];
-  const r = ensurePanelVisible({ ...panelRect(id), id });
+  const base = panelRect(id);
+  // Real gap, GitHub issue #26 (evaluator repro with a restored, non-fresh
+  // localStorage layout, 2026-08-07 -- every earlier investigation this
+  // session cleared localStorage first, which is exactly why it never
+  // reproduced): `toggleMaximize()`'s own maximize branch only ever sets
+  // the DOM style directly, it never persists the real maximized w/h into
+  // `layout` -- only the `maximized:true` flag and `preMax` (the pre-
+  // maximize rect) survive a reload. A panel restored maximized used to
+  // still run through `ensurePanelVisible`'s small-panel cascade against
+  // those STALE, pre-maximize x/y/w/h, so it rendered SMALL on reload while
+  // `layout[id].maximized` said `true` -- a real state/render mismatch. The
+  // first click then read `maximized:true` and performed a RESTORE
+  // (small -> its own already-small preMax size, a real no-op visually),
+  // not a MAXIMIZE -- exactly the reported "first click does nothing,
+  // second click works" symptom. Fixed at the actual root: a panel
+  // restored with `maximized:true` is rendered at the real maximized size
+  // directly here, the identical formula `toggleMaximize`'s own maximize
+  // branch uses -- not run through cascade/collision logic that assumes a
+  // normal-sized panel. This makes the first click after a restore a real,
+  // visible restore-to-preMax (state and render now agree), not a no-op.
+  const desktop = document.getElementById('desktop');
+  const r = base.maximized
+    ? { ...base, id, x: 8, y: 8, w: desktop ? desktop.clientWidth - 16 : base.w, h: desktop ? desktop.clientHeight - 16 : base.h }
+    : ensurePanelVisible({ ...base, id });
   // Real root cause of issue #21's own persistence, found after the collision
   // logic itself was already fixed and still not working for every panel:
   // this function computed a real cascaded position and rendered it, but
@@ -946,7 +969,15 @@ function createPanel(id) {
 // pipeline's core set.
 function createCustomPanelWindow(runId, panel) {
   const id = panel.id;
-  const r = ensurePanelVisible({ ...panelRect(id), id });
+  // Same real fix as createPanel() (GitHub issue #26): a custom panel
+  // restored maximized from a previous session needs the real maximized
+  // rect computed directly, not run through the small-panel cascade
+  // against its stale pre-maximize dimensions.
+  const base = panelRect(id);
+  const desktop = document.getElementById('desktop');
+  const r = base.maximized
+    ? { ...base, id, x: 8, y: 8, w: desktop ? desktop.clientWidth - 16 : base.w, h: desktop ? desktop.clientHeight - 16 : base.h }
+    : ensurePanelVisible({ ...base, id });
   const win = document.createElement('div');
   win.className = 'win' + (r.minimized ? ' minimized' : '');
   win.id = `win-${id}`;
