@@ -5472,4 +5472,35 @@ genuinely present before trusting the stress harness's `100 passed` again. A rea
 for why this session keeps re-running the full harness after every redeploy, not just after a code
 change -- the deploy step itself can silently lie.
 
+**Main-dev-loop firing, 2026-08-07 (tt) -- issue #30 fixed (the permanence half), a residual gap
+honestly left open, and a real second bug found as a side effect.** State check: no new operator
+input on `#14` or the three `#382` checkpoints, CI green. Two genuinely new evaluator issues had
+arrived since firing (ss): `#30` (shrinking the browser window silently and *permanently* hides
+panels that no longer fit -- growing the window back, or a reload, never restores them) and `#31`
+(a feature request: an "automode" flag on Requirements for fully-automatic processing, out of scope
+for this firing's bounded increment).
+
+Picked `#30`. The operator's own real reason for auto-hiding overflow panels is on record in the
+code itself ("sollen die Fenster dann automatisch ausgeblendet werden, die nicht mehr
+hineinpassen") -- so the fix respects that design decision rather than reversing it (e.g. clamping
+instead of hiding, the report's own suggested alternative), and instead makes the hide reversible:
+`checkPanelsFitViewport()` now also reconsiders every currently auto-hidden panel on each
+resize/reload pass and restores any that would genuinely fit again, using the identical real
+placement `ensurePanelVisible()` already computes for a freshly-opened panel.
+
+Found a real, separate, pre-existing bug while implementing this: `panelRect()` -- the one function
+every other piece of panel state gets read through -- never actually returned the `autoHidden` field
+at all, silently `undefined` everywhere it was read, including `showPanel()`'s own pre-existing
+"reset an auto-hidden panel to its default position on reopen" logic, which turns out to have never
+once actually fired. Fixed at that shared root (`panelRect()` now returns `autoHidden`), which fixed
+both bugs with one change. `CADS-devsystem@e0b72d4`, live-verified against the actual deployment
+replicating the report's exact repro: dragged a panel low, shrank the viewport (auto-hides
+correctly), grew it back (auto-restores, no manual reopen needed), reloaded at the grown size (stays
+visible). Full 100/100 stress harness stays clean.
+
+Deliberately scoped to the sharper half of the report -- the "no toast, no confirmation" silence
+around auto-hide/restore is real and still unaddressed, said plainly on the issue rather than
+silently dropped, matching the standing pattern (`#21`) of leaving a real, named residual gap open
+rather than overclaiming a full close.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
