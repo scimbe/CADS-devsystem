@@ -4782,4 +4782,24 @@ real check passes against the actual currently-deployed assistant (100/100 total
 fires cleanly and harmlessly against a deliberately unreachable address (99/99, no false failure).
 Committed to `CADS-devsystem@4f3cc7b`.
 
+**Goal-driven-loop firing, 2026-08-07 (w) -- mutation-testing this project's very first check, real
+teeth confirmed.** State check: no new operator input on any of the four standing decision points,
+`#13`/`#14`/PRs unchanged; `#388`/`#389` (the labor-setup.com onboarding threads) also rechecked,
+both still unchanged since earlier this session.
+
+Considered a new `github_issue_channel_handler` deploy script (the one real process left without the
+`devsystem-web`/`devsystem_assistant` git-SHA treatment) but deliberately did not build one this
+firing: it's a live, currently-in-service process (the exact relay the issue-post `confirm()` fix a
+few firings ago protects), with no known staleness incident to justify the risk of a wrong first
+attempt disrupting it, and building its deploy script correctly needs real runtime topology details
+not yet confirmed live. Picked safer, still-valuable verification work instead: check `[1]` --
+`create_run`'s own duplicate-`run_id` rejection, this harness's literal first check, never
+mutation-tested this session despite being foundational. Neutered `create_run`'s `run_exists` guard
+to the literal pre-fix "silently clobbers" behavior, confirmed the hermetic test fails with the exact
+expected panic, rebuilt and redeployed the mutated binary (the git-SHA check itself correctly still
+passed, unaffected -- proof it reports the real commit, not a blanket "anything changed" flag),
+confirmed the live harness fails on exactly check `[1]` while all 48 sibling checks stayed green.
+Reverted cleanly from a pre-mutation backup, rebuilt, redeployed the real fix, reconfirmed 100/100.
+No source change ships -- verification is a legitimate increment on its own.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
