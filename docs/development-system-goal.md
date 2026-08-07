@@ -4521,4 +4521,38 @@ click-through against the actual rendered GUI -- the button renders correctly, c
 panel to "Nothing open right now," a genuine end-to-end proof, not just the JSON. 95/95 stress
 harness stays clean. Committed to `CADS-devsystem@e4a07d8`.
 
+**Main-dev-loop firing, 2026-08-07 (k) -- a real fix on the flagship Android app itself, closing a
+gap the assistant surfaced two firings ago.** State check: no new operator input on any of the four
+standing decision points, `#13`/`#14`/CI/PRs all unchanged. The operator interrupted mid-firing to
+ask whether issue `#18`'s fix was live -- answered directly (built, tested, on `CADS-Tunnel@main`,
+deliberately not yet deployed to the shared production control-plane pending their go-ahead) and
+asked whether to deploy now; no reply yet, so it stays held.
+
+`TextMessage.sender_pubkey` was one of two real findings `devsystem.assistant` surfaced live two
+firings ago that had no durable home -- tracked as a backlog item then, picked up as a real code fix
+now. Traced the actual send/receive path in full: `MainActivity.onSendClicked` calls
+`newTextMessage(myPublicKeyHex, body)` (the device's own locally-generated identity, never
+authenticated against anything), and `native-bridge/src/channel.rs`'s `ChannelSession` never stored
+the peer's key after the handshake completed -- a received message's `sender_pubkey` was taken
+verbatim from the wire, entirely self-reported. Confirmed via `ChannelSession::new`'s own signature
+(no peer-key field at all) and `recv_text`'s body (a plain decode, no check).
+
+Fixed the real, boundable half: the dialer/initiator already has the peer's handshake-pinned key in
+scope (`dial_channel_direct`'s own `peer_public_key_hex` -- a wrong key fails the handshake outright,
+so a live session means it's real). `ChannelSession` now carries an optional
+`known_peer_public_key_hex`; `recv_text` overrides the wire's claimed `sender_pubkey` with it when
+set. The listener/responder side is a real, honestly-named residual gap, not silently left unfixed:
+`ct_common::a2a::a2a_respond` (a separate, pinned CADS-Tunnel dependency) learns the initiator's key
+internally during the handshake but doesn't return it -- closing that side needs an upstream change,
+correctly scoped as its own separate increment, not worked around by reimplementing the raw Noise
+handshake here. Hermetic (pure Rust `cargo test`, no Android SDK/NDK -- unlike the disk-blocked
+cross-compilation path): a new test has the responder deliberately send a forged `sender_pubkey` and
+confirms the initiator's `recv_text` returns the real, authenticated key instead, message content
+untouched. 15/15 native-bridge tests, clippy-clean. Committed to
+`CADS-webconference-android@79774cd`.
+
+Closed the original backlog item on the flagship run and added a new, precisely-scoped one for the
+real residual (responder-side) gap, rather than overclaiming the fix's actual reach. 95/95 stress
+harness stays clean (unaffected). Committed to `CADS-devsystem@e7bfbfa`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
