@@ -22,11 +22,11 @@ use devsystem_pipeline::runner::{
     checkin_pending, duplicate_of_last_iteration, load_or_init_run, persist_run, push_chat_exchange, qualifying_review_evidence, render_requirements_markdown, run_iteration, toggle_acceptance_criterion,
     toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, valid_run_id, validate_requirement_indices, BacklogItem, CustomPanel,
     Milestone, PendingDeleteRunProposal, PendingIssueProposal, PendingNextStepDraft, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal,
-    Requirement, RoleFillMode, RunOutcome, RunState,
+    PlanCanvasAnnotation, Requirement, RoleFillMode, RunOutcome, RunState,
 };
 use devsystem_pipeline::{
     apply_proposal, contains_bidi_control_char, validate_feedback, validate_proposals, validate_stage, AbortCriteria, IterationRecord, ProposalOutcome,
-    StageProposal, ALL_STAGES, MAX_ROLE_UNITS,
+    StageProposal, ALL_STAGES, MAX_ROLE_UNITS, STAGE_PLAN, STAGE_REVIEW,
 };
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
 use ct_common::pipeline::SelectionState;
@@ -238,6 +238,9 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/next-steps/propose", post(propose_next_step))
         .route("/api/runs/{id}/next-steps/{draft_id}/update", post(update_next_step_draft))
         .route("/api/runs/{id}/next-steps/{draft_id}/remove", post(remove_next_step_draft))
+        .route("/api/runs/{id}/plan-canvas/annotate", post(plan_canvas_annotate))
+        .route("/api/runs/{id}/plan-canvas/annotations/{annotation_id}/remove", post(plan_canvas_remove_annotation))
+        .route("/api/runs/{id}/plan-canvas/verdict", post(plan_canvas_verdict))
         .route("/api/runs/{id}/panels/propose", post(propose_custom_panel))
         .route("/api/runs/{id}/panels/proposals/{proposal_id}/approve", post(approve_panel_proposal))
         .route("/api/runs/{id}/panels/proposals/{proposal_id}/reject", post(reject_panel_proposal))
@@ -3210,6 +3213,229 @@ async fn remove_next_step_draft(State(state): State<AppState>, AxPath((id, draft
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+const MAX_PLAN_CANVAS_ANCHOR_SNIPPET_BYTES: usize = 300;
+const MAX_PLAN_CANVAS_ANNOTATION_TEXT_BYTES: usize = 2_000;
+
+#[derive(Deserialize)]
+struct PlanCanvasAnnotateRequest {
+    anchor_snippet: String,
+    text: String,
+}
+
+fn validate_plan_canvas_field(value: &str, field_name: &str, max_bytes: usize) -> Result<String, String> {
+    let trimmed = value.trim().to_string();
+    if trimmed.is_empty() {
+        return Err(format!("{field_name} must not be empty"));
+    }
+    if trimmed.len() > max_bytes {
+        return Err(format!("{field_name} must be under {max_bytes} bytes"));
+    }
+    if contains_bidi_control_char(&trimmed) {
+        return Err(format!(
+            "{field_name} contains a Unicode bidi control character (e.g. a right-to-left override) -- \
+             these can make the visually displayed text not match what's actually stored"
+        ));
+    }
+    Ok(trimmed)
+}
+
+/// `POST /api/runs/{id}/plan-canvas/annotate` -- the real "point at it" half of
+/// [`RunState::plan_canvas_annotations`]'s own doc comment: a reviewer names the
+/// exact block of the plan they mean (`anchor_snippet`, the GUI's own real
+/// excerpt of what was clicked) plus their actual comment, instead of retyping
+/// the whole review as free prose.
+async fn plan_canvas_annotate(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap, Json(body): Json<PlanCanvasAnnotateRequest>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let anchor_snippet = match validate_plan_canvas_field(&body.anchor_snippet, "anchor_snippet", MAX_PLAN_CANVAS_ANCHOR_SNIPPET_BYTES) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
+    let text = match validate_plan_canvas_field(&body.text, "text", MAX_PLAN_CANVAS_ANNOTATION_TEXT_BYTES) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    if run_state.plan_canvas_annotations.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("plan_canvas_annotations is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
+    }
+    let annotation = PlanCanvasAnnotation { id: format!("{:016x}", rand::random::<u64>()), anchor_snippet, text, created_at: unix_now() };
+    run_state.plan_canvas_annotations.push(annotation.clone());
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(annotation).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/plan-canvas/annotations/{annotation_id}/remove` -- undo a
+/// mis-anchored or no-longer-wanted annotation before delivering a verdict. Same
+/// real, permanent, no-undo shape as `remove_next_step_draft`.
+async fn plan_canvas_remove_annotation(State(state): State<AppState>, AxPath((id, annotation_id)): AxPath<(String, String)>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let before = run_state.plan_canvas_annotations.len();
+    run_state.plan_canvas_annotations.retain(|a| a.id != annotation_id);
+    if run_state.plan_canvas_annotations.len() == before {
+        return (StatusCode::NOT_FOUND, format!("no plan-canvas annotation with id {annotation_id:?}")).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct PlanCanvasVerdictRequest {
+    verdict: String,
+}
+
+/// `POST /api/runs/{id}/plan-canvas/verdict` -- delivers the real review
+/// decision the whole panel exists for. `approve` folds the session into a
+/// real, substantive `devsystem.review` iteration -- through the exact same
+/// gates a normal `/iterate` call goes through (paused/ceiling/duplicate-guard),
+/// not a separate, less-guarded path -- and clears the annotations (the
+/// session concluded). `request_changes` requires at least one real annotation
+/// (asking for changes with nothing pointed at is not an actionable signal) and
+/// deliberately does NOT record a review iteration or clear the annotations --
+/// they stay visible, real, structured feedback for the plan's own next
+/// author, not summarized away into free prose.
+async fn plan_canvas_verdict(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap, Json(body): Json<PlanCanvasVerdictRequest>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if body.verdict != "approve" && body.verdict != "request_changes" {
+        return (StatusCode::BAD_REQUEST, "verdict must be \"approve\" or \"request_changes\"").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (mut spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    if run_state.history.iter().rev().find(|r| r.stage == STAGE_PLAN).is_none() {
+        return (StatusCode::BAD_REQUEST, "this run has no devsystem.plan iteration yet -- nothing real to review").into_response();
+    }
+    if body.verdict == "request_changes" {
+        if run_state.plan_canvas_annotations.is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                "request_changes needs at least one real annotation -- point at what needs to change, an empty request gives the plan's own next author nothing to act on",
+            )
+                .into_response();
+        }
+        let summary = format!(
+            "Plan Canvas: request changes -- {} annotation(s): {}",
+            run_state.plan_canvas_annotations.len(),
+            run_state
+                .plan_canvas_annotations
+                .iter()
+                .map(|a| format!("[{}] {}", truncate_for_summary(&a.anchor_snippet, 40), truncate_for_summary(&a.text, 80)))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+        run_state.backlog.push(BacklogItem { text: summary, done: false });
+        return match persist_run(&dir, &spec, &run_state) {
+            Ok(()) => Json(serde_json::json!({"verdict": "request_changes", "annotations": run_state.plan_canvas_annotations})).into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+        };
+    }
+
+    // approve: the same real checks a normal /iterate submission goes through --
+    // not a separate, less-guarded path just because it originated from this panel.
+    if run_state.paused {
+        return (StatusCode::CONFLICT, "run is paused -- resume it first (POST /api/runs/{id}/resume)").into_response();
+    }
+    if let Some(reason) = devsystem_pipeline::runner::ceiling_already_reached(&run_state, &run_state.criteria, true) {
+        return (StatusCode::CONFLICT, reason).into_response();
+    }
+    let feedback = if run_state.plan_canvas_annotations.is_empty() {
+        "Plan approved via Plan Canvas with no specific annotations -- reviewed as written.".to_string()
+    } else {
+        format!(
+            "Plan approved via Plan Canvas ({} annotation(s) addressed): {}",
+            run_state.plan_canvas_annotations.len(),
+            run_state
+                .plan_canvas_annotations
+                .iter()
+                .map(|a| format!("[{}] {}", truncate_for_summary(&a.anchor_snippet, 40), truncate_for_summary(&a.text, 80)))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
+    };
+    if let Err(e) = validate_feedback(&feedback) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("synthesized feedback failed its own validation: {e}")).into_response();
+    }
+    if let Some(dup_iteration) = duplicate_of_last_iteration(&run_state.history, STAGE_REVIEW, &feedback, true, &[], &[]) {
+        return (
+            StatusCode::CONFLICT,
+            format!("this approval is byte-identical to iteration {dup_iteration}, the run's own immediately-preceding entry -- refusing to record it as a distinct, new iteration"),
+        )
+            .into_response();
+    }
+    let iteration = run_state.history.len() as u32 + 1;
+    let submitted_by = headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+    let record = IterationRecord {
+        run_id: id.clone(),
+        stage: STAGE_REVIEW.to_string(),
+        iteration,
+        feedback,
+        succeeded: true,
+        proposals: vec![],
+        requirement_indices: vec![],
+        id: Some(format!("{:016x}", rand::random::<u64>())),
+        submitted_at: Some(unix_now()),
+        submitted_by,
+    };
+    let memory_path = dir.join("memory.jsonl");
+    let envelope = envelope_from_iteration(&record, &run_state.requirements);
+    if let Err(e) = append_to_memory_log(&memory_path, &envelope) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("memory log failed: {e}")).into_response();
+    }
+    let criteria = run_state.criteria;
+    let outcome = run_iteration(&mut spec, &mut run_state, record, &criteria);
+    run_state.plan_canvas_annotations.clear();
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"verdict": "approve", "outcome": format!("{outcome:?}"), "iteration": iteration})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+fn truncate_for_summary(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(max_chars).collect::<String>())
     }
 }
 
@@ -9871,6 +10097,225 @@ exit 1"#);
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST, "update_next_step_draft must reject a bidi-laced text");
+    }
+
+    #[tokio::test]
+    /// Real operator ask, verbatim, 2026-08-07: "ein echtes Plan Canvas panel:
+    /// review plans by pointing, not retyping". Full real workflow: a run with a
+    /// real devsystem.plan iteration, a real annotation pointing at part of it,
+    /// then a real approve verdict that folds into a real devsystem.review
+    /// iteration and clears the annotations.
+    async fn plan_canvas_full_annotate_then_approve_workflow() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "pc-run"}))).await.unwrap();
+
+        // A verdict with no plan iteration yet has nothing real to review.
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/pc-run/plan-canvas/verdict", serde_json::json!({"verdict": "approve"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "no devsystem.plan iteration yet -- nothing to approve");
+
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/pc-run/iterate",
+                serde_json::json!({"stage": "devsystem.plan", "feedback": "Phase 1: wire the channel session.\n\nPhase 2: add Room persistence.", "succeeded": true}),
+            ))
+            .await
+            .unwrap();
+
+        // Point at a real block of the plan text.
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/pc-run/plan-canvas/annotate",
+                serde_json::json!({"anchor_snippet": "Phase 2: add Room persistence.", "text": "Split this into its own follow-up iteration."}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let annotation = body_json(response).await;
+        assert_eq!(annotation["anchor_snippet"], "Phase 2: add Room persistence.");
+        assert_eq!(annotation["text"], "Split this into its own follow-up iteration.");
+        assert!(annotation["id"].as_str().is_some());
+
+        let get_response = app.clone().oneshot(Request::builder().uri("/api/runs/pc-run").body(Body::empty()).unwrap()).await.unwrap();
+        let full = body_json(get_response).await;
+        assert_eq!(full["state"]["plan_canvas_annotations"].as_array().unwrap().len(), 1);
+
+        // Approve: folds into a real devsystem.review iteration and clears the annotations.
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/pc-run/plan-canvas/verdict", serde_json::json!({"verdict": "approve"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let verdict_result = body_json(response).await;
+        assert_eq!(verdict_result["verdict"], "approve");
+        assert_eq!(verdict_result["outcome"], "Continue");
+
+        let get_response = app.oneshot(Request::builder().uri("/api/runs/pc-run").body(Body::empty()).unwrap()).await.unwrap();
+        let full = body_json(get_response).await;
+        assert!(full["state"]["plan_canvas_annotations"].as_array().unwrap().is_empty(), "approve must clear the annotations -- the session concluded");
+        let history = full["state"]["history"].as_array().unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[1]["stage"], "devsystem.review");
+        assert_eq!(history[1]["succeeded"], true);
+        assert!(history[1]["feedback"].as_str().unwrap().contains("Phase 2: add Room persistence."), "the real annotation must be folded into the review feedback: {}", history[1]["feedback"]);
+    }
+
+    #[tokio::test]
+    async fn plan_canvas_request_changes_requires_at_least_one_annotation_and_leaves_them_in_place() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "pc-rc-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/pc-rc-run/iterate", serde_json::json!({"stage": "devsystem.plan", "feedback": "A real plan.", "succeeded": true})))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/pc-rc-run/plan-canvas/verdict", serde_json::json!({"verdict": "request_changes"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "request_changes with zero annotations gives no real signal to act on");
+
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/pc-rc-run/plan-canvas/annotate",
+                serde_json::json!({"anchor_snippet": "A real plan.", "text": "Needs a rollback strategy."}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/pc-rc-run/plan-canvas/verdict", serde_json::json!({"verdict": "request_changes"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let get_response = app.clone().oneshot(Request::builder().uri("/api/runs/pc-rc-run").body(Body::empty()).unwrap()).await.unwrap();
+        let full = body_json(get_response).await;
+        assert_eq!(full["state"]["plan_canvas_annotations"].as_array().unwrap().len(), 1, "request_changes must NOT clear the annotations -- they stay real, visible feedback for the plan's next author");
+        assert_eq!(full["state"]["history"].as_array().unwrap().len(), 1, "request_changes must NOT record a review iteration");
+        let backlog = full["state"]["backlog"].as_array().unwrap();
+        assert!(
+            backlog.iter().any(|b| b["text"].as_str().unwrap().contains("Needs a rollback strategy.")),
+            "the real annotation must surface as a real backlog item: {backlog:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn plan_canvas_annotate_rejects_empty_oversized_and_bidi_fields() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "pc-validate-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/pc-validate-run/plan-canvas/annotate", serde_json::json!({"anchor_snippet": "  ", "text": "real text"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "empty anchor_snippet must be rejected");
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/pc-validate-run/plan-canvas/annotate", serde_json::json!({"anchor_snippet": "real snippet", "text": "   "})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "empty text must be rejected");
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/pc-validate-run/plan-canvas/annotate",
+                serde_json::json!({"anchor_snippet": "x".repeat(MAX_PLAN_CANVAS_ANCHOR_SNIPPET_BYTES + 1), "text": "real text"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "oversized anchor_snippet must be rejected");
+
+        let bidi = "looks safe\u{202e}\u{202e}not actually";
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/pc-validate-run/plan-canvas/annotate",
+                serde_json::json!({"anchor_snippet": "real snippet", "text": bidi}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a bidi-laced annotation text must be rejected");
+    }
+
+    #[tokio::test]
+    async fn plan_canvas_remove_annotation_removes_it_and_404s_for_an_unknown_id() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "pc-remove-run"}))).await.unwrap();
+        let created = body_json(
+            app.clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/runs/pc-remove-run/plan-canvas/annotate",
+                    serde_json::json!({"anchor_snippet": "some snippet", "text": "some annotation"}),
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        let annotation_id = created["id"].as_str().unwrap().to_string();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/pc-remove-run/plan-canvas/annotations/does-not-exist/remove", serde_json::json!({})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", &format!("/api/runs/pc-remove-run/plan-canvas/annotations/{annotation_id}/remove"), serde_json::json!({})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NO_CONTENT);
+
+        let get_response = app.oneshot(Request::builder().uri("/api/runs/pc-remove-run").body(Body::empty()).unwrap()).await.unwrap();
+        let full = body_json(get_response).await;
+        assert!(full["state"]["plan_canvas_annotations"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    /// Real evaluator-style check, matching this codebase's own established
+    /// discipline (issue #47): an approval must go through the exact same real
+    /// gates a normal /iterate submission does, not a separate, less-guarded
+    /// path -- proven here against the paused/ceiling gate specifically.
+    async fn plan_canvas_approve_respects_the_same_paused_and_ceiling_gates_as_a_real_iterate_call() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "pc-gate-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/pc-gate-run/iterate", serde_json::json!({"stage": "devsystem.plan", "feedback": "A real plan.", "succeeded": true})))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/pc-gate-run/criteria", serde_json::json!({"max_iterations": 1, "max_consecutive_failures": 3, "checkin_every": 10})))
+            .await
+            .unwrap();
+
+        // Already at max_iterations: 1 (the plan iteration itself) -- approval must be refused.
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/pc-gate-run/plan-canvas/verdict", serde_json::json!({"verdict": "approve"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::CONFLICT, "an approval must respect the same real iteration ceiling a normal /iterate call does");
     }
 
     #[tokio::test]

@@ -328,6 +328,18 @@
  .proposal-rationale{font-size:.8rem;color:var(--muted);margin-top:.15rem}
  .ok{color:var(--accent2)}
  .fail{color:var(--danger)}
+ /* Plan Canvas (operator ask, 2026-08-07): each block of a plan's own real
+    feedback text is a real click target -- "point at it," not retype a
+    review. Hover/focus affordance matches this app's other interactive
+    cards (win-btn, orb bubbles) -- a visible border-color shift, no layout
+    jump. */
+ .pc-plan-text{display:flex;flex-direction:column;gap:.4rem}
+ .pc-block{border:1px solid var(--border);border-radius:8px;padding:.5rem .7rem;cursor:pointer;font-size:.85rem}
+ .pc-block:hover,.pc-block:focus{border-color:var(--accent);outline:none}
+ .pc-block p:first-child{margin-top:0}
+ .pc-block p:last-child{margin-bottom:0}
+ .pc-annotation{border-left:2px solid var(--accent);background:rgba(217,138,79,.06);border-radius:0 6px 6px 0;
+                 padding:.4rem .6rem;margin-bottom:.4rem;font-size:.82rem}
  /* Flow panel: target (milestones) -> queue (backlog) -> what happened
     (history), connected by one visual line -- see renderFlowPanel's doc
     comment for why this is three honest sections, not one fabricated
@@ -715,6 +727,12 @@ const PANEL_DEFAULTS = {
   // below -- same reasoning as every other non-starter panel, one chip click
   // away rather than force-opened on a first-time user.
   openpoints: { title: 'Open Points',        x: 1064, y: 952,  w: 340, h: 300 },
+  // Real operator ask, verbatim, 2026-08-07: "ein echtes Plan Canvas panel:
+  // review plans by pointing, not retyping" -- see renderPlanCanvasPanel's own
+  // doc comment for the full design. Not in DEFAULT_VISIBLE_PANELS, same
+  // reasoning as every other non-starter panel: one launcher click away
+  // rather than force-opened before a run even has a plan iteration to review.
+  plancanvas: { title: 'Plan Canvas',        x: 1064, y: 16,   w: 460, h: 520 },
 };
 
 // Real operator ask, live 2026-08-07 ("die Piktogramme mit mouseover"): the
@@ -747,6 +765,7 @@ const PANEL_ICONS = {
   flow: '<polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/>',
   usage: '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
   openpoints: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+  plancanvas: '<path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/>',
 };
 function panelIconSvg(id) {
   const paths = PANEL_ICONS[id];
@@ -838,6 +857,7 @@ const REFRESHABLE_PANELS = {
   flow: (data) => renderFlowPanel(currentRun, data),
   usage: (data) => renderUsagePanel(data),
   openpoints: (data) => renderOpenPointsPanel(currentRun, data),
+  plancanvas: (data) => renderPlanCanvasPanel(currentRun, data),
 };
 const REFRESH_INTERVALS = [
   { seconds: 0, label: 'off' },
@@ -2466,7 +2486,7 @@ async function selectRun(id) {
     for (const pid of Object.keys(REFRESHABLE_PANELS)) lastRefreshedAt[pid] = Date.now();
   }
   await refreshRunsList();
-  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow', 'usage', 'openpoints']) {
+  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow', 'usage', 'openpoints', 'plancanvas']) {
     document.getElementById(`body-${panelId}`).innerHTML = '<span class="lede">Loading…</span>';
   }
   try {
@@ -2482,6 +2502,7 @@ async function selectRun(id) {
     renderMilestonesPanel(id, data);
     renderRequirementsPanel(id, data);
     renderOpenPointsPanel(id, data);
+    renderPlanCanvasPanel(id, data);
     // Real gap found live 2026-08-07: a fired check-in used to be visible ONLY as
     // a one-time toast right after the triggering iteration -- nothing persistent
     // survived a page reload, a different tab, or coming back later, and
@@ -2521,7 +2542,7 @@ async function selectRun(id) {
     renderUsagePanel(data);
     renderPanelToggleBar();
   } catch (e) {
-    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow', 'usage']) {
+    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow', 'usage', 'openpoints', 'plancanvas']) {
       document.getElementById(`body-${panelId}`).innerHTML = `<span class="status-line err">${e.message}</span>`;
     }
   }
@@ -4422,6 +4443,131 @@ function renderHistoryPanel(data) {
       ${requirementRefsHtml(h.requirement_indices)}
     </div>`).join('') || '<span class="lede">No iterations yet.</span>';
   body.innerHTML = `<div class="history">${history}</div>`;
+}
+
+// Real operator ask, verbatim, 2026-08-07: "ein echtes Plan Canvas panel: review
+// plans by pointing, not retyping". ecc-plan-canvas itself (ECC's own real tool)
+// is a single loopback-only local server keyed by file path -- no runs, no
+// ownership, no multiple concurrent reviewers -- incompatible with this
+// platform's own real multi-tenant, owner-scoped model. Rebuilt natively
+// instead: the same real "point at the thing you mean" UX (click a block of the
+// plan's own text, leave a comment anchored to it, instead of retyping a whole
+// review), backed by this run's own real state, verdicts feeding the exact same
+// gated `run_iteration` path every other real review already goes through.
+function renderPlanCanvasPanel(id, data) {
+  const body = document.getElementById('body-plancanvas');
+  const planIterations = (data.state.history || []).filter(h => h.stage === 'devsystem.plan');
+  const latestPlan = planIterations[planIterations.length - 1];
+  if (!latestPlan) {
+    body.innerHTML = `<span class="lede">No devsystem.plan iteration yet -- nothing real to review here.</span>`;
+    return;
+  }
+  // Real blocks, not a full markdown-block parse -- split on blank-line
+  // boundaries (the actual paragraph/list/heading structure real feedback text
+  // uses), each one independently clickable and independently annotatable.
+  const blocks = latestPlan.feedback.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+  const blocksHtml = blocks.map((block, i) => {
+    const snippet = truncate(block.replace(/\s+/g, ' '), 120);
+    return `<div class="pc-block" data-idx="${i}" data-snippet="${escapeHtml(snippet)}" tabindex="0" role="button"
+      title="Click to point at this block and leave an annotation">${renderMarkdown(block)}</div>`;
+  }).join('');
+
+  const annotations = data.state.plan_canvas_annotations || [];
+  const annotationsHtml = annotations.length
+    ? annotations.map(a => `
+      <div class="pc-annotation" data-id="${escapeHtml(a.id)}">
+        <div class="lede" style="font-size:.7rem">re: "${escapeHtml(a.anchor_snippet)}"</div>
+        <div>${escapeHtml(a.text)}</div>
+        <button type="button" class="secondary pc-remove-annotation" data-id="${escapeHtml(a.id)}" style="margin-top:.2rem">Remove</button>
+      </div>`).join('')
+    : '<span class="lede" style="font-size:.75rem">No annotations yet -- click a block of the plan above to point at it.</span>';
+
+  body.innerHTML = `
+    <div class="lede" style="font-size:.75rem;margin-bottom:.4rem">
+      Reviewing iteration ${latestPlan.iteration}'s real devsystem.plan feedback -- click any block below to point at it and leave an annotation, instead of retyping a whole review.
+    </div>
+    <div class="pc-plan-text">${blocksHtml}</div>
+    <div id="pc-annotate-form" style="display:none;margin-top:.4rem;padding:.5rem;border:1px dashed var(--border);border-radius:8px">
+      <div class="lede" style="font-size:.7rem" id="pc-annotate-target"></div>
+      <textarea id="pc-annotate-text" placeholder="What about this block?" style="margin-top:.3rem"></textarea>
+      <div style="margin-top:.3rem;display:flex;gap:.4rem">
+        <button type="button" id="pc-annotate-submit">Add annotation</button>
+        <button type="button" class="secondary" id="pc-annotate-cancel">Cancel</button>
+      </div>
+    </div>
+    <div class="lede" style="font-size:.72rem;margin-top:.6rem">Annotations (${annotations.length})</div>
+    <div id="pc-annotations">${annotationsHtml}</div>
+    <div style="margin-top:.6rem;display:flex;gap:.5rem">
+      <button type="button" id="pc-approve">Approve plan</button>
+      <button type="button" class="secondary" id="pc-request-changes">Request changes</button>
+    </div>
+    <div id="pc-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></div>
+  `;
+
+  const statusEl = document.getElementById('pc-status');
+  const showStatus = (text, isErr) => { statusEl.textContent = text; statusEl.className = 'status-line' + (isErr ? ' err' : ''); };
+
+  let pendingSnippet = null;
+  const form = document.getElementById('pc-annotate-form');
+  for (const el of body.querySelectorAll('.pc-block')) {
+    const activate = () => {
+      pendingSnippet = el.dataset.snippet;
+      document.getElementById('pc-annotate-target').textContent = `Annotating: "${pendingSnippet}"`;
+      document.getElementById('pc-annotate-text').value = '';
+      form.style.display = 'block';
+      document.getElementById('pc-annotate-text').focus();
+    };
+    el.addEventListener('click', activate);
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
+  }
+  document.getElementById('pc-annotate-cancel').onclick = () => { form.style.display = 'none'; };
+  document.getElementById('pc-annotate-submit').onclick = async () => {
+    const text = document.getElementById('pc-annotate-text').value.trim();
+    if (!text) { showStatus('annotation text must not be empty', true); return; }
+    try {
+      await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/plan-canvas/annotate`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ anchor_snippet: pendingSnippet, text }),
+      });
+      form.style.display = 'none';
+      await selectRun(id);
+    } catch (e) {
+      showStatus(e.message, true);
+    }
+  };
+  for (const btn of body.querySelectorAll('.pc-remove-annotation')) {
+    btn.onclick = async () => {
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/plan-canvas/annotations/${encodeURIComponent(btn.dataset.id)}/remove`, { method: 'POST' });
+        await selectRun(id);
+      } catch (e) {
+        showStatus(e.message, true);
+      }
+    };
+  }
+  document.getElementById('pc-approve').onclick = async () => {
+    try {
+      const result = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/plan-canvas/verdict`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verdict: 'approve' }),
+      });
+      showStatus(`Plan approved -- recorded as a real devsystem.review iteration (outcome: ${result.outcome}).`, false);
+      await selectRun(id);
+    } catch (e) {
+      showStatus(e.message, true);
+    }
+  };
+  document.getElementById('pc-request-changes').onclick = async () => {
+    if (!annotations.length) { showStatus('request changes needs at least one real annotation -- point at what needs to change first', true); return; }
+    try {
+      await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/plan-canvas/verdict`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ verdict: 'request_changes' }),
+      });
+      showStatus('Changes requested -- a real backlog item now names every annotation for the plan\'s next author.', false);
+      await selectRun(id);
+    } catch (e) {
+      showStatus(e.message, true);
+    }
+  };
 }
 
 // Real, new panel (#382 operator ask: "ein neues sichtbares Ablauf-Panel"):

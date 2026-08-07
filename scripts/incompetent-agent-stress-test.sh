@@ -818,10 +818,33 @@ check "no gate header means an honest None, never a fabricated identity" "None" 
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$actor_run"
 
 echo
+echo "[57] the real Plan Canvas panel (operator ask, 2026-08-07: 'review plans by pointing, not retyping') -- a real annotation anchored to a real block of the run's own devsystem.plan feedback, an approve verdict that goes through the SAME real ceiling gate a normal /iterate call does and folds into a real devsystem.review iteration (clearing annotations), and a request_changes verdict that requires a real annotation and leaves them in place as real backlog signal (#382 goal doc §8, 2026-08-07)"
+pc_run="plan-canvas-stress-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$pc_run\"}"
+no_plan_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$pc_run/plan-canvas/verdict" -H 'content-type: application/json' -d '{"verdict":"approve"}')
+check "approving with no devsystem.plan iteration yet is refused -- nothing real to review" "400" "$no_plan_status"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$pc_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.plan","feedback":"Phase 1: real work.\n\nPhase 2: more real work.","succeeded":true}'
+rc_no_annotation_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$pc_run/plan-canvas/verdict" -H 'content-type: application/json' -d '{"verdict":"request_changes"}')
+check "request_changes with zero annotations is refused -- not an actionable signal" "400" "$rc_no_annotation_status"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$pc_run/plan-canvas/annotate" -H 'content-type: application/json' \
+  -d '{"anchor_snippet":"Phase 2: more real work.","text":"Split this out."}'
+annotated_count=$(curl -s "$BASE/api/runs/$pc_run" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["state"]["plan_canvas_annotations"]))' 2>/dev/null)
+check "a real annotation anchored to a real plan block is persisted" "1" "$annotated_count"
+approve_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$pc_run/plan-canvas/verdict" -H 'content-type: application/json' -d '{"verdict":"approve"}')
+check "approve with a real annotation is accepted" "200" "$approve_status"
+post_approve=$(curl -s "$BASE/api/runs/$pc_run")
+cleared_count=$(echo "$post_approve" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["state"]["plan_canvas_annotations"]))' 2>/dev/null)
+check "approve clears the annotations -- the session concluded" "0" "$cleared_count"
+review_landed=$(echo "$post_approve" | python3 -c 'import json,sys; h=json.load(sys.stdin)["state"]["history"]; print(h[-1]["stage"] == "devsystem.review" and h[-1]["succeeded"])' 2>/dev/null)
+check "approve folds into a real, succeeded devsystem.review iteration" "True" "$review_landed"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$pc_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the fifty-six gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the fifty-seven gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."

@@ -522,6 +522,45 @@ pub struct RunState {
     /// reason.
     #[serde(default)]
     pub checkin_acknowledged_through: u32,
+    /// Real operator ask, verbatim intent, 2026-08-07: "ein echtes Plan Canvas
+    /// panel: review plans by pointing, not retyping" -- the plan-stage
+    /// human-review gate this project's own architecture has named since #382's
+    /// very first framing (ECC's `ecc-plan-canvas`), never actually built as a
+    /// real panel until now. `ecc-plan-canvas` itself is a real, working tool
+    /// (annotate-an-element-and-approve, CLI+JSON loop) but a fundamentally
+    /// different shape: a single loopback-only local server keyed by file path,
+    /// no concept of runs, ownership, or multiple concurrent reviewers at all --
+    /// incompatible with this platform's own real multi-tenant, owner-scoped
+    /// run model. Rebuilt natively instead: the same real "point at the thing
+    /// you mean" UX, backed by this run's own real state like everything else,
+    /// not a separate process/file/port to deploy and keep alive.
+    ///
+    /// A real, pending annotation anchored to a specific block of the run's
+    /// most recent `devsystem.plan` iteration's own feedback text -- exists
+    /// only between when a reviewer points at something and when they deliver
+    /// a verdict (`POST .../plan-canvas/verdict`): `approve` clears this list
+    /// (the session concluded, folded into a real `devsystem.review` iteration
+    /// instead); `request_changes` deliberately leaves it populated, so the
+    /// exact things pointed at stay visible to the plan's own next author, not
+    /// only summarized into free prose. `#[serde(default)]` so pre-existing
+    /// `state.json` files (no annotations recorded under a mechanism that
+    /// didn't exist yet) still load as empty.
+    #[serde(default)]
+    pub plan_canvas_annotations: Vec<PlanCanvasAnnotation>,
+}
+
+/// See [`RunState::plan_canvas_annotations`]'s own doc comment.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlanCanvasAnnotation {
+    pub id: String,
+    /// A real, short excerpt of the plan text the reviewer actually pointed
+    /// at -- not a CSS selector (this run's plan text isn't a fixed DOM
+    /// structure across reloads the way a static artifact file is), a real
+    /// snippet of the paragraph/block itself, so the annotation still means
+    /// something even if the underlying plan iteration is long gone from view.
+    pub anchor_snippet: String,
+    pub text: String,
+    pub created_at: u64,
 }
 
 /// True when this run has genuinely crossed a real `checkin_every` boundary (or
@@ -735,6 +774,7 @@ impl RunState {
             assistant_usage: AssistantUsageTotals::default(),
             chat_history: Vec::new(),
             checkin_acknowledged_through: 0,
+            plan_canvas_annotations: Vec::new(),
         }
     }
 }
