@@ -5187,4 +5187,32 @@ than chase a smaller, safer prune indefinitely (`--keep-storage`/`--filter until
 when actually tried) -- verified both cold rebuilds completed safely with the correct, current
 content each time.
 
+**Main-dev-loop firing, 2026-08-07 (ii) -- issue #23 fixed and closed: a real risk the backend
+already detected, surfaced where a human actually looks, without touching the still-open #382
+gating decision.** State check: no new operator input on any of the four standing decision points.
+Two more real evaluator issues arrived (`#23`, `#24`), on top of the four from the previous firing.
+
+`#23` is a direct, concrete instance of the exact question sitting unanswered on `#382`: an iteration
+was marked `succeeded:true` while its own feedback explicitly said the requirement wasn't met. The
+backend's own `succeeded_iteration_admits_a_defect` check (built earlier this session) already
+detects this precisely -- but only as a passive line in Risks & Stalled, a panel most users never
+open. Fixed the real, narrower gap without making the bigger, still-open call: the Process panel's
+own "last: ... (ok)" headline -- the one place every user actually looks -- now reads "⚠ ok, but
+admits a known defect" with a real amber border and the actual risk evidence inline, whenever the
+backend's already-existing check flags the latest iteration (matched by iteration number against the
+risk's own real evidence text, never re-deriving the check client-side, so it can't drift from the
+one real, tested source of truth). Deliberately additive only -- no change to what counts as
+succeeded, no submission-time block. `CADS-devsystem@6e756e8`, live-verified against the real
+`webconference-android` run at the exact iteration 15 the report named, full 100/100 stress harness
+stays clean. Commented on the issue naming the still-open `#382` decision explicitly, so this fix
+being real doesn't read as that bigger question having been quietly answered.
+
+Same disk situation as firing (hh): the floor blocked the first deploy attempt (1.9GB free), a full
+`docker builder prune -f` was the only thing that reliably freed enough, costing one more genuinely
+cold ~5-minute rebuild for what would otherwise have been a fast static-file change. Recorded here
+rather than re-litigated at length again -- the tradeoff and its reasoning are the same as before.
+
+`#24` (RAG search panel silently serves a stale index until a manual "Sync now") remains open, real,
+and well-scoped for a future firing -- not attempted in the same increment as `#23`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
