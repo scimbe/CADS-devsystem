@@ -4922,4 +4922,60 @@ errors), full 100/100 stress harness reconfirmed clean (pure client-side change,
 touched). Sent the operator the real screenshot directly rather than only describing the change, so
 they could judge the visual result themselves rather than trust a text description of a UI change.
 
+**Goal-driven-loop firing, 2026-08-07 (cc) -- second round of live orb-launcher feedback, three real
+bugs found and fixed; a real, explicitly-authorized production DB correction; docs refreshed.** State
+check: no new operator input on any of the four standing decision points.
+
+**Orb-launcher, round two** (`CADS-devsystem@2acac30`): live operator feedback said the ring-to-ring
+spacing "still not right" and asked to drop the permanent text labels entirely, replacing them with a
+real hover/focus tooltip everywhere (previously only the two outer tiers were icon-only). Doing that
+also solved the spacing complaint at its actual root: the permanent-label tiers needed a big radius
+only to fit a real ~140px text pill -- with no permanent label anywhere, every tier's radius is driven
+by real puck-only collision avoidance, verified with a standalone geometry model before shipping
+(four rings at 132/216/291/358px, real cross-tier clearance >=17px). The whole launcher's reach
+shrank from ~600px to ~360px as a direct, honest consequence, not a separate tuning pass. Two real
+bugs were caught by this round's own verification before shipping further, not after: the new
+tooltip was wrapping one character per line (`.orb-bubble`'s flex layout was sizing the
+absolutely-positioned label off its own narrow puck-sized box, fixed with `width:max-content`), and a
+live operator report that clicking outside the fan didn't close the menu turned out to be real --
+`#orb-bubbles` is itself a full-viewport layer sitting inside the overlay, so a click on empty space
+reported `e.target` as that element, never the overlay the close handler actually listened on. Also
+widened the fan's angle range and moved the filter box to sit directly beside the dot, both live
+operator asks. One earlier attempt within this same round chased the wrong lever (radius floors that
+weren't actually load-bearing, confirmed later via a standalone Python model of the exact same
+formula) and got a false-positive overlap reading from measuring puck bounding boxes mid-animation,
+before the enter-transition had settled -- caught by cross-checking against the real `--orb-x`/
+`--orb-y` custom properties the layout itself computes, not the rendered (still-animating) boxes.
+
+**A real, live, explicitly-authorized production database correction**: the operator asked to add
+four `scimbe+persona-*@gmail.com` accounts to `devsystem-demo.bunsenbrenner.org`'s access list. First
+attempt used the wrong tunnel (`a2a-demo`, from a `.first()` selector grabbing the first allowlist
+form on a multi-tunnel page) -- caught before declaring success (the page text didn't actually say
+"devsystem-demo"), reverted cleanly. Second attempt used a real login-based test with an account
+already on `site-34a13a96`'s own allowlist that then successfully reached `devsystem-demo` -- taken as
+proof `site-34a13a96` backed it. **The operator then did their own independent, real test (cleared
+cookies, real login attempts) and all four accounts still failed with `403`** -- the "proof" was
+wrong: that account had unrelated, pre-existing access to the real `devsystem-demo` tunnel from
+earlier session work, not because `site-34a13a96` backed it. Corrected by finding the real, live
+production control-plane running locally on this host (`ct-selfhost-control-plane-1`, a genuine
+SQLite-backed service, not a toy testbed) and reading its `subject_tunnels`/`tunnel_login_allowlist`
+tables directly: `devsystem-demo` was always its own tunnel, under its own distinct subject, never
+`workflow-maintainer`'s and never `site-34a13a96`'s. With the operator's explicit go-ahead to modify
+the database directly, reassigned the tunnel's `subject` to `workflow-maintainer`'s real account
+(a single `UPDATE`, not the admin-provision endpoint, which does an unconditional `INSERT` with no
+hostname uniqueness check and would have created a second, conflicting row rather than actually
+transfer anything) and inserted the real allowlist rows directly, the identical `INSERT OR REPLACE`
+shape the app's own code uses. Verified three ways before calling it done: the raw table, a live
+Playwright login as `workflow-maintainer` showing the tunnel now genuinely listed under their own
+portal account, and a screenshot of the real portal page. A second batch of four more persona emails
+(the `-glm` variants) added the same way once confirmed correct. Named honestly: the "decisive test"
+that led to the wrong first correction was a real methodology mistake -- testing with an account
+that already has unrelated prior access proves nothing about which tunnel currently backs a
+hostname; a fresh/uninvolved account (or, as it turned out, direct DB inspection) is what such a
+claim actually needs.
+
+**Docs**: `CADS-devsystem-docs@ad35ba9` refreshes the panel-launcher how-to for the label-free
+redesign -- new screenshots against the real redeployed flagship run, a new section on the
+click-outside-to-close fix, updated prose throughout.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
