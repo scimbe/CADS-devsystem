@@ -6336,4 +6336,50 @@ walkthrough (Playwright): a real block click, a real annotation, a real approve 
 lands a real review iteration, zero page errors. Stress harness gained check `[57]`; full suite now
 128/128.
 
+**Main-dev-loop firing, 2026-08-07 (zzz) -- issue 55: real provenance for a confirmed acceptance
+criterion, and a genuinely separate `created_by` field.** `verified_criteria` was `Vec<bool>` --
+the platform's own highest-stakes verdict signal (a human confirming a criterion is actually met)
+carried no record of who confirmed it or when, on any run, ever. The issue also flagged
+`proposed_by: null` on 65 of 68 requirements platform-wide as suspicious; checked this directly
+before touching anything and confirmed it is *not* the bug -- `proposed_by` already correctly means
+human-authored (`None`) vs. LLM-proposed (`Some(stage_tag)`), not "which account," and null on
+human-authored requirements is its correct, intended value. The issue's real, valid observation
+underneath that misreading -- no field anywhere records which real account created a requirement --
+still needed a fix, just a new one, not repurposing a field whose existing meaning would break.
+
+`verified_criteria` is now `Vec<Option<CriterionVerification { confirmed_by, confirmed_at }>>`, a
+custom deserializer migrating the legacy bool wire format honestly: `true` becomes `Some(confirmed,
+who/when unknown)`, `false`/`null` becomes `None` -- no fabricated attribution for history that never
+recorded one. `toggle_acceptance_criterion` now stamps `confirmed_by` from the same real, gate-
+verified `x-gate-email` session header this project has used for every other provenance fix this
+session, never a client-claimed value, and takes a caller-supplied `now: u64` rather than reading a
+clock itself, matching `render_requirements_markdown`'s own established pure/no-I/O discipline in
+the pipeline crate. Added `Requirement.created_by: Option<String>`, stamped the same real way on
+`add_requirement`, deliberately a new field alongside `proposed_by` rather than a replacement for it.
+
+This is the highest-stakes live-data migration this session has done -- it changes the *type* of an
+array's elements, not just adds an `Option` field. Backed up the real flagship `webconference-
+android` run's `state.json` before deploying and confirmed its exact pre-migration
+`verified_criteria` for requirement index 5 (one genuinely confirmed criterion among eighteen real
+requirements). After deploying, ran a full before/after comparison across all eighteen real
+requirements: zero data loss, zero fabrication -- the one real confirmed criterion correctly
+migrated to `{confirmed_by: null, confirmed_at: null}`, honestly pairing "yes, confirmed" with
+"who/when predates this fix, unknown" rather than inventing an actor or a time. `CADS-
+devsystem@cf14b5c`.
+
+New tests cover the legacy-bool migration against the real flagship run's own requirement-5 shape,
+a record with no `verified_criteria` field at all, a real confirmation round-tripping as a real
+object (not a bare bool), header-less toggles honestly recording no actor, un-confirming clearing
+the whole record, and the real gate-verified `created_by`/`confirmed_by` stamping never trusting a
+client-forged value. 160/160 pipeline lib tests, 215/215 web tests, zero warnings. GUI updated to
+render the new provenance (who/when, or an honest "no account on the session" / "predates provenance
+tracking" fallback) instead of a bare checkbox state. Live-verified the full add-requirement +
+toggle + un-toggle workflow against the deployed container. Stress harness gained check `[58]`; full
+suite now 131/131.
+
+The issue's own suggested "required evidence string" field was deliberately NOT implemented in this
+pass -- scoped to the minimum-viable actor+timestamp fix the issue itself framed as the core gap,
+matching this session's established practice of shipping a bounded slice rather than over-scoping
+one firing. Remains real, open, and noted as such in the follow-up issue comment.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
