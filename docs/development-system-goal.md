@@ -4288,4 +4288,33 @@ No source change ships from this firing; an honestly reported clean audit result
 increment, matching this project's own standing discipline of reporting clean rounds rather than
 manufacturing an unneeded change.
 
+**Goal-driven-loop firing, 2026-08-07 (b) -- a second clean investigative round, two real leads
+traced to ground.** State check: no new operator input on any of the three open `#382` checkpoints
+(still `scimbe @ 2026-08-06T20:14:26Z`), issue `#14` unchanged. Issue `#18`'s only comment turned out
+to be this loop's own earlier report (a real, tested self-service "request access" fix,
+`CADS-Tunnel@f4a7238`, deliberately left undeployed to the shared production control-plane pending
+operator go-ahead -- a fourth standing decision point, alongside the three on `#382`) -- not new
+human input. `#388` (external-LLM-lab onboarding, labor-setup.com) is a long, real thread but its
+last comment (`2026-08-05T21:47:08Z`) predates the last known `#382` checkpoint, so nothing new there
+either. CADS-Tunnel's own CI is fully green now (last run succeeded), confirming last firing's
+"queue finally cleared" note.
+
+Re-ran the full 90-assertion stress harness clean, then live-inspected the actual `webconference-
+android` flagship run's own real check-in output as a fresh DAU-lens pass -- found a real,
+reproducible anomaly: the persisted `state.json` has two entries both stamped `iteration: 8`
+(byte-identical, confirmed via direct comparison), with `iteration: 9` never used. Traced this to
+ground rather than assuming it was new: it is not. It's a historical artifact from a same-day
+overlapping-deploy race, already root-caused and already closed in this file's own earlier entries
+-- `duplicate_of_last_iteration` (byte-identical-submission rejection, shared across both the HTTP
+and the local CLI entry points) plus `write_lock`'s own real OS-thread-parallel test
+(`concurrent_iterations_against_the_same_run_lose_none_of_them`, 20 genuinely distinct concurrent
+submissions, asserted to land as exactly `1..=20` with no duplicates or gaps) already cover this bug
+class at both the within-process and cross-submission-content layers. The two stale `iteration: 8`
+records themselves are correctly left in place, unedited, per this project's own append-only history
+convention -- they predate the fix and are real history, not a live defect to paper over.
+
+No source change ships from this firing either -- two real leads, both traced fully to ground (one a
+non-new self-report, one an already-closed historical artifact), honestly reported as a clean round
+rather than manufacturing an unneeded change.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
