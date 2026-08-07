@@ -3643,4 +3643,29 @@ the button renders with the risk, clicked it, and confirmed the real DOM state a
 genuinely open, its window is genuinely visible. Screenshot confirms it visually. 190/190 web tests
 unchanged (pure frontend change); scratch run deleted after verification.
 
+**Goal-driven-loop firing, 2026-08-07 -- the second, harder half of the risk "Fix it" gap, closed
+with a real structured field, not a text-parsing shortcut.** State check: no new operator input on
+any of the three open `#382` checkpoints, no new labor-setup.com activity, stress harness clean
+(73/73) before starting. `no_price_ceiling` is the most frequently-hit real risk in this codebase's
+own runs (three simultaneous hits on `webconference-android` alone, per this doc's own earlier
+findings) and has the identical shape of always-safe fix as last firing's checkin-cadence case --
+except it needs per-role targeting, and the role's `stage_id`/`tag` only ever existed in `evidence`'s
+human-readable text. Parsing that in the frontend would be exactly the kind of invented signal this
+project's own discipline already rejects elsewhere (the vague-acceptance-criteria and defect-
+admission checks' own doc comments) -- so instead of taking that shortcut, added a real structured
+field: `RiskAnnotation.fix_target` (`RiskFixTarget{stage_id, tag}`), populated only at the
+`no_price_ceiling` call site, `None` everywhere else -- the other ten risk kinds still correctly get
+no fix button, deliberately, since they need real human judgment.
+
+The GUI's own fix now opens the New Iteration panel, checks "Propose a new stage," pre-fills
+`stage_id`/`tag` from the real `fix_target`, and focuses the price-ceiling field -- the same "flag,
+don't silently auto-correct" restraint as the checkin-cadence fix, never picking or submitting a
+number for the human. New hermetic test confirms `fix_target` is populated correctly for this one
+risk and stays `None` for an unrelated risk fired in the same run. Live-verified via Playwright
+against the real redeployed container: a real scratch run's embedded proposal for an unbounded
+`devsystem.load_test` role produced the real `fix_target` in `GET /api/runs/{id}`, and clicking
+"Fix it →" left `pr-stage-id`/`pr-tag` correctly pre-filled with `document.activeElement.id`
+genuinely `pr-price-ceiling`. Full stress harness (73/73) clean afterward.
+([`CADS-devsystem@e4f77e3`](https://github.com/scimbe/CADS-devsystem/commit/e4f77e3))
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
