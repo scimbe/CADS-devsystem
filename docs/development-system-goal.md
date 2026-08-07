@@ -5019,4 +5019,37 @@ Check `[3]`'s own mutation-test round is deferred to a future firing, honestly, 
 through on tight disk headroom right after a real space incident on the same host live services run
 on.
 
+**Main-dev-loop firing, 2026-08-07 (ee) -- a second real disk incident on the same host, this time
+during a redeploy, safely contained without any impact to the live services.** State check: no new
+operator input on any of the four standing decision points.
+
+Resumed the deferred check `[3]` round properly this time -- same mutation, hermetic test run with
+`CARGO_TARGET_DIR` pointed at a real named volume instead of the host bind-mount (the exact mistake
+that caused the previous incident), confirming the fix actually worked: the hermetic test failed
+precisely as expected (`expected 400, got 200`), and no `target/` directory landed in the repo this
+time. Redeploying the mutated binary to verify live is where this round hit a second, different real
+problem: `deploy-devsystem-web.sh`'s own `docker build` ran for 180+ seconds -- 3-5x its normal
+duration -- while the host's own root filesystem kept draining further (4.6GB free at the start of
+this firing down to 2.4GB mid-build), the same disk this host's several live services (this project's
+own `devsystem-web`, the real `ct-selfhost-control-plane-1` control-plane, and multiple demo tunnels)
+depend on. Killed the build rather than let it keep running -- confirmed via its own real log
+(`ERROR: failed to build: failed to solve: Canceled: context canceled`) that it was genuinely still
+compiling, not hung, but continuing to risk exhausting the disk again wasn't worth finishing one
+scratch verification build. The live `devsystem-web` container was never touched by the aborted
+build (a fresh image is only swapped in after a successful build) -- confirmed still serving real
+`200`s throughout.
+
+Reverted the mutation cleanly from the pre-mutation backup (same discipline as every prior round --
+no source change ships). Checked whether the currently-deployed binary (reporting an older git SHA,
+`2acac30`, since the aborted redeploy never got far enough to produce a new image) is a real
+functional staleness risk: `git diff 2acac30..HEAD -- web/src/main.rs web/static/index.html` is
+empty -- every commit since then touched only the goal doc and the CI workflow YAML, never the
+actual deployed application code. Production is content-identical to `HEAD` right now; the git-SHA
+mismatch is a cosmetic version-string gap only, not a real one, so no urgent redeploy is needed.
+
+Checks `[3]` through `[35]` remain the honest mutation-test backlog. Given this host has now hit two
+real disk incidents in one session, a future firing should treat available disk headroom as a real
+precondition to check before starting any local hermetic build, not just react to failures after the
+fact -- worth naming as a process gap in its own right, per this document's own governing principle.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
