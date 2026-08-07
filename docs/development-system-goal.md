@@ -4711,4 +4711,29 @@ sequences is real and still open, worth a genuine process fix in a future firing
 passing `--no-cache` after a mutation-test cycle, or a real post-deploy content check less fragile
 than `strings`) rather than assumed away by today's fix.
 
+**Goal-driven-loop firing, 2026-08-07 (s) -- closing the residual deploy-cache risk named honestly
+last firing, with a real, general fix instead of another specific-behavior patch.** State check: no
+new operator input on any of the four standing decision points, `#13`/`#14`/PRs unchanged.
+
+Last firing found and fixed a real live stress-check failure caused by a stale Docker build cache,
+and explicitly flagged the existing mitigation (a single behavioral smoke test proving
+`duplicate_of_last_iteration` matches source) as real but insufficient -- it can pass clean while a
+completely different, unrelated feature is silently stale, which is exactly what happened. Rather
+than add yet another one-behavior proxy (which wouldn't scale as more features ship), built the
+general fix: `GET /api/version` reports `DEVSYSTEM_GIT_SHA`, baked into the image at build time via a
+new `web/Dockerfile` `ARG`/`ENV` (`deploy-devsystem-web.sh` passes `--build-arg GIT_SHA="$(git
+rev-parse HEAD)"`). The deploy script now compares the running container's own reported build SHA
+against the real, current source immediately after startup and fails loudly on any mismatch --
+catches staleness in *any* feature, not just whichever one a smoke test happens to check.
+
+1 new hermetic test (the honestly-testable "unset" case; the "set" case is exercised live by the
+deploy script itself against a real running container -- mutating a process-global env var in a
+multi-threaded test binary would race unpredictably). 199-test web suite green, clippy-clean.
+Live-verified end to end, twice: once against the pre-commit source, once again after committing --
+both times the script printed "Git SHA verified: running container matches real current source
+(<the real SHA>)" and `/api/version` reported it correctly. Cleaned up two leftover scratch runs
+directly traceable to an earlier mutation test this session (check `[39]`'s own no-op'd delete),
+not a bulk-deletion policy call. 98/98 stress harness stays clean. Committed to
+`CADS-devsystem@e8af000`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
