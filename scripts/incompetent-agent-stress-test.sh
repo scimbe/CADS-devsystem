@@ -692,10 +692,23 @@ print("yes" if re.fullmatch(r"[0-9a-f]{40}", sha) else f"no ({sha!r})")' 2>/dev/
 check "GET /api/version reports a real 40-hex-char git SHA, not unknown or malformed" "yes" "$version_sha"
 
 echo
+echo "[49] devsystem_assistant's own separate GET /version (a genuinely different binary and deploy path, deploy-devsystem-assistant.sh, not devsystem-web's) must also report a real, live build SHA -- honestly skipped, not failed, if no assistant is reachable at its default local address on this host (a real, optional dependency, not every environment running this harness has one deployed) (#382 goal doc §8, 2026-08-07)"
+ASSISTANT_ADDR="${DEVSYSTEM_ASSISTANT_ADDR:-172.17.0.1:8791}"
+if curl -sS --max-time 2 -o /dev/null "http://$ASSISTANT_ADDR/version" 2>/dev/null; then
+  assistant_version_sha=$(curl -s --max-time 2 "http://$ASSISTANT_ADDR/version" | python3 -c 'import json,sys,re
+d = json.load(sys.stdin)
+sha = d.get("git_sha", "")
+print("yes" if re.fullmatch(r"[0-9a-f]{40}", sha) else f"no ({sha!r})")' 2>/dev/null)
+  check "devsystem_assistant's own GET /version reports a real 40-hex-char git SHA, not unknown or malformed" "yes" "$assistant_version_sha"
+else
+  echo "  SKIP: no devsystem_assistant reachable at http://$ASSISTANT_ADDR -- not deployed on this host, or listening elsewhere (override with \$DEVSYSTEM_ASSISTANT_ADDR)"
+fi
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the forty-eight gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the forty-nine gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
