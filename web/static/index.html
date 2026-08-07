@@ -3478,6 +3478,32 @@ function wireRepoForm(id) {
   });
 }
 
+// DAU lens (#382 goal doc §7/§8), real gap found live 2026-08-07: `renderRisksPanel`
+// below has always just named a flagged risk as inert text -- unlike the sibling
+// `stalledPanel` right after it, whose buttons already lead the human straight to
+// a real fix (`setSelectedStage`). Same class of gap this session already closed
+// for CADS-Tunnel's own login-gate denial page (issue #18): flagging a problem
+// isn't the same as leading a good-faith-but-fallible user to a good outcome.
+// Deliberately scoped to the ONE risk kind with an unambiguous, always-safe,
+// run-level fix (no per-role/stage targeting needed, unlike most of the other
+// eleven) -- those others genuinely need human judgment (a vague acceptance
+// criterion, an admitted defect, a change touching auth/security), where an
+// automatic "fix it" button would be dishonest, not helpful, per this project's
+// own "flag, don't silently auto-correct" discipline (see saveCriteria's own
+// bounds-check comment above for the same restraint in the other direction).
+const RISK_FIXES = {
+  'mandatory check-in cadence effectively disabled': {
+    buttonLabel: 'Fix it →',
+    apply: () => {
+      criteriaOpen = true;
+      showPanel('healthcrit');
+      if (currentRunData) renderHealthCriteriaPanel(currentRun, currentRunData);
+      const input = document.getElementById('cr-checkin-every');
+      if (input) { input.focus(); input.select(); }
+    },
+  },
+};
+
 function renderRisksPanel(data) {
   const body = document.getElementById('body-risks');
   const risks = data.risks || [];
@@ -3485,7 +3511,13 @@ function renderRisksPanel(data) {
     <div class="risk-panel">
       <div class="title">⚠ ${risks.length} preflight risk finding(s)</div>
       Mechanical checks over this run's history, not an LLM guess:
-      ${risks.map(r => `<div class="risk-item"><b>${escapeHtml(r.label)}</b> -- ${escapeHtml(r.evidence)}</div>`).join('')}
+      ${risks.map(r => {
+        const fix = RISK_FIXES[r.label];
+        const fixBtn = fix
+          ? ` <button type="button" class="secondary risk-fix" data-risk-label="${escapeHtml(r.label)}">${escapeHtml(fix.buttonLabel)}</button>`
+          : '';
+        return `<div class="risk-item"><b>${escapeHtml(r.label)}</b> -- ${escapeHtml(r.evidence)}${fixBtn}</div>`;
+      }).join('')}
     </div>` : '';
 
   const stalled = data.stalled_stages || [];
@@ -3502,6 +3534,9 @@ function renderRisksPanel(data) {
   body.innerHTML = (riskPanel + stalledPanel) || '<span class="lede">Nothing flagged right now.</span>';
   for (const btn of body.querySelectorAll('.stalled-fill')) {
     btn.onclick = () => setSelectedStage(btn.dataset.stage);
+  }
+  for (const btn of body.querySelectorAll('.risk-fix')) {
+    btn.onclick = () => RISK_FIXES[btn.dataset.riskLabel].apply();
   }
 }
 
