@@ -286,6 +286,83 @@ pub fn validate_feedback(feedback: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A submitted iteration's `stage` name -- short, identifier-shaped, unlike
+/// `feedback`'s free-flowing prose, so 200 characters (not `feedback`'s much
+/// looser bound) is generous for any real role tag while still finite.
+const MAX_STAGE_LEN: usize = 200;
+
+/// Real evaluator finding, issue #49, 2026-08-07: the mandatory review gate itself
+/// (`toggle_requirement`) is sound -- six separate attempts to fake a review all
+/// correctly got a real `409`. But the gate's entire notion of "a review happened"
+/// is keyed on one field, `IterationRecord.stage`, and until this fix `stage` was
+/// the one free-text field in this whole API with no validation at all: not
+/// non-empty, not length-capped, not checked against the run's own declared roles.
+/// Live-confirmed before fixing: `stage: ""`, `stage: "   "`, and a 5,000-character
+/// `stage` all got a real `200` and were stored verbatim; `stage:
+/// "devsystem.architekt-undeclared-probe"` (naming no role this run ever declared)
+/// was accepted identically to a real role's own tag, with no auction ever having
+/// convened for it. The user-visible trap: a reviewer who submits
+/// `"  DEVSYSTEM.REVIEW  "` (case/whitespace near-miss) gets a real `200` and a
+/// real, visible history entry that *reads* as a completed review -- the review
+/// gate's own exact-match comparison then silently doesn't count it, with nothing
+/// in the UI ever explaining why. A gate is only as strong as the integrity of what
+/// it reads.
+///
+/// Checked against the RAW, untrimmed `stage` (not a trimmed copy) for role
+/// membership deliberately -- trimming first would let exactly the near-miss case
+/// above (correct role name, stray whitespace) silently pass this check while still
+/// failing the review gate's own later exact match, reintroducing the identical
+/// trap one step removed. Failing loudly here, at submission time, is the fix
+/// suggestion #2 explicitly asks for.
+///
+/// `same_submission_proposals` is deliberately part of the real, valid set too --
+/// the self-optimizing pipeline's own documented mechanism lets a role-filler
+/// propose a brand-new stage AND report its own work under that exact stage name
+/// in the identical submission (`apply_proposal` runs after this check, so the new
+/// role doesn't exist in `spec.roles` yet at this point). Checking only the
+/// pre-existing spec would incorrectly reject that real, intended case.
+///
+/// A stage in [`ALL_STAGES`] is deliberately valid regardless of `spec.roles` too
+/// -- confirmed by re-checking the real flagship `webconference-android` run
+/// before shipping this: its own real history genuinely uses `devsystem.improve`
+/// (self-optimization iterations, e.g. adding a real requirement or proposing a
+/// new role) despite `improve` never being, and never needing to be, an
+/// auction-backed role in `spec.roles` -- it's the mechanism *by which* new roles
+/// get proposed in the first place, so requiring it to already be a declared role
+/// would be circular. `spec.roles` is the auction-backed *subset* of the seven
+/// canonical stages a given run has chosen to make biddable, not the complete set
+/// of valid stage names -- restricting to only `spec.roles` would have broken this
+/// real, established, correct usage, not just a hypothetical one.
+pub fn validate_stage(stage: &str, spec: &PipelineSpec, same_submission_proposals: &[StageProposal]) -> Result<(), String> {
+    if stage.trim().is_empty() {
+        return Err("stage must not be empty".to_string());
+    }
+    let len = stage.chars().count();
+    if len > MAX_STAGE_LEN {
+        return Err(format!("stage must be at most {MAX_STAGE_LEN} characters, got {len}"));
+    }
+    if contains_bidi_control_char(stage) {
+        return Err(
+            "stage contains a Unicode bidi control character (e.g. a right-to-left override) -- \
+             these can make the visually displayed text not match what's actually stored"
+                .to_string(),
+        );
+    }
+    let canonical = ALL_STAGES.contains(&stage);
+    let declared_already = spec.roles.iter().any(|r| r.service == ServiceType::Custom(stage.to_string()));
+    let declared_this_submission = same_submission_proposals.iter().any(|p| p.stage_id == stage);
+    if !canonical && !declared_already && !declared_this_submission {
+        return Err(format!(
+            "stage {stage:?} is not one of this project's seven canonical pipeline stages, does not name \
+             any role currently declared in this run's own PipelineSpec, and this submission's own \
+             proposals (if any) don't declare it either -- check spelling/case/whitespace against the \
+             run's real roles (GET /api/runs/{{id}}), or include a matching proposal to declare it as a \
+             new stage in this same submission"
+        ));
+    }
+    Ok(())
+}
+
 /// Explicit, bounded termination criteria for one run's "super loop" (#382 §"Abbruch
 /// kriterien"): the pipeline's own self-optimization is iterative, not unsupervised
 /// forever -- these numbers are what make it a *bounded* loop.
@@ -651,6 +728,91 @@ mod tests {
         assert!(validate_feedback("a real, non-empty account of what happened").is_ok());
         assert!(validate_feedback("").is_err());
         assert!(validate_feedback("   ").is_err(), "whitespace-only must count as empty, not just byte-empty");
+    }
+
+    #[test]
+    fn validate_stage_rejects_empty_or_whitespace_only_stage() {
+        let spec = plan_only_spec("stage-run", None);
+        assert!(validate_stage("", &spec, &[]).is_err());
+        assert!(validate_stage("   ", &spec, &[]).is_err(), "whitespace-only must count as empty, not just byte-empty");
+    }
+
+    #[test]
+    fn validate_stage_rejects_a_stage_over_the_length_cap() {
+        let spec = plan_only_spec("stage-run", None);
+        let huge = "x".repeat(5_000);
+        assert!(validate_stage(&huge, &spec, &[]).is_err());
+        let at_cap = "x".repeat(MAX_STAGE_LEN);
+        assert!(validate_stage(&at_cap, &spec, &[]).is_err(), "a stage this long names no real role and no canonical stage, so it's still rejected on membership grounds even though it's within the length cap");
+    }
+
+    #[test]
+    fn validate_stage_accepts_any_canonical_all_stages_member_even_with_no_declared_role() {
+        // The real, live flagship webconference-android run's own case: devsystem.improve
+        // is used in real history despite never being a declared role in spec.roles --
+        // requiring it to already be declared would be circular, since it's the mechanism
+        // that proposes other roles in the first place.
+        let spec = plan_only_spec("stage-run", None);
+        for stage in ALL_STAGES {
+            assert!(validate_stage(stage, &spec, &[]).is_ok(), "canonical stage {stage:?} must be valid regardless of spec.roles");
+        }
+    }
+
+    #[test]
+    fn validate_stage_accepts_a_role_declared_in_the_runs_own_spec() {
+        // full_spec's own seven roles are already covered by the ALL_STAGES test above --
+        // exercise the spec.roles path with a genuinely non-canonical custom role instead.
+        let mut spec = plan_only_spec("stage-run", None);
+        spec.roles.push(RequiredRole {
+            service: ServiceType::Custom("devsystem.android_native_bridge".to_string()),
+            units: 1,
+            tag: "android_native_bridge".to_string(),
+            selection_policy: None,
+        });
+        assert!(validate_stage("devsystem.android_native_bridge", &spec, &[]).is_ok());
+    }
+
+    #[test]
+    fn validate_stage_accepts_a_same_submission_proposed_stage_not_yet_in_spec_roles() {
+        // The self-optimizing pipeline's own real pattern: a role-filler proposes a new
+        // stage AND reports its own work under that exact stage name in the same
+        // submission -- apply_proposal runs after this check, so the new role doesn't
+        // exist in spec.roles yet at validation time.
+        let spec = plan_only_spec("stage-run", None);
+        let proposal = StageProposal {
+            proposed_by: "devsystem.improve".to_string(),
+            stage_id: "devsystem.android_native_bridge".to_string(),
+            tag: "android_native_bridge".to_string(),
+            rationale: "real android-specific work needs its own stage".to_string(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: None,
+        };
+        assert!(validate_stage("devsystem.android_native_bridge", &spec, std::slice::from_ref(&proposal)).is_ok());
+        assert!(
+            validate_stage("devsystem.some_other_undeclared_stage", &spec, std::slice::from_ref(&proposal)).is_err(),
+            "a stage naming no role, no canonical stage, and no matching proposal in this batch must still be rejected"
+        );
+    }
+
+    #[test]
+    fn validate_stage_rejects_a_genuinely_undeclared_non_canonical_stage() {
+        // Live repro from issue #49: a role/stage name this run never declared and
+        // never proposed must not be accepted identically to a real one.
+        let spec = plan_only_spec("stage-run", None);
+        let err = validate_stage("devsystem.architekt-undeclared-probe", &spec, &[]).unwrap_err();
+        assert!(err.contains("architekt-undeclared-probe"), "the error should name the real rejected stage: {err}");
+    }
+
+    #[test]
+    fn validate_stage_rejects_a_case_or_whitespace_near_miss_on_a_real_declared_role() {
+        // Live repro from issue #49: "  DEVSYSTEM.REVIEW  " must not silently pass this
+        // check only to then fail the review gate's own later exact-match comparison
+        // with no explanation anywhere. Checked against the raw, untrimmed stage on
+        // purpose -- see validate_stage's own doc comment.
+        let spec = full_spec("stage-run", None);
+        assert!(validate_stage("devsystem.review", &spec, &[]).is_ok(), "the real, exact declared stage must still work");
+        assert!(validate_stage("  DEVSYSTEM.REVIEW  ", &spec, &[]).is_err(), "case/whitespace near-misses must be rejected, not silently accepted then silently ignored by the review gate");
     }
 
     #[test]

@@ -711,10 +711,35 @@ else
 fi
 
 echo
+echo "[50] a real, live iteration's own 'stage' field -- the exact field the mandatory review gate keys 'a review happened' on -- must reject empty/whitespace/oversized/undeclared values, but still accept every canonical stage name even with no matching declared role (the real, live devsystem.improve case: it is the self-optimization mechanism that proposes other roles, so requiring it pre-declared would be circular), and reject a case/whitespace near-miss on a real declared stage instead of silently accepting it and then silently failing the review gate's own later exact match with no explanation anywhere (issue #49, #382 goal doc §8, 2026-08-07)"
+stage_run="stage-validation-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$stage_run\"}"
+empty_stage_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$stage_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"","feedback":"x","succeeded":true}')
+check "an empty stage is rejected" "400" "$empty_stage_status"
+whitespace_stage_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$stage_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"   ","feedback":"x","succeeded":true}')
+check "a whitespace-only stage is rejected" "400" "$whitespace_stage_status"
+huge_stage=$(python3 -c "print('x'*5000)")
+huge_stage_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$stage_run/iterate" -H 'content-type: application/json' \
+  -d "{\"stage\":\"$huge_stage\",\"feedback\":\"x\",\"succeeded\":true}")
+check "a 5000-character stage is rejected" "400" "$huge_stage_status"
+undeclared_stage_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$stage_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.architekt-undeclared-probe","feedback":"x","succeeded":true}')
+check "a genuinely undeclared, non-canonical stage is rejected" "400" "$undeclared_stage_status"
+canonical_improve_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$stage_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.improve","feedback":"real self-optimization work","succeeded":true}')
+check "a canonical stage (devsystem.improve) is accepted even with no declared role for it" "200" "$canonical_improve_status"
+near_miss_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$stage_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"  DEVSYSTEM.REVIEW  ","feedback":"x","succeeded":true}')
+check "a case/whitespace near-miss on a real canonical stage is rejected, not silently accepted" "400" "$near_miss_status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$stage_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the forty-nine gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the fifty gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."

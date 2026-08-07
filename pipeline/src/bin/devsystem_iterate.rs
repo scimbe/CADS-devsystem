@@ -29,7 +29,7 @@
 
 use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration};
 use devsystem_pipeline::runner::{load_or_init_run, persist_run, run_iteration, valid_run_id, RunOutcome};
-use devsystem_pipeline::{validate_feedback, validate_proposals, IterationRecord};
+use devsystem_pipeline::{validate_feedback, validate_proposals, validate_stage, IterationRecord};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -107,6 +107,14 @@ fn run_local(run_id: &str, record_path: &str) -> std::process::ExitCode {
     // whitespace-only feedback matters. Checked before any write happens, same as
     // the proposals check.
     if let Err(e) = validate_feedback(&record.feedback) {
+        eprintln!("rejected: {e}");
+        return std::process::ExitCode::FAILURE;
+    }
+    // Real evaluator finding, issue #49: same "two real entry points, one bug
+    // class" shape as the checks above -- see validate_stage's own doc comment
+    // (pipeline crate) for the full live repro. Checked before any write happens,
+    // same as the other checks.
+    if let Err(e) = validate_stage(&record.stage, &spec, &record.proposals) {
         eprintln!("rejected: {e}");
         return std::process::ExitCode::FAILURE;
     }

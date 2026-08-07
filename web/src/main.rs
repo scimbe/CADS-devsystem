@@ -24,7 +24,7 @@ use devsystem_pipeline::runner::{
     Milestone, PendingDeleteRunProposal, PendingIssueProposal, PendingNextStepDraft, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal,
     Requirement, RoleFillMode, RunOutcome, RunState,
 };
-use devsystem_pipeline::{apply_proposal, contains_bidi_control_char, validate_feedback, validate_proposals, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal, MAX_ROLE_UNITS};
+use devsystem_pipeline::{apply_proposal, contains_bidi_control_char, validate_feedback, validate_proposals, validate_stage, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal, MAX_ROLE_UNITS};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
 use ct_common::pipeline::SelectionState;
 use serde::{Deserialize, Serialize};
@@ -1220,6 +1220,15 @@ async fn iterate_run(
     // `devsystem_pipeline::validate_proposals` so every real entry point shares the
     // identical gate instead of each needing to remember its own copy.
     if let Err(e) = validate_proposals(&body.proposals) {
+        return (StatusCode::BAD_REQUEST, e).into_response();
+    }
+    // Real evaluator finding, issue #49: the mandatory review gate's entire notion
+    // of "a review happened" is keyed on this exact field, and until this fix it was
+    // the one free-text field in this whole API with no validation of any kind --
+    // see `validate_stage`'s own doc comment (pipeline crate) for the full live
+    // repro (empty/whitespace/5,000-char stages, and an undeclared role accepted
+    // identically to a real one).
+    if let Err(e) = validate_stage(&body.stage, &spec, &body.proposals) {
         return (StatusCode::BAD_REQUEST, e).into_response();
     }
     // Real idempotency guard, found necessary live (2026-08-05): a same-day window of
@@ -4621,14 +4630,23 @@ mod tests {
         app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "process-risk-run"}))).await.unwrap();
 
         for i in 0..3 {
-            app.clone()
-                .oneshot(json_request(
-                    "POST",
-                    "/api/runs/process-risk-run/iterate",
-                    serde_json::json!({"stage": "devsystem.android_native_bridge", "feedback": format!("real work {i}"), "succeeded": true}),
-                ))
-                .await
-                .unwrap();
+            // Only the first submission needs to declare the custom stage -- once
+            // `apply_proposal` adds it to the live spec, every later iterate call under
+            // the same stage name is already role-declared.
+            let mut body = serde_json::json!({"stage": "devsystem.android_native_bridge", "feedback": format!("real work {i}"), "succeeded": true});
+            if i == 0 {
+                body["proposals"] = serde_json::json!([{
+                    "proposed_by": "devsystem.improve",
+                    "stage_id": "devsystem.android_native_bridge",
+                    "tag": "android_native_bridge",
+                    "rationale": "real android-specific work needs its own stage",
+                    "use_existing_service": null,
+                    "units": 1,
+                    "price_ceiling": null
+                }]);
+            }
+            let response = app.clone().oneshot(json_request("POST", "/api/runs/process-risk-run/iterate", body)).await.unwrap();
+            assert_eq!(response.status(), SC::OK);
         }
 
         let response = app.clone().oneshot(Request::builder().uri("/api/runs/process-risk-run").body(Body::empty()).unwrap()).await.unwrap();
@@ -8069,7 +8087,7 @@ exit 1"#);
             .oneshot(json_request(
                 "POST",
                 "/api/runs/iter-run/iterate",
-                serde_json::json!({"stage": "implement", "feedback": "real progress", "succeeded": true}),
+                serde_json::json!({"stage": "devsystem.implement", "feedback": "real progress", "succeeded": true}),
             ))
             .await
             .unwrap();
@@ -8105,7 +8123,7 @@ exit 1"#);
                     "/api/runs/id-run/iterate",
                     // A client-supplied id/submitted_at must be ignored -- the
                     // server's own values are the only ones that count.
-                    serde_json::json!({"stage": "implement", "feedback": format!("real progress {i}"), "succeeded": true, "id": "client-forged-id", "submitted_at": 1}),
+                    serde_json::json!({"stage": "devsystem.implement", "feedback": format!("real progress {i}"), "succeeded": true, "id": "client-forged-id", "submitted_at": 1}),
                 ))
                 .await
                 .unwrap();
@@ -8179,7 +8197,7 @@ exit 1"#);
             .oneshot(json_request(
                 "POST",
                 "/api/runs/trace-run/iterate",
-                serde_json::json!({"stage": "implement", "feedback": "addressed the requirement", "succeeded": true, "requirement_indices": [0]}),
+                serde_json::json!({"stage": "devsystem.implement", "feedback": "addressed the requirement", "succeeded": true, "requirement_indices": [0]}),
             ))
             .await
             .unwrap();
@@ -8357,7 +8375,7 @@ exit 1"#);
                 .oneshot(json_request(
                     "POST",
                     "/api/runs/empty-feedback-run/iterate",
-                    serde_json::json!({"stage": "implement", "feedback": feedback, "succeeded": true}),
+                    serde_json::json!({"stage": "devsystem.implement", "feedback": feedback, "succeeded": true}),
                 ))
                 .await
                 .unwrap();
@@ -8368,7 +8386,7 @@ exit 1"#);
             .oneshot(json_request(
                 "POST",
                 "/api/runs/empty-feedback-run/iterate",
-                serde_json::json!({"stage": "implement", "feedback": "a real, non-empty account of what happened", "succeeded": true}),
+                serde_json::json!({"stage": "devsystem.implement", "feedback": "a real, non-empty account of what happened", "succeeded": true}),
             ))
             .await
             .unwrap();
