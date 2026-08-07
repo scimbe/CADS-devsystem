@@ -6303,4 +6303,37 @@ process with no browser session is captured too) was deliberately NOT attempted 
 correlating live auction state at accept time, which isn't durably retained today, and is materially
 harder, separate work. Remains real, open.
 
+**Main-dev-loop firing, 2026-08-07 (yyy) -- a real Plan Canvas panel, direct operator request.** Not
+this loop's own self-selected next issue -- the operator asked directly, verbatim: "ein echtes Plan
+Canvas panel: review plans by pointing, not retyping." This project's own architecture has named
+ECC's `ecc-plan-canvas` as the intended plan-stage human-review mechanism since #382's very first
+framing, never actually built as a real panel until now.
+
+Investigated `ecc-plan-canvas` directly before building anything, rather than assuming what it does:
+a real, working tool (click/highlight an element of a rendered artifact to leave an anchored
+annotation, chat, deliver an Approve/Request-changes verdict, CLI+JSON loop) -- but architecturally
+incompatible with this platform as-is: a single loopback-only local server keyed by file path, no
+concept of runs, ownership, or multiple concurrent reviewers. Surfaced this fork honestly to the
+operator via `AskUserQuestion` rather than guessing which of two materially-different-cost paths to
+take -- native reimplementation vs. reverse-proxying the real tool through Caddy. Operator chose
+native.
+
+Built the same real "point at it" UX backed by this run's own real state: `RunState.plan_canvas_
+annotations` (id, anchor_snippet, text, created_at), three real endpoints (`annotate`, `.../remove`,
+`verdict`), and a new GUI panel splitting a run's most recent `devsystem.plan` iteration's feedback
+into real, independently-clickable blocks. `approve` folds the session into a real `devsystem.review`
+iteration through the *exact same* real gates a normal `/iterate` call goes through (live-verified:
+an approval genuinely respects the same iteration ceiling a normal submission does) -- not a
+separate, less-guarded path just because it originated from a friendlier panel. `request_changes`
+requires at least one real annotation (asking for changes with nothing pointed at is not an
+actionable signal) and deliberately leaves them in place as a real backlog item, so the plan's next
+author sees exactly what was pointed at, not a summary that lost the anchors. `CADS-devsystem@a536113`.
+
+New tests cover the full annotate-then-approve workflow, request-changes' own requirement and
+persistence, field validation, removal, and the shared-gate proof. 157/157 pipeline lib tests,
+212/212 web tests, zero warnings. Live-verified at the API level and with a real headless-browser
+walkthrough (Playwright): a real block click, a real annotation, a real approve that clears it and
+lands a real review iteration, zero page errors. Stress harness gained check `[57]`; full suite now
+128/128.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
