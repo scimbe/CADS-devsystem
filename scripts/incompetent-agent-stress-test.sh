@@ -103,6 +103,18 @@ if [ -n "$proposal_id" ]; then
   check "approving the unbounded proposal succeeds (it's a valid proposal, just an unbounded one)" "200" "$status"
   risk_present=$(curl -s "$BASE/api/runs/$RUN" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if any(r["label"]=="no price ceiling set" for r in d["risks"]) else "no")' 2>/dev/null)
   check "the run now shows the real 'no price ceiling set' risk" "yes" "$risk_present"
+  # Real regression guard, added 2026-08-07 alongside the risk panel's own
+  # "Fix it" GUI action (CADS-devsystem@e4f77e3): the finding must carry a
+  # real, structured fix_target (stage_id/tag) the GUI reads to pre-fill the
+  # re-propose form -- not just the human-readable label/evidence checked
+  # above. A silent regression here wouldn't 400/409 anywhere; it would just
+  # make the GUI's own Fix it button quietly stop pre-filling anything.
+  fix_target_ok=$(curl -s "$BASE/api/runs/$RUN" | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+f = next((r for r in d["risks"] if r["label"] == "no price ceiling set"), None)
+t = (f or {}).get("fix_target") or {}
+print("yes" if t.get("stage_id") == "devsystem.harness_test_role" and t.get("tag") == "harness_test_role" else "no")' 2>/dev/null)
+  check "the finding's fix_target names the real role, for the GUI's own Fix it action" "yes" "$fix_target_ok"
 else
   echo "  FAIL: could not parse a proposal id from propose_stage's real response -- $propose_body"
   FAIL=$((FAIL + 1))
@@ -483,6 +495,18 @@ status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$dup_run
   -d '{"stage":"devsystem.plan","feedback":"a genuinely different feedback string this time","succeeded":true}')
 check "a genuinely different submission right after still succeeds -- not a blanket same-stage block" "200" "$status"
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$dup_run"
+
+echo
+echo "[38] the check-in-cadence risk must fire for real and carry no fix_target -- that field is real, structured data for the ONE risk kind (no_price_ceiling) with a safe automatic fix, not a generic field every risk gets"
+cadence_run="${RUN}-cadence-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$cadence_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$cadence_run/criteria" -H 'content-type: application/json' -d '{"max_iterations":20,"max_consecutive_failures":3,"checkin_every":0}'
+cadence_ok=$(curl -s "$BASE/api/runs/$cadence_run" | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+f = next((r for r in d["risks"] if r["label"] == "mandatory check-in cadence effectively disabled"), None)
+print("yes" if f is not None and f.get("fix_target") is None else "no")' 2>/dev/null)
+check "the risk fires and its fix_target is genuinely absent (this risk kind's GUI fix needs no per-role target)" "yes" "$cadence_ok"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$cadence_run"
 
 echo
 echo "======================================================================"
