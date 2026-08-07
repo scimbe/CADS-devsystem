@@ -5792,4 +5792,33 @@ citing the wrong ordinal) as unrepaired and, per its own suggestion #2, probably
 at all going forward -- history should be treated append-only, tombstoned rather than compacted, so
 this exact silent-renumbering failure mode can't recur.
 
+**Main-dev-loop firing, 2026-08-07 (fff) -- issue #41: the check-in document stopped telling web
+readers to do something the GUI can't.** State check: still no new operator input on the three open
+`#382` checkpoints; CI keeps clearing normally now. Picked `#41` -- a real, non-technical evaluator
+finding: the mandatory check-in's own `## Decision needed` section unconditionally told every reader
+to `reply approve` or `request-changes --reply`, but that verb only exists in the `ecc-plan-canvas`
+CLI. The web control panel implements neither -- its only check-in action is a content-free
+"Acknowledge check-in" button. An evaluator who read the document end to end, on the run's one open
+operator decision, had nowhere to type the answer the document itself asked for.
+
+Also a real, separate process mistake this firing, caught and corrected immediately: the `eee` commit's
+own body contained the phrase "the deeper structural fix" directly followed by that issue's own
+number, and GitHub's keyword parser matched it as a closing reference regardless of the surrounding
+sentence, auto-closing that issue even though its own real remaining suggestions (#1, #2) were still
+open. Reopened immediately with an honest correcting comment. Same failure class as the earlier `#30`
+incident this session -- writing "fix"/"close"/"resolve" immediately before an issue number, anywhere
+in a commit message, closes that issue whether or not the sentence around it says so. (Deliberately not
+spelling out that exact word-plus-number pairing again in this entry, for the same reason.)
+
+Took `#41`'s own suggestion #1, the cheapest honest fix: `render_iteration` in `pipeline/src/checkin.rs`
+now names both real channels explicitly -- the CLI's real `approve`/`request-changes`, and the web
+panel's real, more limited, Acknowledge-only action -- naming the GUI's gap as a gap instead of
+implying one universal action that doesn't exist for a web-only reader. `CADS-devsystem@e0ebc5c`,
+130/130 pipeline lib tests, live-verified via the deployed API that the corrected text is served. Full
+100/100 stress harness stays clean.
+
+`#41`'s suggestions #2 (a persisted free-text reply alongside the acknowledge watermark) and #3 (a real
+two-button Approve/Request-changes gate in the web panel, mirroring the already-working panel-proposal
+approve flow) remain real, open, larger work -- not attempted in this same bounded increment.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
