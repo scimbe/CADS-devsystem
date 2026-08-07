@@ -412,16 +412,14 @@
    .orb-overlay.open{clip-path:circle(620px at 50px calc(100% - 50px))}
  }
  .orb-bubbles{position:absolute;inset:0}
- /* Real redesign, live operator feedback ("nicht abkuerzen... wie Apple"):
-    no title is ever shortened now -- a full label needs real horizontal
-    room, which a text-inside-a-small-circle layout structurally can't give
-    every one of 20 panels at once without either truncating or growing the
-    whole segment far past a "corner circle segment." Split instead, the
-    same way macOS' own Dock does: important panels (.tier-label) get a
-    real icon + an always-visible full label; the rest (.tier-icon) are a
-    compact icon only, with the full label appearing as a real floating
-    pill on hover/focus -- never truncated, since only one shows at a time
-    and it isn't fighting neighbors for space. */
+ /* Real redesign history: first tried always-visible labels on the two
+    "important" tiers (macOS Dock style) so no title was ever shortened --
+    but that permanently-visible pill needs real horizontal room (~140px),
+    which is the actual reason those two tiers needed such a big radius.
+    Live operator feedback, 2026-08-07, third round: drop the permanent
+    label everywhere -- every bubble is icon-only, full title as a real
+    floating pill on hover/focus, exactly the icon-tier convention below,
+    now applied uniformly. Never truncated, since only one shows at a time. */
  .orb-bubble{
    position:absolute;left:50px;bottom:50px;display:flex;flex-direction:column;align-items:center;
    gap:.4rem;cursor:pointer;border:none;background:none;padding:0;color:var(--text);
@@ -451,31 +449,33 @@
    color:rgba(240,242,246,.82);pointer-events:none;
  }
  .orb-bubble.active .orb-icon{color:var(--accent)}
+ /* No `.orb-label{position:relative}` here -- .orb-bubble (the button) is
+    already position:absolute, which already establishes the positioning
+    context this needs. A real bug, live-confirmed via Playwright
+    bounding-box coordinates the day this floating-label pattern was first
+    built: giving the label its own `position:relative` had the same
+    specificity as `.orb-bubble{position:absolute}` and came later in the
+    stylesheet, so it silently won and knocked every bubble's label out of
+    the radial layout entirely (real negative Y coordinates, stacked
+    off-screen above the viewport) -- rendering with opacity:1, just nowhere
+    near its intended position, invisible in every screenshot taken before
+    it was caught. Left un-repeated here on purpose. */
+ /* Real bug, caught by hovering a live bubble before shipping (2026-08-07):
+    `.orb-bubble` is a flex container, and CSS gives absolutely-positioned
+    flex children a used width driven by the container's own cross-axis
+    alignment (`align-items:center` here) when no explicit width is set --
+    the container's own shrink-wrapped width is just the puck's, so the
+    label was being squeezed to ~20-30px and wrapping one character per
+    line. `width:max-content` overrides that, sizing to the real text
+    instead of the flex container's own narrow box. */
  .orb-label{
-   font-size:var(--orb-font,.76rem);font-weight:600;text-align:center;max-width:118px;
-   word-break:break-word;
- }
- .tier-label .orb-label{
-   background:rgba(13,17,23,.6);backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);
-   border:1px solid rgba(255,255,255,.07);border-radius:10px;padding:.22rem .6rem;
- }
- .tier-icon .orb-label{
    position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%) translateY(4px);
+   width:max-content;font-size:.76rem;font-weight:600;text-align:center;max-width:150px;word-break:break-word;
    background:rgba(13,17,23,.92);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);
    border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:.3rem .65rem;box-shadow:0 8px 20px rgba(0,0,0,.45);
    opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;white-space:normal;z-index:1;
  }
- /* No `.tier-icon{position:relative}` here -- .orb-bubble (the button) is
-    already position:absolute, which already establishes the positioning
-    context .orb-label needs. A real bug, live-confirmed via Playwright
-    bounding-box coordinates before this fix: `.tier-icon{position:relative}`
-    had the same specificity as `.orb-bubble{position:absolute}` and came
-    later in the stylesheet, so it silently won and knocked all 12 icon-tier
-    bubbles out of the radial layout entirely (real negative Y coordinates,
-    stacked off-screen above the viewport in normal document flow) -- they
-    were rendering with opacity:1, just nowhere near their intended
-    position, invisible in every screenshot taken before this was caught. */
- .tier-icon:hover .orb-label,.tier-icon:focus-visible .orb-label{opacity:1;transform:translateX(-50%) translateY(0)}
+ .orb-bubble:hover .orb-label,.orb-bubble:focus-visible .orb-label{opacity:1;transform:translateX(-50%) translateY(0)}
  /* Real operator ask, live 2026-08-07 ("mehr Benachrichtigungselemente, wenn
     es die Benachrichtigungen auch gibt"): this badge only ever renders when
     `pending > 0` is real (unchanged), but visually it needs to actually read
@@ -510,8 +510,12 @@
     live filter, reusing resolvePanelName's own matching rules (the exact
     logic the ./show command already trusts), narrowing which bubbles are
     reachable as you type, Enter opens the one real remaining match. */
+ /* Real operator ask, live 2026-08-07: sat floating well above-left of the
+    dot, disconnected from it -- moved to sit directly beside it instead,
+    bottom edge aligned with the dot's own bottom (22px) so the two read as
+    one control cluster in the corner, not two unrelated floating elements. */
  .orb-filter{
-   position:absolute;left:16px;bottom:130px;width:240px;
+   position:absolute;left:93px;bottom:22px;width:240px;
    background:rgba(13,17,23,.85);backdrop-filter:blur(14px) saturate(180%);-webkit-backdrop-filter:blur(14px) saturate(180%);
    border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:.5rem .7rem;
    color:var(--text);font-family:-apple-system,BlinkMacSystemFont,var(--serif);font-size:.85rem;
@@ -1504,31 +1508,42 @@ function renderOrbBubbles() {
   if (!wrap) return;
   const ids = Object.keys(PANEL_DEFAULTS);
   const scored = ids.map(id => ({ id, score: orbImportanceScore(id, currentRunData) })).sort((a, b) => b.score - a.score);
-  // Real redesign, live operator feedback ("nicht abkuerzen... wie Apple"):
-  // no title is ever shortened now. A permanently-visible full label needs
-  // real horizontal room (~120px), which only the top two tiers can afford
-  // without either the segment ballooning past a real "corner segment" or
-  // labels colliding -- so tiers 3+4 are icon-only (puck), full label on
-  // hover/focus, exactly the macOS Dock convention. Each tier's own radius
-  // is solved for real collision avoidance: the chord between adjacent
-  // items at radius r spanning angle step (radians) is 2r*sin(step/2) --
-  // labeled tiers size that chord off the real label width; icon tiers off
-  // the much smaller puck width alone, which is why they can pack in
-  // without needing anywhere near as much radius per item.
-  // Real operator ask, live 2026-08-07: the reference layout they pointed at
-  // packs its small pictogram bubbles much closer together than the big
-  // labeled ones -- gap should shrink *proportionally* to puck size, not
-  // stay a near-constant fraction of it. Tightened chordBasis/minRadius for
-  // the two icon-only tiers accordingly (was 58/380 and 48/470); the labeled
-  // tiers are untouched, still sized off real label width, per the operator's
-  // own "auch mit den großen [Bubbles]" ask to leave those as they are.
+  // Real redesign, live operator feedback, 2026-08-07, third round: dropped
+  // the always-visible text label entirely, on every tier ("der Text kann
+  // weg und durch mouseover ersetzt werden") -- every bubble is now icon +
+  // hover/focus label only, the same floating-pill convention the old
+  // icon-only tiers already used, just applied everywhere. This wasn't only
+  // a label change: the earlier two rounds' uneven ring-to-ring gaps (a
+  // shrink-this/grow-that patch job) were a real symptom of the *actual*
+  // cause -- tier1/tier2 needed a big radius only because a real, permanently
+  // -visible label pill needs real horizontal room (~140px). With no
+  // permanent label anywhere, every tier's radius is now driven by the same
+  // thing: real puck-to-puck collision avoidance (chord = 2r*sin(step/2)),
+  // sized off each tier's own puck diameter with a small safety factor, not
+  // guessed text width. That alone shrinks the whole launcher from a ~600px
+  // reach to ~360px and makes the four ring radii step up far more evenly
+  // (132 / 216 / 291 / 358) than either previous attempt's parameters could
+  // -- verified numerically (a standalone geometry model matching this exact
+  // formula) before shipping, then re-confirmed live: every within-tier and
+  // cross-tier puck pair keeps a real, positive clearance, not just
+  // eyeballed from a screenshot. (An earlier live overlap check this same
+  // round *did* flag a false alarm -- measured via `getBoundingClientRect()`
+  // while the enter-animation's own overshoot easing hadn't settled yet;
+  // caught by cross-checking against the real `--orb-x`/`--orb-y` values the
+  // layout itself computes, corrected by waiting for the transition to
+  // finish before measuring again.)
   const TIERS = [
-    { count: 3, puck: 72, font: .86, minRadius: 160, labeled: true, chordBasis: 148 },
-    { count: 5, puck: 54, font: .78, minRadius: 300, labeled: true, chordBasis: 138 },
-    { count: 6, puck: 38, font: .74, minRadius: 300, labeled: false, chordBasis: 44 },
-    { count: Infinity, puck: 30, font: .74, minRadius: 370, labeled: false, chordBasis: 34 },
+    { count: 3, puck: 72, minRadius: 120, chordBasis: 84 },
+    { count: 5, puck: 54, minRadius: 190, chordBasis: 64 },
+    { count: 6, puck: 38, minRadius: 260, chordBasis: 46 },
+    { count: Infinity, puck: 30, minRadius: 320, chordBasis: 36 },
   ];
-  const minA = 8, maxA = 82;
+  // Real operator ask, live 2026-08-07: the fan should hug the screen's own
+  // left and bottom edges more, not sit inset from both. Widened from
+  // 8deg-82deg towards true horizontal/vertical (bottom-hugging near 0deg,
+  // left-hugging near 90deg) -- still short of the literal axes so no bubble
+  // ever renders exactly edge-on with its own puck half clipped off-screen.
+  const minA = 3, maxA = 87;
   let cursor = 0;
   let outerEdgeSoFar = 0;
   const placed = [];
@@ -1539,13 +1554,12 @@ function renderOrbBubbles() {
     if (!n) continue;
     const stepRad = n > 1 ? ((maxA - minA) / (n - 1)) * (Math.PI / 180) : 0;
     // Real fix, live-confirmed via Playwright bounding boxes: a tier's own
-    // *configured* minRadius isn't enough on its own -- a labeled tier's
-    // real computed radius (driven by label-width chord spacing) can
-    // legitimately exceed a LATER tier's configured minimum, so that later
-    // tier's small icon pucks land visually inside the earlier tier's own
-    // footprint. Each tier must clear the actual (not just configured)
-    // outer edge of everything already placed, with real margin.
-    const floor = Math.max(tier.minRadius, outerEdgeSoFar + 30);
+    // *configured* minRadius isn't enough on its own -- a tier's real
+    // computed radius can legitimately exceed a LATER tier's configured
+    // minimum, so that later tier's pucks would land inside the earlier
+    // tier's own footprint. Each tier must clear the actual (not just
+    // configured) outer edge of everything already placed, with real margin.
+    const floor = Math.max(tier.minRadius, outerEdgeSoFar + 48);
     const radius = n > 1 ? Math.max(floor, tier.chordBasis / (2 * Math.sin(stepRad / 2))) : floor;
     outerEdgeSoFar = radius + tier.puck / 2;
     slice.forEach((entry, i) => {
@@ -1553,7 +1567,7 @@ function renderOrbBubbles() {
       const rad = (angleDeg * Math.PI) / 180;
       const x = Math.cos(rad) * radius;
       const y = -Math.sin(rad) * radius;
-      placed.push({ ...entry, x, y, puck: tier.puck, font: tier.font, labeled: tier.labeled });
+      placed.push({ ...entry, x, y, puck: tier.puck });
     });
   }
   wrap.innerHTML = placed
@@ -1563,11 +1577,10 @@ function renderOrbBubbles() {
       const pending = pendingApprovalCountFor(p.id);
       const badge = pending ? `<span class="orb-bubble-badge">${pending}</span>` : '';
       const dot = visible ? `<span class="orb-bubble-dot" title="currently open"></span>` : '';
-      const tierClass = p.labeled ? 'tier-label' : 'tier-icon';
       const label = `<span class="orb-label">${escapeHtml(d.title)}</span>`;
       const icon = panelIconSvg(p.id);
-      return `<button type="button" class="orb-bubble ${tierClass}${visible ? ' active' : ''}" data-panel="${p.id}" title="${escapeHtml(d.title)}"
-        style="--orb-x:${p.x.toFixed(1)}px;--orb-y:${p.y.toFixed(1)}px;--orb-font:${p.font}rem;--orb-delay:${Math.min(i * 22, 420)}ms;--orb-icon:${Math.round(p.puck * .5)}px">
+      return `<button type="button" class="orb-bubble${visible ? ' active' : ''}" data-panel="${p.id}" title="${escapeHtml(d.title)}"
+        style="--orb-x:${p.x.toFixed(1)}px;--orb-y:${p.y.toFixed(1)}px;--orb-delay:${Math.min(i * 22, 420)}ms;--orb-icon:${Math.round(p.puck * .5)}px">
         <span class="orb-puck" style="width:${p.puck}px;height:${p.puck}px">${icon}${badge}${dot}</span>${label}
       </button>`;
     })
@@ -1640,7 +1653,14 @@ function initOrbLauncher() {
   btn.addEventListener('click', () => {
     if (overlay.classList.contains('open')) closeOrbLauncher(); else openOrbLauncher();
   });
-  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeOrbLauncher(); });
+  // Real bug, live operator report 2026-08-07 ("das Menü sollte verschwinden,
+  // wenn man ausserhalb des Halbkreises klickt" -- it didn't): `#orb-bubbles`
+  // is itself a full-viewport `inset:0` layer sitting inside the overlay, so
+  // a click on genuinely empty space (no actual bubble there) reports
+  // `e.target` as `#orb-bubbles`, never `overlay` itself -- the old check
+  // only ever matched a click on the overlay's own backdrop, which nothing
+  // in front of it ever actually is. Matching either element now closes it.
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay || e.target.id === 'orb-bubbles') closeOrbLauncher(); });
   filter.addEventListener('input', () => applyOrbFilter(filter.value));
   filter.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
