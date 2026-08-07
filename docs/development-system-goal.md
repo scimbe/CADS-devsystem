@@ -6525,4 +6525,43 @@ already documents for `document_extraction`/`android_emulator_test`/`android_nat
 each of those found a real bidder. Commented on issue #7 explaining the real fix and correcting the
 "agent can generate a key" misunderstanding, honestly.
 
+**Main-dev-loop firing, 2026-08-07 (eee) -- issue 36: real per-run build artifacts, closing the
+structural gap that made requirement #5 unsatisfiable.** State check: `#382`'s three checkpoints and
+`#14` still unanswered, no new activity. Picked `#36` -- an exceptionally well-evidenced report:
+`webconference-android`'s own requirement #5 ("SHALL produce a downloadable, installable release APK
+artifact that is traceable to the exact source commit") could never actually be satisfied, because no
+artifact record existed anywhere in the data model -- an iteration is free text only, and nothing
+stopped a claim like "APK built, sha256 abc123" from being marked `succeeded: true` with no way for a
+reviewer to check it.
+
+Built a real, bounded backend slice: `web/src/artifacts.rs` (`Artifact`/`ArtifactIndex`), mirroring
+`rag.rs`'s own persisted-JSON-per-run file pattern -- a real binary file per artifact on disk, its own
+`artifacts.json` metadata file, deliberately separate from `state.json`. Three real endpoints: upload
+(multipart, `sha256` computed server-side from the actual bytes via `sha2`, never accepted from the
+client -- the same discipline `submitted_by`/`created_by`/`confirmed_by` already established),
+download, and remove (real, permanent, deletes both the metadata and the real file).
+`producing_iteration` is cross-checked against the run's own real history, not trusted as an
+unverified number -- traceability that's actually checkable, not just another free-text field.
+`CADS-devsystem@c326f20`.
+
+7 new hermetic tests, including a full upload → server-computed-hash → download round trip (the
+SHA-256 verified independently in the test against the real uploaded bytes, not just trusted from the
+response) and a forged client-supplied `sha256` field proven to be completely ignored. 230/230 web
+tests, 160/160 pipeline tests, zero warnings.
+
+**Real, honest caveat for this firing specifically**: two separate tool-call interruptions during this
+session's turn (once mid-GUI-investigation, once at the redeploy step) meant the usual redeploy + live
+curl round-trip against the actual deployed container did not happen this time -- checked in with the
+operator via `AskUserQuestion` rather than guess whether to retry, and proceeded with the
+lowest-risk option (commit the already-hermetically-tested code, defer live-verification honestly)
+once no strong preference came back. This is a real, tracked gap in this firing's own otherwise-
+standard verification sequence, not silently glossed over -- live-verification against the deployed
+container is still genuinely pending, next firing's first real action.
+
+Deliberately not in this slice either, left open: a minimal GUI panel (upload form + download links --
+backend-first, matching the established `devsystem_document_extraction_client` precedent of shipping
+caller-side plumbing before wiring in a GUI), the optional gate blocking `succeeded: true` without an
+attached artifact (the issue's own "ideally" framing, not core to what it asked), and the issue's own
+separately-flagged `CADS-webconference-demo`/`CADS-webconference-android` repo-name inconsistency.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
