@@ -5378,4 +5378,19 @@ resolved correctly; a non-matching query showed the real status text. Full 100/1
 stays clean. Left the issue open rather than closing it -- commented with the honest boundary between
 what was fixed and what wasn't independently reproduced, same standard applied to `#26`.
 
+**Main-dev-loop firing, 2026-08-07 (pp) -- first real step on issue #28: a Documentation section on
+the Support panel.** State check: no new issues, no new operator input on `#14` or the three `#382`
+checkpoints, CI green. Nothing new to react to -- picked up `#28` (flagged as real-but-bigger in
+firing (nn)) as the next genuine, bounded increment via the same live-investigation discipline.
+
+Scoped deliberately smaller than the issue's full suggestion: not a new "Help" panel type (real
+infra work -- a launcher entry, panel registration), just a real, visually distinct **Documentation**
+section added to the existing Support panel, above the unchanged donation content, linking to the
+real docs site this session has been building all along (tutorials/how-to/reference/explanation,
+Diátaxis) -- the exact resource the report's own questions ("what is a stalled role", "how does
+bidding work") already have real answers for. All three linked URLs live-verified with a real `curl`
+`200` before shipping (no point linking a page that doesn't resolve), then the panel itself
+live-verified against the actual deployment. `CADS-devsystem@faebe55`, full 100/100 stress harness
+stays clean. Left `#28` open -- this is a real, live improvement, not the full fix the issue asks for.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
