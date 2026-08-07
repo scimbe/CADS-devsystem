@@ -2396,7 +2396,30 @@ function renderRunsList(filterText) {
       delBtn.style.cssText = 'font-size:.8rem;padding:.1rem .5rem';
       delBtn.onclick = async (e) => {
         e.stopPropagation();
-        if (!confirm(`Delete run "${r.run_id}" permanently? This removes it and all its real state for good -- there's no undo.`)) return;
+        // Real gap found live by a non-technical evaluator, issue #45: a bare
+        // confirm() said nothing about ownership or history -- 138 identical
+        // buttons, one of which (webconference-android, 18 real iterations)
+        // permanently destroys the thing this whole platform exists to
+        // demonstrate, offered to any signed-in account with one OK-click.
+        // Suggestion #1: put the run's own real ownership state into the
+        // dialog rather than a generic sentence. Suggestion #2: a run with
+        // any real iteration history needs more than one click -- type the
+        // run's own id to confirm, the same real friction this GUI already
+        // asks for nowhere else because nothing else here is this
+        // destructive on a single click.
+        const ownerNote = r.owner_email
+          ? `Owned by ${r.owner_email}.`
+          : 'This run has no recorded owner, so any signed-in account -- including you -- can delete it.';
+        if (r.iterations > 0) {
+          const typed = prompt(
+            `Delete run "${r.run_id}" permanently? ${ownerNote} It has ${r.iterations} real ` +
+            `iteration(s) of history. This removes it and all its real state for good -- there's ` +
+            `no undo. Type the run id to confirm:`
+          );
+          if (typed !== r.run_id) return;
+        } else if (!confirm(`Delete run "${r.run_id}" permanently? ${ownerNote} This removes it and all its real state for good -- there's no undo.`)) {
+          return;
+        }
         try {
           await fetchJSON(`${API}/runs/${encodeURIComponent(r.run_id)}`, { method: 'DELETE' });
           if (currentRun === r.run_id) currentRun = null;
