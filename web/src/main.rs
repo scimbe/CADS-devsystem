@@ -138,6 +138,25 @@ struct AppState {
     /// see `upload_rag_file`'s own doc comment on the real priority), and a
     /// deployment with neither keeps today's honest `503`.
     document_extraction_channel: Option<DocumentExtractionChannelConfig>,
+    /// Real fallback embedding path (issue #7, operator-directed architecture
+    /// correction, 2026-08-05: "RAG's embedding/document-extraction capability
+    /// should come from an LLM-capable ct-agent, discovered/assigned through
+    /// this pipeline's own auction mechanism -- not a static
+    /// `RAG_EMBEDDING_API_KEY`/`RAG_UNSTRUCTURED_API_KEY` credential"). Document
+    /// extraction already got this treatment (`document_extraction_channel`
+    /// above); this is the same real pattern finally applied to embeddings, the
+    /// other half of that same correction. When configured, embedding calls that
+    /// can't use `rag_embedding_api_key` (unset -- no static OpenAI credential
+    /// on this deployment) shell out to a real `devsystem_embedding_client`
+    /// subprocess, which dials the real `devsystem.embedding` role-filler over a
+    /// real CADS-Tunnel Agent-Fabric channel -- the same "separate isolated
+    /// subprocess holds the real identity, this process never does" shape
+    /// `document_extraction_channel` already established. `None` when any piece
+    /// is missing -- an ADDITIVE path: a deployment with `rag_embedding_api_key`
+    /// configured is unaffected either way (the static key stays tried first,
+    /// see `embed_texts_via_configured_path`'s own doc comment), and a
+    /// deployment with neither keeps today's honest keyword-only degrade.
+    embedding_channel: Option<EmbeddingChannelConfig>,
 }
 
 /// See `AppState::issue_channel`'s doc comment. Every field here maps directly
@@ -169,6 +188,24 @@ struct IssueChannelConfig {
 /// never left to ambient inheritance" convention -- see `extract_via_channel`).
 #[derive(Clone)]
 struct DocumentExtractionChannelConfig {
+    client_bin: Arc<str>,
+    ct_agent_bin: Arc<str>,
+    broker: Arc<str>,
+    relay: Arc<str>,
+    grant_hex: Arc<str>,
+    holder_key_hex: Arc<str>,
+    noise_key: Arc<str>,
+}
+
+/// See `AppState::embedding_channel`'s doc comment. Identical shape to
+/// `DocumentExtractionChannelConfig` -- same broker-mediated, grant-gated
+/// connection model, a different role/client binary/grant on the wire, real
+/// fields kept separate (not shared) so each role's own real credential/grant
+/// pair can't be confused with the other's, the same discipline
+/// `IssueChannelConfig`/`DocumentExtractionChannelConfig` already keep from
+/// each other despite both being "a channel config struct."
+#[derive(Clone)]
+struct EmbeddingChannelConfig {
     client_bin: Arc<str>,
     ct_agent_bin: Arc<str>,
     broker: Arc<str>,
@@ -437,6 +474,24 @@ async fn main() {
             "document-extraction channel not fully configured (need DOCUMENT_EXTRACTION_CLIENT_BIN, CT_AGENT_BIN, CT_CHANNEL_BROKER, CT_CHANNEL_RELAY, DOCUMENT_EXTRACTION_CHANNEL_GRANT, DOCUMENT_EXTRACTION_CHANNEL_HOLDER_KEY, DOCUMENT_EXTRACTION_CHANNEL_NOISE_KEY all set) -- a RAG upload without RAG_UNSTRUCTURED_API_KEY stays a real 503"
         );
     }
+    let embedding_channel: Option<EmbeddingChannelConfig> = (|| {
+        Some(EmbeddingChannelConfig {
+            client_bin: nonempty_env("EMBEDDING_CLIENT_BIN")?,
+            ct_agent_bin: nonempty_env("CT_AGENT_BIN")?,
+            broker: nonempty_env("CT_CHANNEL_BROKER")?,
+            relay: nonempty_env("CT_CHANNEL_RELAY")?,
+            grant_hex: nonempty_env("EMBEDDING_CHANNEL_GRANT")?,
+            holder_key_hex: nonempty_env("EMBEDDING_CHANNEL_HOLDER_KEY")?,
+            noise_key: nonempty_env("EMBEDDING_CHANNEL_NOISE_KEY")?,
+        })
+    })();
+    if embedding_channel.is_some() {
+        println!("embedding channel fully configured -- RAG embedding will fall back to devsystem.embedding over a real broker-mediated channel when RAG_EMBEDDING_API_KEY isn't configured");
+    } else {
+        println!(
+            "embedding channel not fully configured (need EMBEDDING_CLIENT_BIN, CT_AGENT_BIN, CT_CHANNEL_BROKER, CT_CHANNEL_RELAY, EMBEDDING_CHANNEL_GRANT, EMBEDDING_CHANNEL_HOLDER_KEY, EMBEDDING_CHANNEL_NOISE_KEY all set) -- RAG embedding without RAG_EMBEDDING_API_KEY stays keyword-only"
+        );
+    }
     let state = AppState {
         runs_dir: Arc::new(runs_dir),
         write_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -452,6 +507,7 @@ async fn main() {
         rag_db_pool,
         issue_channel,
         document_extraction_channel,
+        embedding_channel,
     };
 
     let static_dir = std::env::var("DEVSYSTEM_STATIC_DIR").unwrap_or_else(|_| "web/static".to_string());
@@ -2424,21 +2480,41 @@ fn persist_rag_index(state: &AppState, id: &str, index: &rag::RagIndex) -> Resul
     fs::write(rag_index_path(state, id), s).map_err(|e| e.to_string())
 }
 
+/// Real embedding of `texts` via whichever of two real, independent paths is
+/// configured -- mirrors `upload_rag_file`'s own two-path fallback for document
+/// extraction (issue #7's own operator-directed architecture correction,
+/// 2026-08-05: "RAG's embedding/document-extraction capability should come from
+/// an LLM-capable ct-agent, discovered/assigned through this pipeline's own
+/// auction mechanism -- not a static `RAG_EMBEDDING_API_KEY` credential"). A
+/// static provider credential is tried first when configured (the original
+/// path, unaffected by this fallback existing at all); `embedding_channel` --
+/// an auction-discovered, LLM-capable `devsystem.embedding` role-filler, no
+/// static per-deployment credential required -- is the intended production
+/// path this project's own design goes toward, tried when the static key
+/// isn't set. Returns `None` (not an error) when neither is configured --
+/// both real callers already treat that as "stay keyword-only".
+async fn embed_texts_via_configured_path(state: &AppState, texts: &[String]) -> Option<Result<Vec<Vec<f32>>, String>> {
+    if let Some(api_key) = &state.rag_embedding_api_key {
+        return Some(rag::embed_texts(&state.http_client, &state.rag_embedding_api_base, api_key, texts).await);
+    }
+    if let Some(cfg) = &state.embedding_channel {
+        return Some(embed_via_channel(cfg, texts).await);
+    }
+    None
+}
+
 /// Real batch embedding of whatever in `index` doesn't have one yet -- chunks
 /// from a fresh `sync_repo` always lack one (real chunks are never embedded
 /// twice), manual documents already carrying an embedding (preserved across a
 /// re-sync) are skipped so a re-sync doesn't re-spend real embedding cost on
-/// unchanged text. One real batched API call for however many texts need it,
-/// not one call per chunk -- `embed_texts` already accepts a batch. No-ops
-/// (and costs nothing) when no embedding credential is configured, or when
-/// there's genuinely nothing new to embed. Logs, never panics, on a real
-/// provider failure -- a sync/upload still succeeds with keyword-only search
-/// for the new content rather than failing the whole operation over a
-/// secondary feature.
+/// unchanged text. One real batched call for however many texts need it, not
+/// one call per chunk -- both real paths `embed_texts_via_configured_path` can
+/// take already accept a batch. No-ops (and costs nothing) when neither real
+/// embedding path is configured, or when there's genuinely nothing new to
+/// embed. Logs, never panics, on a real failure -- a sync/upload still
+/// succeeds with keyword-only search for the new content rather than failing
+/// the whole operation over a secondary feature.
 async fn embed_index_in_place(state: &AppState, index: &mut rag::RagIndex) {
-    let Some(api_key) = state.rag_embedding_api_key.clone() else {
-        return;
-    };
     let chunk_idxs: Vec<usize> = index.chunks.iter().enumerate().filter(|(_, c)| c.embedding.is_none()).map(|(i, _)| i).collect();
     let doc_idxs: Vec<usize> = index.manual_documents.iter().enumerate().filter(|(_, d)| d.embedding.is_none()).map(|(i, _)| i).collect();
     if chunk_idxs.is_empty() && doc_idxs.is_empty() {
@@ -2446,8 +2522,8 @@ async fn embed_index_in_place(state: &AppState, index: &mut rag::RagIndex) {
     }
     let texts: Vec<String> =
         chunk_idxs.iter().map(|&i| index.chunks[i].text.clone()).chain(doc_idxs.iter().map(|&i| index.manual_documents[i].text.clone())).collect();
-    match rag::embed_texts(&state.http_client, &state.rag_embedding_api_base, &api_key, &texts).await {
-        Ok(embeddings) => {
+    match embed_texts_via_configured_path(state, &texts).await {
+        Some(Ok(embeddings)) => {
             for (offset, &i) in chunk_idxs.iter().enumerate() {
                 index.chunks[i].embedding = Some(embeddings[offset].clone());
             }
@@ -2455,7 +2531,8 @@ async fn embed_index_in_place(state: &AppState, index: &mut rag::RagIndex) {
                 index.manual_documents[i].embedding = Some(embeddings[chunk_idxs.len() + offset].clone());
             }
         }
-        Err(e) => eprintln!("devsystem-web: RAG embedding failed for {} chunk(s)/{} document(s), continuing keyword-only for them: {e}", chunk_idxs.len(), doc_idxs.len()),
+        Some(Err(e)) => eprintln!("devsystem-web: RAG embedding failed for {} chunk(s)/{} document(s), continuing keyword-only for them: {e}", chunk_idxs.len(), doc_idxs.len()),
+        None => {}
     }
 }
 
@@ -2573,19 +2650,19 @@ async fn search_rag(
     let Some(index) = load_rag_index(&state, &id) else {
         return Json(serde_json::json!({"configured": false, "results": [], "manual_documents": []})).into_response();
     };
-    // Real semantic search only when a real embedding credential is configured
-    // -- an embedding failure (bad key, provider outage) degrades to
+    // Real semantic search only when a real embedding path is configured (a
+    // static credential, or the devsystem.embedding channel -- see
+    // `embed_texts_via_configured_path`'s own doc comment) -- an embedding
+    // failure (bad key, provider outage, channel dial failure) degrades to
     // keyword-only results rather than failing the whole search, since the
-    // keyword path never depended on this credential and shouldn't start
-    // failing because of it.
-    let query_embedding = match &state.rag_embedding_api_key {
-        Some(key) => match rag::embed_texts(&state.http_client, &state.rag_embedding_api_base, key, &[q.q.trim().to_string()]).await {
-            Ok(mut embeddings) => embeddings.pop(),
-            Err(e) => {
-                eprintln!("devsystem-web: RAG query embedding failed, falling back to keyword-only search: {e}");
-                None
-            }
-        },
+    // keyword path never depended on either path and shouldn't start failing
+    // because of it.
+    let query_embedding = match embed_texts_via_configured_path(&state, &[q.q.trim().to_string()]).await {
+        Some(Ok(mut embeddings)) => embeddings.pop(),
+        Some(Err(e)) => {
+            eprintln!("devsystem-web: RAG query embedding failed, falling back to keyword-only search: {e}");
+            None
+        }
         None => None,
     };
     let mut results = rag::combined_search(&index, q.q.trim(), query_embedding.as_deref(), 10);
@@ -4285,6 +4362,51 @@ async fn extract_via_channel(cfg: &DocumentExtractionChannelConfig, filename: &s
     }
 }
 
+/// See `AppState::embedding_channel`'s doc comment -- the real fallback path
+/// `embed_texts_via_configured_path` calls when `rag_embedding_api_key` isn't
+/// configured. Mirrors `extract_via_channel` above, with one real difference:
+/// `devsystem_embedding_client` takes its batch of texts on its own stdin (a
+/// JSON array), not a file-path CLI arg -- embedding is naturally a batch
+/// operation with nothing to write to a temp file, unlike a single uploaded
+/// document.
+async fn embed_via_channel(cfg: &EmbeddingChannelConfig, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+    let input = serde_json::to_vec(texts).map_err(|e| format!("could not serialize texts for the embedding channel client: {e}"))?;
+
+    let mut child = match tokio::process::Command::new(cfg.client_bin.as_ref())
+        .env("CT_AGENT_BIN", cfg.ct_agent_bin.as_ref())
+        .env("CT_CHANNEL_BROKER", cfg.broker.as_ref())
+        .env("CT_CHANNEL_RELAY", cfg.relay.as_ref())
+        .env("CT_CHANNEL_GRANT", cfg.grant_hex.as_ref())
+        .env("CT_CHANNEL_HOLDER_KEY", cfg.holder_key_hex.as_ref())
+        .env("CT_CHANNEL_NOISE_KEY", cfg.noise_key.as_ref())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => return Err(format!("could not run the embedding channel client ({}): {e}", cfg.client_bin)),
+    };
+
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut stdin = child.stdin.take().expect("stdin was piped");
+        if let Err(e) = stdin.write_all(&input).await {
+            return Err(format!("could not write texts to the embedding channel client's stdin: {e}"));
+        }
+    }
+
+    let output = match child.wait_with_output().await {
+        Ok(o) => o,
+        Err(e) => return Err(format!("embedding channel client did not exit cleanly: {e}")),
+    };
+    if !output.status.success() {
+        return Err(format!("devsystem_embedding_client exited with {}: {}", output.status, String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    serde_json::from_slice::<Vec<Vec<f32>>>(&output.stdout)
+        .map_err(|e| format!("devsystem_embedding_client's own stdout did not parse as a real embeddings array: {e}"))
+}
+
 /// `POST /api/runs/{id}/issues/proposals/{proposal_id}/approve` -- the actual
 /// "eingebaut nach meiner Zustimmung" (built in after my approval) step: files
 /// the real issue. Two real posting paths, tried in this order:
@@ -4720,6 +4842,7 @@ mod tests {
             rag_db_pool: None,
             issue_channel: None,
             document_extraction_channel: None,
+            embedding_channel: None,
         };
         (state, dir)
     }
@@ -4792,6 +4915,34 @@ mod tests {
         let (mut state, dir) = test_state();
         let client_bin = fake_extraction_client(dir.path(), client_script);
         state.document_extraction_channel = Some(DocumentExtractionChannelConfig {
+            client_bin: Arc::from(client_bin),
+            ct_agent_bin: Arc::from("fake-ct-agent"),
+            broker: Arc::from("127.0.0.1:4435"),
+            relay: Arc::from("127.0.0.1:4436"),
+            grant_hex: Arc::from("fake-grant-hex"),
+            holder_key_hex: Arc::from("fake-holder-key-hex"),
+            noise_key: Arc::from("fake-noise-priv"),
+        });
+        (state, dir)
+    }
+
+    /// Same real shape `fake_extraction_client` establishes, for
+    /// `devsystem_embedding_client`'s own real contract: reads its batch of
+    /// texts (a JSON array) from ITS OWN stdin -- unlike the extraction client's
+    /// file-path CLI arg -- and writes a JSON array of embeddings to stdout.
+    fn fake_embedding_client(dir: &std::path::Path, script: &str) -> String {
+        let path = dir.join("fake-embedding-client.sh");
+        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+        path.to_string_lossy().to_string()
+    }
+
+    fn test_state_with_embedding_channel(client_script: &str) -> (AppState, tempfile::TempDir) {
+        let (mut state, dir) = test_state();
+        let client_bin = fake_embedding_client(dir.path(), client_script);
+        state.embedding_channel = Some(EmbeddingChannelConfig {
             client_bin: Arc::from(client_bin),
             ct_agent_bin: Arc::from("fake-ct-agent"),
             broker: Arc::from("127.0.0.1:4435"),
@@ -8663,6 +8814,7 @@ exit 1"#);
             rag_db_pool: None,
             issue_channel: None,
             document_extraction_channel: None,
+            embedding_channel: None,
         };
         let app = api_router(state);
 
@@ -9659,6 +9811,108 @@ exit 1"#);
             .unwrap();
         let body = body_json(response).await;
         assert_eq!(body["results"][0]["path"], "report.pdf", "the real extracted text must be genuinely searchable, not just stored");
+    }
+
+    #[tokio::test]
+    /// Issue #7's own operator-directed architecture correction (2026-08-05):
+    /// embeddings should come from an auction-discovered ct-agent, not a static
+    /// `RAG_EMBEDDING_API_KEY`. Real end-to-end proof through the actual HTTP
+    /// router: a document added with no static credential configured still
+    /// gets a real embedding via the channel, and a query with zero keyword
+    /// overlap can only match through that real semantic path.
+    async fn rag_search_falls_back_to_the_embedding_channel_when_no_static_credential_is_configured() {
+        let (state, _dir) = test_state_with_embedding_channel("cat > /dev/null\necho '[[1.0,0.0]]'");
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-embed-channel-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/rag-embed-channel-run/rag/documents",
+                serde_json::json!({"path": "notes.txt", "text": "completely different wording with no shared keywords at all"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "adding a document must succeed even though it triggers a real embedding-channel dial");
+
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/rag-embed-channel-run/rag/search?q=xyz-no-overlap-query").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        let results = body["results"].as_array().expect("real results array");
+        assert_eq!(results.len(), 1, "the semantic-only match must still surface");
+        assert_eq!(results[0]["path"], "notes.txt");
+        assert_eq!(results[0]["match_kind"], "semantic", "a real embedding obtained via the channel must be usable for real semantic matching, not just stored inertly");
+    }
+
+    #[tokio::test]
+    /// Same real "log, never fail the request" degrade `embed_index_in_place`'s
+    /// own doc comment promises for the static-credential path, proven here for
+    /// the channel path too: a real channel-client failure must not turn into a
+    /// failed upload or a failed search, just a keyword-only result.
+    async fn rag_embedding_channel_failure_degrades_to_keyword_only_not_a_failed_request() {
+        let (state, _dir) = test_state_with_embedding_channel("cat > /dev/null\necho 'agent reported an error: no embedding bidder online' >&2\nexit 1");
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-embed-fail-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/rag-embed-fail-run/rag/documents", serde_json::json!({"path": "notes.txt", "text": "hello world"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "a real embedding-channel failure must not fail the add itself");
+
+        let response =
+            app.oneshot(Request::builder().uri("/api/runs/rag-embed-fail-run/rag/search?q=hello").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["results"][0]["match_kind"], "keyword", "a real embedding-channel failure must degrade to keyword-only, never fabricate a semantic result");
+    }
+
+    #[tokio::test]
+    /// Real priority: a static `RAG_EMBEDDING_API_KEY` stays tried first even
+    /// when the channel is also configured -- the channel is the fallback for a
+    /// deployment that lacks a static credential, not a replacement for one that
+    /// has it (same real priority `upload_rag_file_prefers_unstructured_over_the_document_extraction_channel_when_both_are_configured`
+    /// already proves for document extraction).
+    async fn rag_search_prefers_the_static_embedding_credential_over_the_channel_when_both_are_configured() {
+        let base = spawn_mock_embedding_server().await;
+        let (mut state, _dir) = test_state_with_rag_embedding("fake-key", &base);
+        // If the channel were used instead, this always-fails script would make
+        // the embedding fail outright -- proving the static path was really the
+        // one taken, not just asserting on the result's shape.
+        let channel_dir = tempfile::tempdir().unwrap();
+        state.embedding_channel = Some(EmbeddingChannelConfig {
+            client_bin: Arc::from(fake_embedding_client(channel_dir.path(), "echo 'must not be called' >&2\nexit 1")),
+            ct_agent_bin: Arc::from("fake-ct-agent"),
+            broker: Arc::from("127.0.0.1:4435"),
+            relay: Arc::from("127.0.0.1:4436"),
+            grant_hex: Arc::from("fake-grant-hex"),
+            holder_key_hex: Arc::from("fake-holder-key-hex"),
+            noise_key: Arc::from("fake-noise-priv"),
+        });
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "rag-embed-priority-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/rag-embed-priority-run/rag/documents",
+                serde_json::json!({"path": "notes.txt", "text": "completely different wording with no shared keywords at all"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/rag-embed-priority-run/rag/search?q=xyz-no-overlap-query").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["results"][0]["match_kind"], "semantic", "the static credential must have been the real path taken -- the channel script would have failed the call");
     }
 
     #[tokio::test]
