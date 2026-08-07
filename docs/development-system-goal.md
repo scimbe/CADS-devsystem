@@ -5841,4 +5841,27 @@ against the *reverted* code first and confirmed it reproduced the exact reported
 stayed active with 0 panels actually visible), then restored the fix, redeployed, and confirmed clean
 (0 active bubbles, 0 visible panels, zero mismatch). Full 100/100 stress harness stays clean.
 
+**Main-dev-loop firing, 2026-08-07 (hhh) -- issue #34: the check-in now reports run-wide requirement
+coverage, not just what the triggering iteration claims.** State check: `#382`'s three checkpoints and
+`#14` (labor-setup.com) still unanswered/no new activity; no new issues since the last check. Picked
+`#34` -- a real evaluator finding that at the mandatory check-in, the one human-oversight moment this
+design has, there was no way to see that most of a run's requirements (including the one defining what
+"done" means) had never been addressed by a single iteration; a zero-coverage requirement rendered as
+nothing at all, indistinguishable from a section with nothing to say.
+
+`render_iteration` in `pipeline/src/checkin.rs` now renders a "## Requirement coverage" section
+whenever the run has any requirements: each requirement by index and verified state, plus either the
+real iteration numbers that addressed it -- scanned from the whole run's history, not just the
+triggering iteration -- or an explicit "never addressed by any iteration". `CADS-devsystem@eb5c6d9`.
+New hermetic test proves coverage comes from the whole history (a requirement addressed by iteration 1
+is correctly named even when the *triggering* iteration 2 addresses nothing); 132/132 pipeline lib
+tests pass; live-verified via the deployed API that all 6 of `webconference-android`'s real requirements
+now show real coverage. Full 100/100 stress harness stays clean.
+
+Checked the issue's suggestion #2 against the current code rather than assume the report's framing
+still held: the Requirements panel's own per-card "not yet addressed by any iteration" fallback turned
+out to already be shipped (2026-08-04, before `#34` was filed) -- confirmed live, not assumed, so no
+further work was needed there. Suggestion #3 (a compact `N/M requirements` counter in the Runs panel)
+remains real, open, smaller, separate work.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
