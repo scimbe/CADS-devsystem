@@ -4627,4 +4627,21 @@ clean. No source change ships from this firing -- the value is the proof itself,
 one more data point on this session's own "check independence isn't always what a check's own
 description implies" list.
 
+**Goal-driven-loop firing, 2026-08-07 (o) -- continuing the mutation-test sweep to a safety-critical
+check, real teeth confirmed.** State check: no new operator input on any of the four standing
+decision points, `#13`/`#14`/PRs unchanged. Same non-escalating discipline as last firing: picking
+verification work over new cross-repo scope while issue `#18`'s production-deploy decision stays
+open.
+
+Picked check `[39]` (delete-run proposal safety) -- a genuinely older, not-yet-mutation-tested check
+guarding one of this project's few real destructive actions. Neutered `approve_delete_run`'s actual
+`fs::remove_dir_all` call to a realistic, historically-shaped bug (approval reports success but never
+actually deletes the run -- a plausible copy-paste/early-return mistake, not a synthetic edge case).
+Confirmed the hermetic test fails with the exact expected panic (`expected 404, got 200`), rebuilt
+and redeployed the mutated binary, confirmed the live harness fails on exactly check `[39]`'s own
+final assertion while all 46 sibling checks (97 of 98 assertions) stayed green -- precise, not
+collateral. Reverted cleanly from a pre-mutation backup file, rebuilt, redeployed the real fix,
+reconfirmed 98/98 clean. No source change ships -- the value is the proof itself, continuing this
+session's own "verification is a legitimate increment, not just new code" discipline.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
