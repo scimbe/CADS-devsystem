@@ -3806,4 +3806,34 @@ predates this firing and its cause is unknown. Left uncommitted and unresolved r
 at or silently absorbed into an unrelated commit; worth a future firing's live investigation before
 assuming either state is the "right" one.
 
+**Goal-driven-loop firing, 2026-08-07 -- a worse sibling of the last firing's own fix, found by
+re-checking the same panel with the OTHER button.** State check: no new operator input on any of the
+three open `#382` checkpoints, no new PRs, issue #14 unchanged, CI healthy (no longer stuck in
+queue), 80/80 stress harness clean before starting.
+
+The previous firing fixed Open Points' shared **Reject** button lacking the confirm() its dedicated
+panels already had. Checking the neighboring **Approve** button the same way turned up something
+worse: its own doc comment claimed "approving every OTHER open-point kind here is reversible or
+merely additive (a new panel, a new stage, a filed issue)" -- false for two of the six kinds.
+Approving a `panel_removal_proposal` deletes a real, existing panel for good; approving a
+`panel_edit_proposal` overwrites one for good. Both dedicated-panel equivalents (Custom Panels
+manager) already confirm first; Open Points' shared Approve reached the identical endpoints with
+none -- live-verified before fixing: added a real panel, proposed removing it, clicked Approve via
+Open Points, and it was gone with zero warning, no dialog, nothing.
+
+Fixed with a new structured field, not text parsed out of `summary` (the same discipline
+`RiskAnnotation::fix_target` already established for the exact same reason): `OpenPoint
+::approve_destroys_panel_title`, `Some(real panel title)` only for `panel_removal_proposal`/
+`panel_edit_proposal`, `None` for the other four kinds -- including `panel_proposal`, since approving
+an ADD proposal never destroys anything. The GUI's Approve handler now confirms with the exact same
+wording its dedicated panel already uses, keyed off `p.kind` for the removal vs. overwrite phrasing.
+
+Hermetic `cargo test`/`clippy` clean (195/195 web tests, 0 warnings) -- new test asserts the field
+names the real panel for removal AND edit proposals, and is genuinely absent for an add proposal in
+the same run. Redeployed; live-verified end to end against the real container: cancelling the new
+dialog left the real panel genuinely untouched (`custom_panels` unchanged), confirming it genuinely
+removed it (`custom_panels: []`) -- the exact scenario that silently destroyed data before this fix.
+Added stress-harness check `[40]` (81/81 total) asserting the same signal via a direct HTTP round
+trip, not just the Playwright walkthrough.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).

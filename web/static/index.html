@@ -2977,6 +2977,22 @@ async function renderOpenPointsPanel(id, data) {
       // requires, not silently waved through just because it arrived via a
       // proposal this time.
       if (isDeleteRun && !confirm(`Delete run "${id}" permanently? This removes it and all its real state for good -- there's no undo.`)) return;
+      // A second, real DAU-lens gate found the same day: the comment above
+      // was ITSELF wrong about two kinds -- approving a panel_removal_proposal
+      // or panel_edit_proposal is exactly as destructive as delete-run
+      // (deletes/overwrites a real, EXISTING panel for good), and their own
+      // dedicated panels (Custom Panels manager) already confirm first. This
+      // shared Approve button reached the identical endpoint with none.
+      // `approve_destroys_panel_title` is real structured data from the
+      // backend (not parsed out of `summary`'s text) naming exactly what
+      // Approve would destroy here -- `None` for every other kind, including
+      // panel_proposal (approving that only ever ADDS a panel).
+      if (p.approve_destroys_panel_title != null) {
+        const msg = p.kind === 'panel_edit_proposal'
+          ? `Overwrite the real panel "${p.approve_destroys_panel_title}" with the proposed content? This replaces it for real -- the old content is not kept.`
+          : `Remove the real panel "${p.approve_destroys_panel_title}"? This deletes it for real, not just hides it.`;
+        if (!confirm(msg)) return;
+      }
       const approveCall = () => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/${base}/${encodeURIComponent(p.id)}/approve`, { method: 'POST' });
       if (isDeleteRun) {
         runOpenPointAction(approveCall, () => { currentRun = null; currentRunData = null; return refreshRunsList(); });

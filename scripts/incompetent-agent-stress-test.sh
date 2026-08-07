@@ -528,6 +528,24 @@ status=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/runs/$del_run")
 check "approval actually deletes the real run, not just clears the proposal" "404" "$status"
 
 echo
+echo "[40] the Open Points panel's own real 'approve destroys this panel' signal must name the real, existing panel for removal/edit proposals, and stay absent for an add proposal (approving that only ever ADDS a panel) (#382 goal doc §7.2 gap #2, 2026-08-07)"
+panel_run="${RUN}-panel-destroy-signal-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$panel_run\"}"
+add_body=$(curl -s -X POST "$BASE/api/runs/$panel_run/panels" -H 'content-type: application/json' -d '{"title":"Real Panel","html":"<p>real</p>"}')
+real_panel_id=$(echo "$add_body" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' 2>/dev/null)
+curl -s -o /dev/null -X POST "$BASE/api/runs/$panel_run/panels/$real_panel_id/propose-remove" -H 'content-type: application/json' -d '{}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$panel_run/panels/propose" -H 'content-type: application/json' -d '{"title":"Proposed New Panel","html":"<p>new</p>"}'
+signal_ok=$(curl -s "$BASE/api/runs/$panel_run/open-points" | python3 -c 'import json,sys
+points = json.load(sys.stdin)
+removal = next((p for p in points if p["kind"] == "panel_removal_proposal"), None)
+add = next((p for p in points if p["kind"] == "panel_proposal"), None)
+ok = removal is not None and removal.get("approve_destroys_panel_title") == "Real Panel"
+ok = ok and add is not None and add.get("approve_destroys_panel_title") is None
+print("yes" if ok else "no")' 2>/dev/null)
+check "approve_destroys_panel_title names the real panel for a removal proposal and stays absent for an add proposal" "yes" "$signal_ok"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$panel_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then

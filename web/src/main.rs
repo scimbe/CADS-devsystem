@@ -754,6 +754,17 @@ struct OpenPoint {
     id: String,
     summary: String,
     proposed_at: Option<u64>,
+    /// The real panel title Approve would destroy or overwrite, structured
+    /// data for the GUI's own confirm() gate (2026-08-07) -- NOT parsed out
+    /// of `summary`'s human-readable text, the same "no invented signal"
+    /// discipline `RiskAnnotation::fix_target` already established. `Some`
+    /// only for `panel_removal_proposal`/`panel_edit_proposal` (the two
+    /// kinds whose Approve is a real, permanent destructive step on an
+    /// EXISTING panel); `None` for every other kind, including
+    /// `panel_proposal` (approving that only ever ADDS a panel, nothing
+    /// existing to destroy).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    approve_destroys_panel_title: Option<String>,
 }
 
 fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
@@ -764,16 +775,29 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
             id: "paused".to_string(),
             summary: run_state.pause_reason.clone().unwrap_or_else(|| "paused, no reason recorded".to_string()),
             proposed_at: None,
+            approve_destroys_panel_title: None,
         });
     }
     for p in &run_state.pending_panel_proposals {
-        points.push(OpenPoint { kind: "panel_proposal", id: p.id.clone(), summary: format!("new panel \"{}\"", p.title), proposed_at: Some(p.proposed_at) });
+        points.push(OpenPoint { kind: "panel_proposal", id: p.id.clone(), summary: format!("new panel \"{}\"", p.title), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None });
     }
     for p in &run_state.pending_panel_removal_proposals {
-        points.push(OpenPoint { kind: "panel_removal_proposal", id: p.id.clone(), summary: format!("remove panel \"{}\"", p.panel_title), proposed_at: Some(p.proposed_at) });
+        points.push(OpenPoint {
+            kind: "panel_removal_proposal",
+            id: p.id.clone(),
+            summary: format!("remove panel \"{}\"", p.panel_title),
+            proposed_at: Some(p.proposed_at),
+            approve_destroys_panel_title: Some(p.panel_title.clone()),
+        });
     }
     for p in &run_state.pending_panel_edit_proposals {
-        points.push(OpenPoint { kind: "panel_edit_proposal", id: p.id.clone(), summary: format!("edit panel \"{}\" -> \"{}\"", p.old_title, p.new_title), proposed_at: Some(p.proposed_at) });
+        points.push(OpenPoint {
+            kind: "panel_edit_proposal",
+            id: p.id.clone(),
+            summary: format!("edit panel \"{}\" -> \"{}\"", p.old_title, p.new_title),
+            proposed_at: Some(p.proposed_at),
+            approve_destroys_panel_title: Some(p.old_title.clone()),
+        });
     }
     for p in &run_state.pending_stage_proposals {
         points.push(OpenPoint {
@@ -781,16 +805,17 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
             id: p.id.clone(),
             summary: format!("new stage \"{}\": {}", p.proposal.stage_id, p.proposal.rationale),
             proposed_at: Some(p.proposed_at),
+            approve_destroys_panel_title: None,
         });
     }
     for p in &run_state.pending_issue_proposals {
-        points.push(OpenPoint { kind: "issue_proposal", id: p.id.clone(), summary: format!("file issue on {}: {}", p.repo, p.title), proposed_at: Some(p.proposed_at) });
+        points.push(OpenPoint { kind: "issue_proposal", id: p.id.clone(), summary: format!("file issue on {}: {}", p.repo, p.title), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None });
     }
     // §7.2 gap #2's newest instance (2026-08-07): same "real pending-proposal
     // queue, surfaced here so a human sees it without hunting" treatment as
     // the five queues above.
     if let Some(p) = &run_state.pending_delete_run_proposal {
-        points.push(OpenPoint { kind: "delete_run_proposal", id: p.id.clone(), summary: format!("delete this run: {}", p.rationale), proposed_at: Some(p.proposed_at) });
+        points.push(OpenPoint { kind: "delete_run_proposal", id: p.id.clone(), summary: format!("delete this run: {}", p.rationale), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None });
     }
     // Real gap, live-found 2026-08-06: while paused, a next-step draft is
     // shown nested under the paused_checkpoint entry above (see the GUI's own
@@ -808,7 +833,7 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
     // also appearing as separate entries -- no duplication either way.
     if !run_state.paused {
         for d in &run_state.pending_next_step_drafts {
-            points.push(OpenPoint { kind: "next_step_draft", id: d.id.clone(), summary: d.text.clone(), proposed_at: Some(d.proposed_at) });
+            points.push(OpenPoint { kind: "next_step_draft", id: d.id.clone(), summary: d.text.clone(), proposed_at: Some(d.proposed_at), approve_destroys_panel_title: None });
         }
     }
     points
@@ -8954,6 +8979,71 @@ exit 1"#);
         assert_eq!(points[0]["kind"], "stage_proposal");
         assert!(points[0]["summary"].as_str().unwrap().contains("devsystem.new_thing"));
         assert!(points[0]["summary"].as_str().unwrap().contains("a real reason"));
+        // A stage proposal's Approve only ever ADDS a role -- nothing existing
+        // to destroy, so the GUI's confirm-gate field must be absent.
+        assert!(points[0].get("approve_destroys_panel_title").is_none());
+    }
+
+    #[tokio::test]
+    async fn open_points_names_the_real_panel_title_approve_would_destroy_for_removal_and_edit_proposals_only() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "panel-destroy-points-run"}))).await.unwrap();
+        let add_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/panel-destroy-points-run/panels",
+                serde_json::json!({"title": "Real Panel", "html": "<p>real</p>"}),
+            ))
+            .await
+            .unwrap();
+        let added = body_json(add_response).await;
+        let panel_id = added["id"].as_str().unwrap();
+        app.clone()
+            .oneshot(json_request("POST", &format!("/api/runs/panel-destroy-points-run/panels/{panel_id}/propose-remove"), serde_json::json!({})))
+            .await
+            .unwrap();
+        // A second real panel, so an edit proposal doesn't collide with the removal one above.
+        let add_response2 = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/panel-destroy-points-run/panels",
+                serde_json::json!({"title": "Second Real Panel", "html": "<p>real too</p>"}),
+            ))
+            .await
+            .unwrap();
+        let added2 = body_json(add_response2).await;
+        let panel_id2 = added2["id"].as_str().unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/api/runs/panel-destroy-points-run/panels/{panel_id2}/propose-edit"),
+                serde_json::json!({"title": "Second Real Panel", "html": "<p>proposed replacement</p>"}),
+            ))
+            .await
+            .unwrap();
+        // And an add proposal -- approving THIS one only ever adds a panel, never destroys one.
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/panel-destroy-points-run/panels/propose",
+                serde_json::json!({"title": "Proposed New Panel", "html": "<p>new</p>"}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/panel-destroy-points-run/open-points").body(Body::empty()).unwrap()).await.unwrap();
+        let points = body_json(response).await;
+        let points = points.as_array().unwrap();
+        assert_eq!(points.len(), 3);
+        let removal = points.iter().find(|p| p["kind"] == "panel_removal_proposal").unwrap();
+        assert_eq!(removal["approve_destroys_panel_title"], "Real Panel");
+        let edit = points.iter().find(|p| p["kind"] == "panel_edit_proposal").unwrap();
+        assert_eq!(edit["approve_destroys_panel_title"], "Second Real Panel");
+        let add = points.iter().find(|p| p["kind"] == "panel_proposal").unwrap();
+        assert!(add.get("approve_destroys_panel_title").is_none());
     }
 
     #[tokio::test]
