@@ -3032,15 +3032,30 @@ async function renderArchitecturePanel(id, data) {
 
   const whoami = await fetchJSON(`${API}/me`).catch(() => ({ email: null }));
 
+  // Real gap found by a non-technical evaluator, issue #44: this note used to describe the
+  // scoping *rule* in the abstract, true as a general statement but misleading in practice --
+  // every run created through this pipeline's own headless CLI/automation (which never carries
+  // a signed-in browser's own X-Gate-Email) has no recorded owner, so the "scoped to the account
+  // that created it" branch has, so far, protected zero runs on this deployment, including
+  // webconference-android itself. Report the *actual* state of the run being viewed instead of
+  // only the rule -- a reader should not have to already know their run is one of the unprotected
+  // ones to find that out.
+  const ownerEmail = data.state && data.state.owner_email;
+  const ownerHtml = ownerEmail
+    ? `This run is owned by <b>${escapeHtml(ownerEmail)}</b> -- its writes (milestones, backlog,
+        repo_url, fill-mode, custom panels, devsystem.assistant, ...) are scoped to that account;
+        a different signed-in account gets 403.`
+    : `<b>This run has no recorded owner</b> -- its writes (milestones, backlog, repo_url,
+        fill-mode, custom panels, devsystem.assistant, ...) are open to any signed-in account,
+        not scoped to anyone. Ownership is only ever recorded at creation time from a real
+        signed-in browser session; every run created through this pipeline's own CLI/automation
+        (most runs on this deployment, including this one) has none.`;
   const viewerHtml = `
     <div class="arch-viewer">
       Viewing/would-submit-offers as: <b>${whoami.email ? escapeHtml(whoami.email) : 'not signed in'}</b>
-      <div class="arch-note">A run's own writes (milestones, backlog, repo_url, fill-mode, custom
-        panels, devsystem.assistant, ...) are scoped to the account that created it -- a different
-        signed-in account gets 403. Runs created before that scoping existed stay open to anyone.
-        Bidding itself (<code>offers/submit</code>, <code>auction</code>) is deliberately still open
-        to any signed offer, matching #388's "the signature is the authentication" -- no account
-        login is required to bid at all.</div>
+      <div class="arch-note">${ownerHtml} Bidding itself (<code>offers/submit</code>,
+        <code>auction</code>) is deliberately still open to any signed offer, matching #388's
+        "the signature is the authentication" -- no account login is required to bid at all.</div>
     </div>`;
 
   const specHtml = `
