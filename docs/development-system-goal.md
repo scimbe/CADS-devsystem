@@ -3614,4 +3614,33 @@ This closes the loop on the second mutation test's own finding -- documenting th
 alone wasn't enough; it needed a real detection mechanism in the one place (a real deploy) that
 risk could still bite unnoticed.
 
+**Goal-driven-loop firing, 2026-08-07 -- a real §7 DAU-lens gap, closed for the one case it's safe
+to close.** State check: no new operator input on any of the three open `#382` checkpoints; issue
+#13 stays closed, #14 stays blocked on the OIDC credential, no new labor-setup.com activity, no
+open scimbe PRs. Checked whether `deploy-devsystem-assistant.sh` shared the cache-poisoning risk
+just fixed for `devsystem-web` -- it doesn't: it builds via a plain `docker run cargo build` against
+a named volume, and cargo's own target-dir file lock genuinely serializes concurrent builds instead
+of corrupting a shared cache mount the way BuildKit's `--mount=type=cache` can. Not a real gap;
+didn't force a fix where none was needed.
+
+Live-investigated the GUI itself instead, matching this firing's own "flag it, don't guess" style:
+`renderRisksPanel` (`web/static/index.html`) has always rendered every flagged risk as inert text --
+its own sibling `stalledPanel`, right next to it, already gives a human a real one-click fix
+(`setSelectedStage`). Confirmed live: eleven of the twelve real risk kinds (`preflight.rs`)
+genuinely need human judgment (a vague acceptance criterion, an admitted defect, a change touching
+auth/security) and shouldn't get an automatic fix button -- but "mandatory check-in cadence
+effectively disabled" is a run-level setting with one unambiguous, always-safe fix: open the
+Criteria panel and let the human actually enter a real value. Added a scoped "Fix it →" button for
+that one case only ([`CADS-devsystem@e9e075c`](https://github.com/scimbe/CADS-devsystem/commit/e9e075c))
+-- opens the Health & Criteria panel, expands its collapsed details, focuses/selects the
+`checkin_every` field, never auto-submits a value (same "flag, don't silently auto-correct"
+restraint `saveCriteria`'s own bounds-check already applies in the other direction).
+
+Live-verified via Playwright against the real redeployed container, not assumed from the source
+alone: created a real scratch run with `checkin_every=0` (the real trigger condition), confirmed
+the button renders with the risk, clicked it, and confirmed the real DOM state afterward --
+`document.activeElement.id` is genuinely `cr-checkin-every`, the Criteria panel's `<details>` is
+genuinely open, its window is genuinely visible. Screenshot confirms it visually. 190/190 web tests
+unchanged (pure frontend change); scratch run deleted after verification.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
