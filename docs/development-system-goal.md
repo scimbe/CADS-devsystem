@@ -4027,4 +4027,53 @@ live-verified against the real, actual flagship run: `no review stage for real, 
 now genuinely back in its risk list, an honest, real fact about this project's own state, not a
 synthetic example. Added stress-harness check `[43]` (87/87 total).
 
+**Main-dev-loop firing, 2026-08-07 -- the third real instance of the same bug class, found by
+systematically auditing every risk check in `preflight.rs` for it rather than assuming the previous
+two were isolated.** State check: no new operator input on any of the three open `#382` checkpoints,
+no new PRs, CI healthy -- 87/87 stress harness clean before starting.
+
+`missing_test_before_implement` had the identical "once satisfied, satisfied forever" shape, just
+harder to spot: it only ever checked the FIRST real `devsystem.implement` iteration
+(`Iterator::position`, not scanning every occurrence) -- so one real test early in a run's history
+satisfied it permanently. A SECOND, later `implement` round shipping brand-new work with zero fresh
+test coverage since was never checked at all, because the old test from long before the first
+implement was still technically "before" any later one too -- switching to `rposition` alone (the fix
+that worked for the review check) would NOT have closed this, since an old test stays chronologically
+"before" every future implement regardless of how far back it is. The real fix needed a genuine
+sliding window: each `devsystem.implement` occurrence is now checked against only the history SINCE
+the previous `devsystem.implement` (or the run's start, for the first one), matching this same file's
+own established "collect every real violation, not just the first" precedent (`no_price_ceiling`) --
+the function now returns `Vec<RiskAnnotation>` instead of `Option`, same as that one already does.
+
+Hermetic `cargo test`/`clippy` clean on both crates (124/124 pipeline, 196/196 web, 0 warnings) -- new
+test proves the exact scenario (first implement genuinely covered, second later implement with no
+fresh test flagged on its own); every pre-existing test for this check, including the one explicitly
+asserting "does not retroactively clear" a real historical violation, still passes unchanged --
+the fix adds real detection, it doesn't loosen anything already correct. Redeployed; live-verified end
+to end against the real container: first implement round (covered) produces zero test-coverage risk,
+second implement round (no fresh test) correctly gets flagged, by name, with its own real iteration
+number in the evidence. Checked the actual flagship `webconference-android` run too -- this specific
+risk doesn't currently fire there, an honest, non-fabricated result, not forced to find something.
+Added stress-harness check `[44]` (89/89 total).
+
+**Worth naming as its own pattern, having now recurred three times in one day across three unrelated
+checks**: any risk/gate that answers "has X ever happened" by trusting OLD evidence to still cover
+CURRENT/ongoing state is a real candidate for this exact bug -- the fix is never mechanical (each one
+needed a different real window: "since the most recent work" for review, "a genuine per-occurrence
+sliding window" for tests, "the last proposal that actually set a value" for price ceilings) but the
+symptom is the same: stale evidence being trusted past the point it should still count.
+
+Audited every remaining check in this file against that lens, honestly, not just asserted clean:
+`checkin_cadence_effectively_disabled`/`vague_acceptance_criteria` evaluate the run's own CURRENT
+live state directly (criteria values, current requirements), not history, so staleness can't apply;
+`historical_bidi_control_character` and `succeeded_iteration_admits_a_defect` correctly scan ALL of
+history and stay flagged (already fixed for a related bug earlier this session, confirmed still
+correct, not re-broken); `no_review_role_despite_real_progress` counts a monotonically-growing total
+against the run's current spec, also safe by construction. One real, genuinely open question found,
+NOT fixed here to keep this firing bounded: `security_keyword_hit` only ever checks the LATEST
+iteration by explicit design (its own doc comment: "the latest iteration's feedback... mentions a
+security-relevant keyword") -- a real, different shape than the three bugs above (under-inclusive
+rather than over-trusting), and not verified safe or unsafe by this firing's own audit. Worth a
+dedicated future firing's own live investigation rather than guessed at here.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).

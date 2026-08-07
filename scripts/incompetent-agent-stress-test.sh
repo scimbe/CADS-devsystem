@@ -602,10 +602,32 @@ check "real new unreviewed work after the only review re-flags the risk, not sta
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$review_stale_run"
 
 echo
+echo "[44] a later devsystem.implement round with no fresh test since the previous one must be flagged on its own -- one real test early in a run must not silently cover unlimited later, untested implement rounds forever (found live the same day, #382 goal doc §5/§8, 2026-08-07)"
+test_stale_run="${RUN}-test-staleness-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$test_stale_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$test_stale_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.test","feedback":"added a real test asserting the empty-message case never calls sendText and keeps focus","succeeded":true}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$test_stale_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"first real feature, genuinely covered by the test above","succeeded":true}'
+risk_after_first_implement=$(curl -s "$BASE/api/runs/$test_stale_run" | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+print("yes" if any(r["label"] == "no test stage before implement" for r in d.get("risks", [])) else "no")' 2>/dev/null)
+check "the first implement round, genuinely covered by a real test, does not flag" "no" "$risk_after_first_implement"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$test_stale_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.verify","feedback":"verified the first feature works as expected on device","succeeded":true}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$test_stale_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"a second, later real feature, no fresh test written for it at all","succeeded":true}'
+risk_after_second_implement=$(curl -s "$BASE/api/runs/$test_stale_run" | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+print("yes" if any(r["label"] == "no test stage before implement" for r in d.get("risks", [])) else "no")' 2>/dev/null)
+check "a second, later implement round with no fresh test is flagged on its own, not silently covered by the old test" "yes" "$risk_after_second_implement"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$test_stale_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the forty-three gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the forty-four gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."

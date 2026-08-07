@@ -72,9 +72,7 @@ pub fn preflight_annotations(state: &RunState) -> Vec<RiskAnnotation> {
     if let Some(a) = security_keyword_hit(state) {
         findings.push(a);
     }
-    if let Some(a) = missing_test_before_implement(state) {
-        findings.push(a);
-    }
+    findings.extend(missing_test_before_implement(state));
     if let Some(a) = no_review_for_succeeded_work(state) {
         findings.push(a);
     }
@@ -354,29 +352,51 @@ fn succeeded_iteration_admits_a_defect(state: &RunState) -> Vec<RiskAnnotation> 
 /// zero risk findings. Now requires the SAME two real, mechanical substance
 /// bars the review gate uses (length + distinct words) -- a test iteration that
 /// doesn't clear them doesn't count as real evidence testing happened.
-fn missing_test_before_implement(state: &RunState) -> Option<RiskAnnotation> {
-    let implement_at = state.history.iter().position(|r| r.stage == STAGE_IMPLEMENT)?;
-    let real_test_before = state.history[..implement_at].iter().any(|r| {
-        r.stage == STAGE_TEST && {
-            let trimmed = r.feedback.trim();
-            trimmed.chars().count() >= MIN_TEST_FEEDBACK_LEN && distinct_word_count(trimmed) >= MIN_TEST_DISTINCT_WORDS
+///
+/// **Real gap found live 2026-08-07, the same "once satisfied, satisfied forever"
+/// shape as `no_price_ceiling`'s careless-re-proposal bypass and
+/// `no_review_for_succeeded_work`'s stale-review gap, both fixed the same day**:
+/// this only ever checked the FIRST real `devsystem.implement` iteration
+/// (`Iterator::position`, not scanning every occurrence), so one real test early
+/// in a run's history satisfied this permanently -- a SECOND, later `implement`
+/// round shipping brand-new work with zero fresh test coverage since was never
+/// checked at all, because a real test from long before the first implement was
+/// still technically "before" it too. Fixed with a real sliding window: each
+/// `devsystem.implement` occurrence is checked against only the history SINCE the
+/// previous `devsystem.implement` (or the run's start, for the first one) --
+/// matching this file's own "collect every real violation, not just the first"
+/// precedent (`no_price_ceiling`, twenty-seventh stress-test run) and returning
+/// `Vec` instead of `Option` for the same reason.
+fn missing_test_before_implement(state: &RunState) -> Vec<RiskAnnotation> {
+    let mut findings = Vec::new();
+    let mut window_start = 0;
+    for (idx, r) in state.history.iter().enumerate() {
+        if r.stage != STAGE_IMPLEMENT {
+            continue;
         }
-    });
-    if real_test_before {
-        None
-    } else {
-        Some(RiskAnnotation {
-            label: "no test stage before implement".into(),
-            evidence: format!(
-                "devsystem.implement first ran at iteration {}, with no devsystem.test iteration \
-                 before it that's substantive enough to count as real evidence testing happened \
-                 ({MIN_TEST_FEEDBACK_LEN}+ characters and {MIN_TEST_DISTINCT_WORDS}+ distinct words \
-                 of feedback, not a rubber-stamp)",
-                state.history[implement_at].iteration
-            ),
-            fix_target: None,
-        })
+        let real_test_since_last_implement = state.history[window_start..idx].iter().any(|h| {
+            h.stage == STAGE_TEST && {
+                let trimmed = h.feedback.trim();
+                trimmed.chars().count() >= MIN_TEST_FEEDBACK_LEN && distinct_word_count(trimmed) >= MIN_TEST_DISTINCT_WORDS
+            }
+        });
+        if !real_test_since_last_implement {
+            findings.push(RiskAnnotation {
+                label: "no test stage before implement".into(),
+                evidence: format!(
+                    "devsystem.implement ran at iteration {}, with no devsystem.test iteration \
+                     since the previous implement (or the run's start) that's substantive enough \
+                     to count as real evidence testing happened ({MIN_TEST_FEEDBACK_LEN}+ \
+                     characters and {MIN_TEST_DISTINCT_WORDS}+ distinct words of feedback, not a \
+                     rubber-stamp)",
+                    r.iteration
+                ),
+                fix_target: None,
+            });
+        }
+        window_start = idx + 1;
     }
+    findings
 }
 
 /// Goal doc §5's own named "most direct next step" toward the quality-bar table:
@@ -797,6 +817,32 @@ mod tests {
         // real historical fact this check reports; it does not retroactively clear.
         let findings = preflight_annotations(&state);
         assert!(findings.iter().any(|f| f.label == "no test stage before implement"));
+    }
+
+    #[test]
+    /// Real gap found live 2026-08-07, same "once satisfied, satisfied forever"
+    /// shape as no_price_ceiling's/no_review_for_succeeded_work's own fixes the
+    /// same day: one real test early in a run used to satisfy this permanently,
+    /// so a SECOND, later implement round shipping brand-new work got zero
+    /// coverage-check at all -- the old test from long before still counted as
+    /// "before" it. Each implement round now needs its own fresh test since the
+    /// previous implement, not just any test anywhere earlier in history.
+    fn a_later_implement_round_with_no_fresh_test_since_the_previous_one_is_flagged_on_its_own() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_TEST, 1, "added a real test asserting the empty-message case never calls sendText and keeps focus", vec![]));
+        state.history.push(iteration(STAGE_IMPLEMENT, 2, "first real feature, genuinely covered by the test above", vec![]));
+        assert!(
+            !preflight_annotations(&state).iter().any(|f| f.label == "no test stage before implement"),
+            "sanity check: the first implement round must genuinely be covered"
+        );
+
+        state.history.push(iteration(STAGE_VERIFY, 3, "verified the first feature", vec![]));
+        state.history.push(iteration(STAGE_IMPLEMENT, 4, "a second, later real feature, no fresh test written for it at all", vec![]));
+        let findings = preflight_annotations(&state);
+        assert!(
+            findings.iter().any(|f| f.label == "no test stage before implement" && f.evidence.contains("iteration 4")),
+            "a later implement round with no test since the previous one must be flagged on its own, not silently covered by an old test: {findings:?}"
+        );
     }
 
     #[test]
