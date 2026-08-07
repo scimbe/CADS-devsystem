@@ -21,10 +21,31 @@ const MIN_TEST_DISTINCT_WORDS: usize = 8;
 /// One real risk finding: a short label plus the concrete evidence that triggered it
 /// -- always traceable back to specific text/history, never asserted without a
 /// reason a human can immediately verify.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub struct RiskAnnotation {
     pub label: String,
     pub evidence: String,
+    /// A structured re-propose target for the GUI's own "Fix it" action (#382
+    /// goal doc §7, 2026-08-07) -- `None` for every risk kind except
+    /// `no_price_ceiling`, the one case with a real, always-safe fix (re-
+    /// propose the identical role with a real `price_ceiling` this time,
+    /// exactly the "natural fix" this file's own doc comments already
+    /// describe). Deliberately a structured field, not re-derived by parsing
+    /// `evidence`'s human-readable text in the frontend -- this project's own
+    /// "no invented signal" discipline (see the vague-acceptance-criteria and
+    /// defect-admission checks above) applies here too: the real `stage_id`/
+    /// `tag` are already known at the point this risk is built, so that's the
+    /// one honest source for them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix_target: Option<RiskFixTarget>,
+}
+
+/// The real `stage_id`/`tag` a "Fix it" GUI action needs to re-propose an
+/// already-live-but-unbounded role with a real `price_ceiling` this time.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct RiskFixTarget {
+    pub stage_id: String,
+    pub tag: String,
 }
 
 const SECURITY_KEYWORDS: [&str; 8] =
@@ -112,6 +133,7 @@ fn vague_acceptance_criteria(state: &RunState) -> Vec<RiskAnnotation> {
                          the LLM\") needs more than a short label to actually constrain what a \
                          role-filler builds"
                     ),
+                    fix_target: None,
                 });
             }
         }
@@ -145,6 +167,7 @@ fn historical_bidi_control_character(state: &RunState) -> Vec<RiskAnnotation> {
                      displayed text may not match what's actually stored; this predates the write-time \
                      gate that now rejects new occurrences, or arrived before this specific field was covered"
                 ),
+                fix_target: None,
             });
         }
     };
@@ -202,6 +225,7 @@ fn checkin_cadence_effectively_disabled(state: &RunState) -> Option<RiskAnnotati
                  fires on its own; only the hard max_iterations ceiling ({}) still forces a check-in",
                 c.max_iterations
             ),
+            fix_target: None,
         });
     }
     if c.checkin_every >= c.max_iterations {
@@ -213,6 +237,7 @@ fn checkin_cadence_effectively_disabled(state: &RunState) -> Option<RiskAnnotati
                  mid-run check-in",
                 c.checkin_every, c.max_iterations
             ),
+            fix_target: None,
         });
     }
     None
@@ -238,6 +263,7 @@ fn security_keyword_hit(state: &RunState) -> Option<RiskAnnotation> {
         return Some(RiskAnnotation {
             label: "touches auth/security".into(),
             evidence: format!("iteration {}'s feedback mentions \"{kw}\"", latest.iteration),
+            fix_target: None,
         });
     }
     for p in &latest.proposals {
@@ -246,6 +272,7 @@ fn security_keyword_hit(state: &RunState) -> Option<RiskAnnotation> {
             return Some(RiskAnnotation {
                 label: "touches auth/security".into(),
                 evidence: format!("proposal {}'s rationale mentions \"{kw}\"", inline_code_escape(&p.stage_id)),
+                fix_target: None,
             });
         }
     }
@@ -306,6 +333,7 @@ fn succeeded_iteration_admits_a_defect(state: &RunState) -> Vec<RiskAnnotation> 
                      ever fixed, so this stays flagged.",
                     h.iteration
                 ),
+                fix_target: None,
             })
         })
         .collect()
@@ -346,6 +374,7 @@ fn missing_test_before_implement(state: &RunState) -> Option<RiskAnnotation> {
                  of feedback, not a rubber-stamp)",
                 state.history[implement_at].iteration
             ),
+            fix_target: None,
         })
     }
 }
@@ -388,6 +417,7 @@ fn no_review_for_succeeded_work(state: &RunState) -> Option<RiskAnnotation> {
                  {MIN_TEST_DISTINCT_WORDS}+ distinct words of feedback, not a rubber-stamp) -- \
                  advisory today, not a block (goal doc §5)"
             ),
+            fix_target: None,
         })
     }
 }
@@ -491,6 +521,7 @@ fn no_price_ceiling(state: &RunState) -> Vec<RiskAnnotation> {
                 inline_code_escape(&p.stage_id),
                 p.price_ceiling.map(|v| v.to_string()).unwrap_or_else(|| "none set".to_string())
             ),
+            fix_target: Some(RiskFixTarget { stage_id: p.stage_id.clone(), tag: p.tag.clone() }),
         })
         .collect()
 }
@@ -539,6 +570,7 @@ fn no_review_role_despite_real_progress(spec: &PipelineSpec, state: &RunState) -
              role -- gap #2's mandatory review gate (requirements can't be marked verified without a real \
              review) has no teeth here at all, since it only applies once review is declared."
         ),
+        fix_target: None,
     })
 }
 
@@ -837,6 +869,33 @@ mod tests {
         state.added_stages.push("devsystem.some_new_role".into());
         let findings = preflight_annotations(&state);
         assert!(findings.iter().any(|f| f.label == "no price ceiling set"));
+    }
+
+    #[test]
+    /// Real gap closed (#382 goal doc §7, 2026-08-07): `no_price_ceiling` is the
+    /// one risk kind with an unambiguous, always-safe fix (re-propose the
+    /// identical role with a real price_ceiling this time) -- the GUI's own
+    /// "Fix it" action needs the real `stage_id`/`tag` to pre-fill that
+    /// re-proposal, not re-derived by parsing `evidence`'s human-readable text.
+    fn no_price_ceiling_finding_carries_a_real_fix_target_every_other_check_leaves_none() {
+        let mut state = RunState::new("run-preflight");
+        state.approved_stage_proposals.push(proposal(None, None));
+        state.added_stages.push("devsystem.some_new_role".into());
+        // Also trigger a second, unrelated risk kind in the same run, to prove
+        // fix_target isn't accidentally set on checks that never populate it.
+        state.criteria.checkin_every = 0;
+        let findings = preflight_annotations(&state);
+
+        let price_ceiling_finding = findings.iter().find(|f| f.label == "no price ceiling set").expect("no price ceiling set must fire");
+        let target = price_ceiling_finding.fix_target.as_ref().expect("no_price_ceiling must carry a real fix_target");
+        assert_eq!(target.stage_id, "devsystem.some_new_role");
+        assert_eq!(target.tag, "some_new_role");
+
+        let checkin_finding = findings
+            .iter()
+            .find(|f| f.label == "mandatory check-in cadence effectively disabled")
+            .expect("the unrelated checkin-cadence risk must also fire in this scenario");
+        assert!(checkin_finding.fix_target.is_none(), "a risk kind with no real fix action must never carry a fabricated target");
     }
 
     #[test]

@@ -3484,22 +3484,49 @@ function wireRepoForm(id) {
 // a real fix (`setSelectedStage`). Same class of gap this session already closed
 // for CADS-Tunnel's own login-gate denial page (issue #18): flagging a problem
 // isn't the same as leading a good-faith-but-fallible user to a good outcome.
-// Deliberately scoped to the ONE risk kind with an unambiguous, always-safe,
-// run-level fix (no per-role/stage targeting needed, unlike most of the other
-// eleven) -- those others genuinely need human judgment (a vague acceptance
-// criterion, an admitted defect, a change touching auth/security), where an
-// automatic "fix it" button would be dishonest, not helpful, per this project's
-// own "flag, don't silently auto-correct" discipline (see saveCriteria's own
+// Deliberately scoped to the TWO risk kinds with an unambiguous, always-safe fix
+// -- the other ten genuinely need human judgment (a vague acceptance criterion,
+// an admitted defect, a change touching auth/security), where an automatic
+// "fix it" button would be dishonest, not helpful, per this project's own
+// "flag, don't silently auto-correct" discipline (see saveCriteria's own
 // bounds-check comment above for the same restraint in the other direction).
+// `needsTarget: true` means the fix needs the real, structured `fix_target`
+// preflight.rs now attaches to that one risk kind (RiskFixTarget) -- never
+// re-derived by parsing `evidence`'s own human-readable text, which this
+// project's own "no invented signal" discipline already rejects elsewhere.
 const RISK_FIXES = {
   'mandatory check-in cadence effectively disabled': {
     buttonLabel: 'Fix it →',
+    needsTarget: false,
     apply: () => {
       criteriaOpen = true;
       showPanel('healthcrit');
       if (currentRunData) renderHealthCriteriaPanel(currentRun, currentRunData);
       const input = document.getElementById('cr-checkin-every');
       if (input) { input.focus(); input.select(); }
+    },
+  },
+  'no price ceiling set': {
+    buttonLabel: 'Fix it →',
+    needsTarget: true,
+    // The real, always-safe fix this project's own docs already describe:
+    // re-propose the identical role (same stage_id/tag) with a real
+    // price_ceiling this time -- `apply_proposal` correctly treats that as
+    // updating the live, already-approved role, not a duplicate. Pre-fills
+    // the New Iteration panel's own "propose a new stage" sub-form and
+    // focuses the price-ceiling field; never picks or submits a number for
+    // the human.
+    apply: (target) => {
+      showPanel('newiter');
+      const checkbox = document.getElementById('it-has-proposal');
+      const fields = document.getElementById('proposal-fields');
+      if (checkbox && fields) { checkbox.checked = true; fields.style.display = 'block'; }
+      const stageId = document.getElementById('pr-stage-id');
+      const tag = document.getElementById('pr-tag');
+      if (stageId) stageId.value = target.stage_id;
+      if (tag) tag.value = target.tag;
+      const priceCeiling = document.getElementById('pr-price-ceiling');
+      if (priceCeiling) { priceCeiling.focus(); priceCeiling.select(); }
     },
   },
 };
@@ -3513,8 +3540,9 @@ function renderRisksPanel(data) {
       Mechanical checks over this run's history, not an LLM guess:
       ${risks.map(r => {
         const fix = RISK_FIXES[r.label];
-        const fixBtn = fix
-          ? ` <button type="button" class="secondary risk-fix" data-risk-label="${escapeHtml(r.label)}">${escapeHtml(fix.buttonLabel)}</button>`
+        const showFix = fix && (!fix.needsTarget || r.fix_target);
+        const fixBtn = showFix
+          ? ` <button type="button" class="secondary risk-fix" data-risk-label="${escapeHtml(r.label)}" data-fix-target="${r.fix_target ? escapeHtml(JSON.stringify(r.fix_target)) : ''}">${escapeHtml(fix.buttonLabel)}</button>`
           : '';
         return `<div class="risk-item"><b>${escapeHtml(r.label)}</b> -- ${escapeHtml(r.evidence)}${fixBtn}</div>`;
       }).join('')}
@@ -3536,7 +3564,10 @@ function renderRisksPanel(data) {
     btn.onclick = () => setSelectedStage(btn.dataset.stage);
   }
   for (const btn of body.querySelectorAll('.risk-fix')) {
-    btn.onclick = () => RISK_FIXES[btn.dataset.riskLabel].apply();
+    btn.onclick = () => {
+      const raw = btn.dataset.fixTarget;
+      RISK_FIXES[btn.dataset.riskLabel].apply(raw ? JSON.parse(raw) : undefined);
+    };
   }
 }
 
