@@ -5906,4 +5906,29 @@ own pointer-events, and the deliberate "click empty space closes the launcher" b
 untouched. `CADS-devsystem@4127c6b`, `elementFromPoint()` re-verified clean (correctly returns the
 `<input>` now) against the actual deployment, full 100/100 stress harness stays clean.
 
+**Main-dev-loop firing, 2026-08-07 (kkk) -- issue #45: real friction before deleting a run with any
+history.** State check: `#382`'s three checkpoints and `#14` still unanswered; nothing new blocking.
+Two fresh, real issues had landed (`#45`, `#46`); picked `#45` for severity -- an unowned run
+(`#44`'s finding) could still never acquire an owner, and the Runs panel's own delete button offered a
+bare `confirm()` on all 138 runs, including `webconference-android` (18 real iterations), to any
+signed-in account, with zero mention of ownership or history.
+
+The report also corrected `#44`'s own root-cause claim, verified independently: the write path DOES
+work (a run created through the real GUI gets a real `owner_email`) -- the 138 existing unowned runs
+are a stranded backlog from before that path existed, not a broken write. Confirmed live before
+fixing anything.
+
+Took both of the issue's real suggestions, not just the cheapest: the delete dialog now names the
+run's actual ownership state, and a run with any real iteration history requires typing the exact run
+id rather than one OK-click -- a 0-iteration scratch run keeps the simpler `confirm()`.
+`CADS-devsystem@e1d4dc9`. Verified precisely with three real Playwright cases against the actual
+deployment, not assumed: 0-iteration run shows the honest `confirm()`; 1-iteration run shows a
+`prompt()` instead; wrong typed text leaves the run alive; the exact run id actually deletes it. Full
+100/100 stress harness stays clean.
+
+Suggestion #3 (an "adopt this run" action moving the existing 138 out of the permanent unowned
+bucket) remains real, open, larger work. `#46` (max_iterations not actually a bound, plus a real
+looping-Resume gap in the guided Open Points flow) also remains open, real, and unaddressed --
+picked up next.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
