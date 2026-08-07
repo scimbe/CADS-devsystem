@@ -440,6 +440,17 @@
  }
  .orb-bubble:hover .orb-puck,.orb-bubble:focus-visible .orb-puck{transform:scale(1.1);border-color:var(--accent2)}
  .orb-bubble.active .orb-puck{border-color:var(--accent);box-shadow:0 0 0 2px rgba(217,138,79,.28),0 10px 26px rgba(0,0,0,.4)}
+ /* Real operator ask, live 2026-08-07 -- a real pictogram in every puck
+    (still within this launcher's own glass/dark scheme, not the bright
+    reference palette the operator pointed at only for the icon *idea*),
+    sized off each tier's own puck width so it scales with the bubble
+    instead of a fixed pixel size that would look oversized on tier-4's
+    30px pucks or cramped on tier-1's 72px ones. */
+ .orb-icon{
+   position:absolute;inset:0;margin:auto;width:var(--orb-icon,20px);height:var(--orb-icon,20px);
+   color:rgba(240,242,246,.82);pointer-events:none;
+ }
+ .orb-bubble.active .orb-icon{color:var(--accent)}
  .orb-label{
    font-size:var(--orb-font,.76rem);font-weight:600;text-align:center;max-width:118px;
    word-break:break-word;
@@ -465,10 +476,24 @@
     were rendering with opacity:1, just nowhere near their intended
     position, invisible in every screenshot taken before this was caught. */
  .tier-icon:hover .orb-label,.tier-icon:focus-visible .orb-label{opacity:1;transform:translateX(-50%) translateY(0)}
+ /* Real operator ask, live 2026-08-07 ("mehr Benachrichtigungselemente, wenn
+    es die Benachrichtigungen auch gibt"): this badge only ever renders when
+    `pending > 0` is real (unchanged), but visually it needs to actually read
+    as a notification, not a quiet number -- a solid ring separating it from
+    the puck behind it, and the same pulse convention the orb-launcher's own
+    dot already uses for "something needs you", so a pending item on an
+    icon-only tier bubble is noticeable before a human ever reads the count. */
  .orb-bubble-badge{
-   position:absolute;top:-4px;right:-4px;background:var(--danger);color:#fff;border-radius:999px;
-   font-family:var(--mono);font-size:.62rem;font-weight:700;padding:.05rem .35rem;line-height:1.3;z-index:1;
+   position:absolute;top:-5px;right:-5px;background:var(--danger);color:#fff;border-radius:999px;
+   font-family:var(--mono);font-size:.64rem;font-weight:700;padding:.08rem .4rem;line-height:1.3;z-index:2;
+   min-width:1.3em;text-align:center;box-shadow:0 0 0 2px rgba(13,17,23,.92),0 2px 6px rgba(0,0,0,.5);
+   animation:orb-badge-pulse 2.2s ease-in-out infinite;
  }
+ @keyframes orb-badge-pulse{
+   0%,100%{box-shadow:0 0 0 2px rgba(13,17,23,.92),0 0 0 0 rgba(220,53,69,.55),0 2px 6px rgba(0,0,0,.5)}
+   50%{box-shadow:0 0 0 2px rgba(13,17,23,.92),0 0 0 5px rgba(220,53,69,0),0 2px 6px rgba(0,0,0,.5)}
+ }
+ @media (prefers-reduced-motion:reduce){.orb-bubble-badge{animation:none}}
  .orb-bubble-dot{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);width:6px;height:6px;border-radius:50%;background:var(--accent2)}
  .orb-product-link{
    position:absolute;left:16px;bottom:88px;font-family:var(--mono);font-size:.72rem;color:var(--muted);
@@ -615,6 +640,43 @@ const PANEL_DEFAULTS = {
   // away rather than force-opened on a first-time user.
   openpoints: { title: 'Open Points',        x: 1064, y: 952,  w: 340, h: 300 },
 };
+
+// Real operator ask, live 2026-08-07 ("die Piktogramme mit mouseover"): the
+// launcher's own pucks had never carried a real pictogram, just a text label
+// (tier-label) or nothing at all (tier-icon, blank glass circle until
+// hovered) -- exactly the "hässlich" (ugly) complaint. One small,
+// semantically-matched line icon per real panel, inside every tier's puck
+// (not just the unlabeled ones), the existing `title` attribute already
+// carries the mouseover label so no new hover plumbing is needed. Plain
+// stroke paths (Feather-style, MIT-licensed convention, hand-authored here)
+// so they inherit `currentColor` and need no separate light/dark asset.
+const PANEL_ICONS = {
+  runs: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+  process: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+  roles: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  healthcrit: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  risks: '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  newiter: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>',
+  history: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  backlog: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+  milestones: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',
+  requirements: '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>',
+  checkin: '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>',
+  memory: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>',
+  code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+  architecture: '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  support: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/>',
+  rag: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+  panels: '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>',
+  flow: '<polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/>',
+  usage: '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+  openpoints: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+};
+function panelIconSvg(id) {
+  const paths = PANEL_ICONS[id];
+  if (!paths) return '';
+  return `<svg class="orb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+}
 
 // Real gap found 2026-08-05, simulating a genuinely fresh first-time user via
 // Playwright: every panel defaulted to visible when no saved layout exists
@@ -1453,11 +1515,18 @@ function renderOrbBubbles() {
   // labeled tiers size that chord off the real label width; icon tiers off
   // the much smaller puck width alone, which is why they can pack in
   // without needing anywhere near as much radius per item.
+  // Real operator ask, live 2026-08-07: the reference layout they pointed at
+  // packs its small pictogram bubbles much closer together than the big
+  // labeled ones -- gap should shrink *proportionally* to puck size, not
+  // stay a near-constant fraction of it. Tightened chordBasis/minRadius for
+  // the two icon-only tiers accordingly (was 58/380 and 48/470); the labeled
+  // tiers are untouched, still sized off real label width, per the operator's
+  // own "auch mit den großen [Bubbles]" ask to leave those as they are.
   const TIERS = [
     { count: 3, puck: 72, font: .86, minRadius: 160, labeled: true, chordBasis: 148 },
     { count: 5, puck: 54, font: .78, minRadius: 300, labeled: true, chordBasis: 138 },
-    { count: 6, puck: 38, font: .74, minRadius: 380, labeled: false, chordBasis: 58 },
-    { count: Infinity, puck: 30, font: .74, minRadius: 470, labeled: false, chordBasis: 48 },
+    { count: 6, puck: 38, font: .74, minRadius: 300, labeled: false, chordBasis: 44 },
+    { count: Infinity, puck: 30, font: .74, minRadius: 370, labeled: false, chordBasis: 34 },
   ];
   const minA = 8, maxA = 82;
   let cursor = 0;
@@ -1496,9 +1565,10 @@ function renderOrbBubbles() {
       const dot = visible ? `<span class="orb-bubble-dot" title="currently open"></span>` : '';
       const tierClass = p.labeled ? 'tier-label' : 'tier-icon';
       const label = `<span class="orb-label">${escapeHtml(d.title)}</span>`;
+      const icon = panelIconSvg(p.id);
       return `<button type="button" class="orb-bubble ${tierClass}${visible ? ' active' : ''}" data-panel="${p.id}" title="${escapeHtml(d.title)}"
-        style="--orb-x:${p.x.toFixed(1)}px;--orb-y:${p.y.toFixed(1)}px;--orb-font:${p.font}rem;--orb-delay:${Math.min(i * 22, 420)}ms">
-        <span class="orb-puck" style="width:${p.puck}px;height:${p.puck}px">${badge}${dot}</span>${label}
+        style="--orb-x:${p.x.toFixed(1)}px;--orb-y:${p.y.toFixed(1)}px;--orb-font:${p.font}rem;--orb-delay:${Math.min(i * 22, 420)}ms;--orb-icon:${Math.round(p.puck * .5)}px">
+        <span class="orb-puck" style="width:${p.puck}px;height:${p.puck}px">${icon}${badge}${dot}</span>${label}
       </button>`;
     })
     .join('');
