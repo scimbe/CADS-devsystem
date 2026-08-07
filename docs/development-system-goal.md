@@ -6382,4 +6382,43 @@ pass -- scoped to the minimum-viable actor+timestamp fix the issue itself framed
 matching this session's established practice of shipping a bounded slice rather than over-scoping
 one firing. Remains real, open, and noted as such in the follow-up issue comment.
 
+**Main-dev-loop firing, 2026-08-07 (aaa) -- issue 37: a requirement can now actually be corrected.**
+Until this, a requirement could be added but never edited or removed anywhere in the system -- not
+in the GUI, not in `devsystem.assistant`'s action vocabulary, not in the REST API. A wrong or
+unsatisfiable requirement was therefore permanently load-bearing for the review gate and coverage.
+The issue's own live example, still true on `webconference-android`: requirement #1 conflates an
+*iteration* succeeding with the *requirement* being verified -- two different things on this
+platform -- and iteration 18's own review correctly recommended rewriting it. That rewrite could not
+be performed; the only "fix" available was deleting and recreating the entire run, losing all of its
+real iteration history.
+
+Shipped the issue's own suggested resolution #1: `POST /api/runs/{id}/requirements/{index}/update`,
+update-in-place rather than remove. Deliberately not a remove -- `requirement_indices` on iterations
+is positional, so removing an entry would silently renumber every existing iteration's own
+references (the same class of problem #35 already documents for the Markdown export's numbering).
+Update sidesteps that entirely. The same real EARS/length/bidi-control-character validation
+`add_requirement` already enforces was extracted into one shared `validate_requirement_fields`
+function (both Rust and, mirrored, the client-side JS) so the two entry points can't quietly drift
+apart from each other.
+
+Saving a correction resets `verified`/`verified_criteria` back to unconfirmed: the specific text a
+human previously confirmed may no longer be what's actually being asked, so silently carrying an old
+confirmation forward against changed criteria would misrepresent it as still applying. `proposed_by`/
+`created_by` (who originally authored the requirement, human or LLM) are deliberately left untouched
+by an edit -- correcting the text doesn't change who first wrote it. `CADS-devsystem@c4e8647`.
+
+The Requirements panel gained a real "✎ Edit" control per requirement, opening an inline form
+pre-filled with the current statement and criteria; "Save correction" tells the reviewer up front
+that any existing confirmation will reset. 220/220 web crate tests, zero warnings. Live-verified
+against the redeployed container end to end: a wrong requirement corrected in place and actually
+persisted (confirmed via a fresh `GET`, not just trusting the response body), a real prior
+confirmation reset by the correction, a non-EARS correction rejected with the same real message
+`add_requirement` gives, and an out-of-range index 404s.
+
+Deliberately not shipped this pass, and left open: a `devsystem.assistant` action verb for this edit
+(this file's own carefully-tracked action-vocabulary count is asserted in several places and would
+need updating everywhere at once, a real but separate piece of work) and a hard-delete path (the
+issue's own analysis: remapping every iteration's `requirement_indices` after a removal is real,
+materially harder work than an in-place update). Both noted as open follow-ons in the issue comment.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
