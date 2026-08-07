@@ -4317,4 +4317,28 @@ No source change ships from this firing either -- two real leads, both traced fu
 non-new self-report, one an already-closed historical artifact), honestly reported as a clean round
 rather than manufacturing an unneeded change.
 
+**Main-dev-loop firing, 2026-08-07 (c) -- a real role-filler iteration on the flagship run itself,
+closing three of its own live risks.** State check: no new operator input on any of the four standing
+decision points, `#13` stays closed, `#14` unchanged, both repos' CI green, no new PRs. Re-checked the
+GUI's `RISK_FIXES` map (`web/static/index.html`) against today's `Option`->`Vec` preflight
+conversions out of the same DAU-lens skepticism applied all session: confirmed clean -- only
+`no price ceiling set` and the check-in-cadence risk were ever wired to a "Fix it" button (the other
+risk kinds are deliberately left to human judgment, per that code's own doc comment), and
+`no price ceiling set` was already `Vec`-shaped before today, with each risk carrying its own correct,
+independent `fix_target` -- multiple simultaneous same-label risks (three, on this very run) already
+render and fix correctly. No gap found, no fix needed.
+
+Used that same live state as the basis for a real, bounded self-optimization increment instead:
+`webconference-android`'s own real risk list had three genuine `no price ceiling set` findings
+(`devsystem.document_extraction`, `devsystem.android_emulator_test`, `devsystem.review`, unbounded
+since iterations 1/3/8 respectively). Submitted iteration 14 as a real `devsystem.improve` role-filler
+action -- not a synthetic example -- re-proposing all three already-live roles with a real
+`price_ceiling: 2000` each (matching this project's own documented tutorial convention, since none of
+the three had a prior real ceiling anywhere in this run's history to match instead), using the
+pipeline's own already-tested "re-propose the identical stage_id" mechanism. Live-verified against
+the actual deployment before and after: risk count dropped `11` -> `8`, exactly the three targeted
+findings and nothing else. No operator decision needed for this one -- adding a spending cap where
+none existed is the strictly conservative direction, never a removal of a real permission. 90/90
+stress harness stays clean. Committed real run state to `CADS-devsystem@6397286`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
