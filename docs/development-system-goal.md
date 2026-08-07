@@ -4184,4 +4184,23 @@ rand_core migration (which would mean real source changes at the one real call s
 whatever else the eventual dependency bump touches) is the operator's own call, now backed by
 concrete evidence instead of a general worry.
 
+**Goal-driven-loop firing, 2026-08-07 -- a real mutation test of today's own newest stress-harness
+check, after several consecutive firings found no new gap.** State check: no new operator input on
+any of the three open `#382` checkpoints, no new PRs, disk unchanged, 90/90 stress harness clean
+before starting.
+
+Applying this project's own established "stress-test your harness's assumptions" discipline (the
+Anthropic harness-design article, cited directly elsewhere in this doc) to the newest check added
+today: does stress check `[45]` (and its underlying hermetic unit test) actually catch the exact
+regression it claims to, or does it just happen to pass against already-correct code? Temporarily
+reverted `security_keyword_hit` to its real pre-fix, latest-iteration-only behavior -- not a
+synthetic mutation, the literal old code. Confirmed both layers genuinely fail against it: the
+hermetic unit test `a_security_keyword_hit_survives_a_later_unrelated_iteration` failed with a real
+panic naming the exact missing finding, and after rebuilding and redeploying the mutated binary, the
+live stress check `[45]` failed too (`expected yes, got no`, `89 passed, 1 failed`) -- proof the
+detector has real teeth at both layers, not just one. Reverted cleanly (`git checkout --`, confirmed
+via `git status`/`git diff --stat`), rebuilt, redeployed the real fix, and reconfirmed 90/90 clean.
+No source change ships from this firing -- the value is the proof itself, the same discipline this
+project already applied to earlier checks this session, now extended to today's newest one.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
