@@ -5982,4 +5982,40 @@ harness stays clean.
 `#47`'s other two findings -- the unclamped `N / M` consecutive-failures display, and the ambiguous
 collapsed abort-reason text shared with `#46` -- remain real, open, smaller work.
 
+**Main-dev-loop firing, 2026-08-07 (nnn) -- issue #48: a fired check-in now actually pauses the run,
+closing the third and last `AbortCriteria` field's gap.** State check: `#382`'s three checkpoints and
+`#14` still unanswered. A fresh, precisely-scoped issue had landed, a direct continuation of
+`#46`/`#47`: `checkin_every` was the one `AbortCriteria` field the ceiling fix left unguarded --
+`RunOutcome::CheckinDue`'s own doc comment had always promised "the run must pause here," but nothing
+ever did. Live-confirmed severity: `checkin_every: 1`, six iterations submitted back to back, all six
+accepted and durably recorded, none paused -- one content-free acknowledge click then retroactively
+cleared the entire unbounded backlog at once.
+
+`run_iteration` now sets `paused` + a real reason on `CheckinDue`, reusing the exact mechanism
+`should_abort`'s own branch already established -- the existing `paused` gate blocks the next
+submission with no new enforcement logic, and a tight cadence correctly re-pauses after every single
+subsequent iteration. `acknowledge_checkin` now also resumes the run when the pause is specifically a
+check-in pause (a cadence check-in is a review checkpoint, not a stop like a milestone -- acknowledging
+it is the deliberate decision to continue); an unrelated coincident pause reason is left untouched.
+Also fixed the report's smaller companion bug: `iterations_until_checkin` now reads `0` (due now)
+whenever `checkin_pending` is true, instead of blindly counting toward a future boundary.
+`CADS-devsystem@0cbb62f`.
+
+Fixing this surfaced two real, expected interactions with earlier work, both traced and fixed in the
+same pass rather than worked around: `open_points()` was about to double-report the identical real
+fact (a `paused_checkpoint` AND a separate `checkin_due` entry) once a check-in also pauses -- now
+suppresses the redundant one; and an existing concurrency test's default criteria meant the fix
+correctly 409'd some of its in-flight requests, so its criteria were widened to keep its real purpose
+(proving `write_lock` closes the load-then-persist race) decoupled from the new, correct gating. A
+third, genuinely new regression also surfaced in the stress harness's own check [47], now stale for
+the identical correct reason -- found and fixed in the same pass, not left to bit-rot: 102/102 (100 +
+2 new assertions this fix adds). 136/136 pipeline lib tests, 202/202 web tests. Live-verified against
+the actual deployment with the issue's own exact repro end to end.
+
+A separate, real, uncommitted drift was also found and captured while investigating: `webconference-android`'s
+own tracked `state.json` had accumulated the `id`/`submitted_at` schema migration on its existing
+history (issue #38) and two real requirements (#6, #7) already live since firing hhh, never committed.
+Captured honestly (`CADS-devsystem@8dfba04`) -- no new iteration, no data loss, `checkin_acknowledged_through`
+unchanged.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
