@@ -5767,4 +5767,29 @@ in its spec), escalating the broader product question to the operator. Captured 
 Only 1 of 20 `max_iterations` remains on this run -- a real, live decision point (raise the ceiling, or
 let it stop at the mandatory check-in) that only the operator can make.
 
+**Main-dev-loop firing, 2026-08-07 (eee) -- issue #42: the (ccc) repair's own dangling reference,
+repaired.** State check: still no new operator input on the three open `#382` checkpoints; CI finally
+clearing its queue rather than sitting stuck. A genuinely new, well-evidenced issue had landed since
+the last check: `#42`, filed by the flagship run's own live `devsystem.plan` role, reporting a real
+self-inflicted consequence of (ccc) -- compacting the duplicate out of `webconference-android`'s
+history silently renumbered every ordinal `>=10`, and nothing migrated with it. Five independent,
+contemporaneous issues (`#34`, `#35`, `#36`, `#38`, `#39`) were shown to all be off by exactly one for
+ordinals `>=10`, and the run's own single open operator-decision backlog item was left citing
+"iteration 19" -- a record that no longer exists.
+
+Took `#42`'s own suggestion #4, the smallest real, correctly-scoped fix available this firing: repaired
+the dangling reference in `state.backlog[7]` -- a **text correction**, not another positional array
+mutation, naming what the citation used to say, what it now refers to (iteration 18), and why, so a
+reader isn't left to silently guess the numbering moved. `CADS-devsystem@2881c68`, live-verified via
+the deployed API that the corrected text is served.
+
+`#42`'s real, larger ask -- suggestion #1, making every durable cross-reference
+(`checkin_acknowledged_through`, backlog escalations, risk evidence, the check-in document's own
+heading) key on `IterationRecord`'s new `id` (landed `8c8beb6`, ddd) instead of raw array position --
+remains open, correctly not attempted in this same bounded increment. `#42` also names the frozen,
+now off-by-one prose *inside* iterations 14/16/16/18 themselves (their own stored `feedback` text
+citing the wrong ordinal) as unrepaired and, per its own suggestion #2, probably shouldn't be repaired
+at all going forward -- history should be treated append-only, tombstoned rather than compacted, so
+this exact silent-renumbering failure mode can't recur.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
