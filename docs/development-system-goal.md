@@ -5298,4 +5298,35 @@ has real, live proof" overclaim: a live-verified "I could not reproduce this" is
 fabricated patch for a bug that may not exist as described, or that exists somewhere this session's
 four repro attempts didn't reach.
 
+**Main-dev-loop firing, 2026-08-07 (mm) -- mutation-tested check `[3]`, another real check off the
+still-honestly-named `[3]`-`[35]` backlog.** State check: no new operator input on the three `#382`
+checkpoints, `#14` still no reply from labor-setup.com, `#13` stays closed, no new PRs beyond the
+three already-reviewed Dependabot ones, CI green on the last two pushes.
+
+Picked check `[3]` (whitespace-only milestone/backlog text must be rejected, not accepted as a real,
+empty-looking entry) -- the lowest-numbered unverified check in the backlog. Same discipline as
+checks `[43]`-`[45]`: `cp`'d `web/src/main.rs` to a real backup first, mutated `add_backlog_item`'s
+own `body.text.trim().to_string()` down to a literal pre-fix `body.text.clone()` (no `.trim()`) with
+a `// MUTATION-TEST PROBE` marker, deliberately left the sibling milestone-description check
+untouched. Hermetic `cargo test` (Docker, `rust:1-slim`) confirmed the targeted test fails exactly as
+expected (`200` where `400` was expected) before touching the live deployment. Rebuilt and redeployed
+the mutated binary locally, ran the full 100-assertion harness: `99 passed, 1 failed` -- precisely
+the backlog half of check `[3]` failed (`FAIL: a whitespace-only backlog item is rejected (expected
+400, got 200)`), the milestone half stayed green, every other check unaffected. Reverted from the
+real backup (`diff` against `git show HEAD:web/src/main.rs` confirmed byte-identical, not just
+"looks right"), rebuilt, redeployed, reconfirmed `100 passed, 0 failed`.
+
+One real, unplanned disk incident mid-firing, contained without weakening the deploy script's own
+2GB floor: the hermetic `cargo test` build (a cold compile after the builder cache had just been
+pruned for firing (ll)'s own docs-loop screenshot work) alone dropped free space to 1.28GB --
+`docker builder prune -f`/`docker image prune -f` reclaimed nothing (both already clean), so
+`rust:1-slim`'s own tag was removed instead (genuinely unused after the hermetic test container
+exited), which unpinned ~11GB of build-cache layers that `docker builder prune -f` could then
+actually reclaim. Recorded as a real, specific lever for future firings hitting the same wall this
+session's usual two prune commands don't clear on their own -- not a new incident class, the same
+tight-disk reality this whole session has run under, just a slightly different unlock this time.
+
+`[3]` moves from "written but never proven" to real, mutation-verified proof it has teeth --
+`[4]`-`[35]` remain the honestly-named backlog.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
