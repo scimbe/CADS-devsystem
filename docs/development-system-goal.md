@@ -4412,4 +4412,34 @@ confirmed `verified: false` genuinely held afterward. 90/90 stress harness stays
 `devsystem.review` iteration addressing this requirement, closing the loop the gate is meant to
 enforce.
 
+**Goal-driven-loop firing, 2026-08-07 (g) -- closing the loop named last firing, honestly.** State
+check: no new operator input on any of the four standing decision points, `#13`/`#14`/CI/PRs all
+unchanged.
+
+Before writing anything, read the real current implementation state in full rather than from
+memory: `CADS-webconference-android/native-bridge/src/channel.rs`'s own module doc comment and its
+sibling `docs/channel-join-options.md` (an existing, thorough, honest survey from an earlier real
+increment -- task list item "Real code review + backlog step for broker discovery"). Confirmed: what
+ships today is that survey's Option 2 -- a real, hermetically-tested, cross-compiled direct
+`Noise_IK` peer-to-peer session (`ct_common::a2a`, genuine AEAD-authenticated handshake, real
+encrypted messages) -- but it still needs the peer's key/address already known out of band, exactly
+the M1 mechanism requirement 0 (M2) exists to replace. Option 1, the real thing (`SignedChannelGrant`
+presented to `ct_edge::channel_broker`, rendezvous, NAT traversal, `:443` relay fallback), is not
+implemented here at all -- it lives in the separate `ct-agent` repo and reaching it is correctly
+scoped in that survey as its own separate, larger increment.
+
+Submitted iteration 15 as a real `devsystem.review` addressing requirement 0, grounded in that
+reading, honestly concluding none of its three acceptance criteria are met -- and **deliberately did
+not call `toggle_requirement`**, since verifying it now would be exactly the kind of fabricated
+progress this loop must never produce. Live-confirmed afterward: `requirements[0].verified` stayed
+`false`. Two of this run's own mechanical checks reacted exactly as designed to real, live data, not
+synthetically: `no review stage for real, succeeded work` cleared (a real substantive review now
+exists), and `succeeded iteration admits a known defect` newly fired (the review process itself
+succeeded, but its own honest content admits the underlying work has a real gap) -- both are the
+first real, non-synthetic confirmation these two checks fire correctly against the flagship run
+itself, not just hermetic tests or scratch runs. The iteration also landed exactly on this run's own
+`checkin_every: 5` boundary (iteration 15) -- a real `CheckinDue` outcome, confirmed advisory-only by
+design (unlike `Abort`, it never sets `paused`), not a bug. 90/90 stress harness stays clean.
+Committed to `CADS-devsystem@3395f29`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
