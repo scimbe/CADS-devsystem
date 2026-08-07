@@ -4263,4 +4263,29 @@ mutation-test sweep this session's own "stress-test your harness's assumptions" 
 for -- not just shipping four real fixes today, but proving each one's own regression detector
 actually detects the regression it claims to.
 
+**Main-dev-loop firing, 2026-08-07 -- extending the staleness-bug audit to a genuinely different
+file, honestly reported clean.** State check: no new operator input on any of the three open `#382`
+checkpoints (`M1`, the OIDC credential note, the hard-block review-gate decision -- still
+`scimbe @ 2026-08-06T20:14:26Z`), issue `#14` unchanged (`scimbe @ 2026-08-06T11:02:24Z`), the same
+three Dependabot PRs (`#9`/`#10`/`#11`) still open and out of scope, CADS-Tunnel's stuck CI runner
+queue finally cleared (last run succeeded 2026-08-07T04:03:52Z, after several earlier cancellations
+-- confirmed external, no action needed here), 90/90 stress harness clean, both repos' git logs
+unchanged since the last firing.
+
+Applied this session's now-well-established "once satisfied/flagged, forgotten" staleness lens
+(the same bug class behind today's four `preflight.rs` fixes) to `pipeline/src/improve.rs`'s
+`stalled_stages` -- a fifth, genuinely different history-scanning computation, not yet audited.
+Read the function in full rather than assuming the shape matched: `stalled_stages` filters
+`state.added_stages` against `state.history.iter().any(...)`, freshly, on every single call -- no
+cached "checked once" state, no latest-only/first-only shortcut. Traced both real call sites
+(`checkin.rs:138`, `web/src/main.rs:581`): both load a fresh `RunState` from disk and call
+`stalled_stages(state)` directly against it, so a stage that later gets a real iteration correctly
+stops being reported "stalled" the very next time either caller runs. Safe by construction, the
+same category already confirmed for `checkin_cadence_effectively_disabled`,
+`vague_acceptance_criteria`, `historical_bidi_control_character`, and
+`no_review_role_despite_real_progress` earlier this session -- no fifth staleness bug exists here.
+No source change ships from this firing; an honestly reported clean audit result is the real
+increment, matching this project's own standing discipline of reporting clean rounds rather than
+manufacturing an unneeded change.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
