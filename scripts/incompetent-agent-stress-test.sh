@@ -746,10 +746,28 @@ check "devsystem.improve is among them even though this run never declares it as
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$canon_run"
 
 echo
+echo "[52] a stalled-stage badge must NOT clear on a failed attempt -- only a real, succeeded iteration as that exact stage may clear it. Live-reproduced on the actual flagship webconference-android run: this used to clear on the mere existence of a matching iteration record regardless of succeeded, silently hiding 3 of its 5 added stages -- exactly the ones genuinely blocked on real infra (#12/#13/#14) (issue #53, #382 goal doc §8, 2026-08-07)"
+stalled_run="stalled-latch-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$stalled_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$stalled_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.plan","feedback":"planning the new stage","succeeded":true,"proposals":[{"proposed_by":"devsystem.plan","stage_id":"devsystem.stalled_probe","tag":"stalled_probe","rationale":"stress-harness repro for issue 53","use_existing_service":null,"units":1,"price_ceiling":null}]}'
+stalled_after_propose=$(curl -s "$BASE/api/runs/$stalled_run" | python3 -c 'import json,sys; print("devsystem.stalled_probe" in json.load(sys.stdin).get("stalled_stages", []))' 2>/dev/null)
+check "a proposed-and-added stage with no iteration yet is stalled" "True" "$stalled_after_propose"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$stalled_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.stalled_probe","feedback":"This iteration did NO work and produced NOTHING.","succeeded":false}'
+stalled_after_failure=$(curl -s "$BASE/api/runs/$stalled_run" | python3 -c 'import json,sys; print("devsystem.stalled_probe" in json.load(sys.stdin).get("stalled_stages", []))' 2>/dev/null)
+check "a failed attempt at the stage does NOT clear stalled -- a failed attempt is evidence FOR it, not against it" "True" "$stalled_after_failure"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$stalled_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.stalled_probe","feedback":"real delivered work this time","succeeded":true}'
+stalled_after_success=$(curl -s "$BASE/api/runs/$stalled_run" | python3 -c 'import json,sys; print("devsystem.stalled_probe" in json.load(sys.stdin).get("stalled_stages", []))' 2>/dev/null)
+check "a real, later success does clear stalled" "False" "$stalled_after_success"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$stalled_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the fifty-one gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the fifty-two gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
