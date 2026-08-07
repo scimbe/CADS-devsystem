@@ -4203,4 +4203,22 @@ via `git status`/`git diff --stat`), rebuilt, redeployed the real fix, and recon
 No source change ships from this firing -- the value is the proof itself, the same discipline this
 project already applied to earlier checks this session, now extended to today's newest one.
 
+**Goal-driven-loop firing, 2026-08-07 -- continuing the mutation-test sweep to a second of today's
+four new checks.** State check: no new operator input on any of the three open `#382` checkpoints, no
+new PRs, disk unchanged, 90/90 clean before starting.
+
+Applied the identical mutation-test discipline to check `[44]` (`missing_test_before_implement`'s
+sliding-window fix) -- arguably the most structurally complex of today's four fixes, so the highest-
+value one to verify next. Temporarily reverted the window to always start at index 0 (the literal
+pre-fix "only the first implement's own coverage matters" bug, not a synthetic mutation). Confirmed
+both layers genuinely fail: the hermetic unit test
+`a_later_implement_round_with_no_fresh_test_since_the_previous_one_is_flagged_on_its_own` panicked
+with the exact missing finding, and the rebuilt, redeployed mutated binary made live stress check
+`[44]` fail precisely on its second half (`a second, later implement round... expected yes, got no`)
+while its first half (`the first implement round, genuinely covered, does not flag`) correctly still
+passed -- proof the check catches exactly the regression it claims to, not a broader unrelated
+breakage. Reverted cleanly, rebuilt, redeployed the real fix, reconfirmed 90/90 clean. No source
+change ships. Two of today's four new checks now mutation-verified (`[44]`, `[45]`); `[42]`
+(price_ceiling bypass) and `[43]` (review staleness) remain for a future firing to complete the set.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
