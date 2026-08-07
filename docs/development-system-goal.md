@@ -3578,4 +3578,40 @@ tested, and flagged clearly on issue #18 with the exact lever (`scripts/deploy-s
 than guessed past -- the same "surface it, don't guess" discipline already applied to the OIDC
 credential and the three open `#382` checkpoints.
 
+**Goal-driven-loop firing, 2026-08-07 -- a real production regression found live, root-caused, and
+fixed at the process level.** State check: no new operator input on any of the three open `#382`
+checkpoints; CI on both `CADS-devsystem` and `CADS-webconference-android` fully cleared and green.
+Ran the incompetent-agent stress harness against production as this firing's own live investigation
+(same discipline as prior clean-audit firings) -- 72 passed, 1 failed: check `[37]`
+(`duplicate_of_last_iteration`, the byte-identical-resubmission idempotency guard) came back `200`
+instead of the expected `409` against a real, freshly-created run. Reproduced manually to confirm
+before touching anything: a real run's history genuinely grew two indistinguishable `iteration: 1`/
+`iteration: 2` entries.
+
+Investigated rather than assumed a code bug: the source (`duplicate_of_last_iteration`,
+`CADS-devsystem@3afdbd2`, already committed and tested two firings ago) read correctly on review,
+and the running container's binary mtime looked recent. Root cause, confirmed by fixing it: the
+exact class of risk `web/Dockerfile`'s own comment already named after the second mutation test --
+the BuildKit cache mount is shared by *every* real build of this Dockerfile, and can silently
+poison a REAL deploy through `deploy-devsystem-web.sh` itself, not only a scratch/mutation-test
+build. The script's own prior post-deploy checks (port answers, assistant bridge reachable) both
+check connectivity, never that the compiled behavior actually matches source -- so a silently-stale
+binary passed a clean "devsystem-web is up" with a real, already-fixed regression still live in
+production.
+
+Fixed at the process level, per the governing principle, not just this one instance
+([`CADS-devsystem@f169bdf`](https://github.com/scimbe/CADS-devsystem/commit/f169bdf)): added
+`--no-cache` support to the deploy script (used to fix this exact incident -- a fresh `--no-cache`
+rebuild + redeploy, confirmed via the full stress harness afterward, 73/73), and a real, cheap,
+self-contained post-deploy smoke test that creates a scratch run, submits two byte-identical
+iterations, confirms the second genuinely gets `409`, and deletes the run -- if this specific
+regression (or any future one shaped like it) ever recurs, this deploy now fails loudly instead of
+an unrelated future firing discovering it by accident weeks later. Production `devsystem-web`
+rebuilt and redeployed; both the new smoke test and the full stress harness pass against the live
+container.
+
+This closes the loop on the second mutation test's own finding -- documenting the cache-mount risk
+alone wasn't enough; it needed a real detection mechanism in the one place (a real deploy) that
+risk could still bite unnoticed.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
