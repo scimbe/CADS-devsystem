@@ -5329,4 +5329,28 @@ tight-disk reality this whole session has run under, just a slightly different u
 `[3]` moves from "written but never proven" to real, mutation-verified proof it has teeth --
 `[4]`-`[35]` remain the honestly-named backlog.
 
+**Main-dev-loop firing, 2026-08-07 (nn) -- issue #27 fixed and closed: real click-through from the
+"stalled"/"risk(s)" badges and the Pipeline panel's own "Roles panel" mention.** State check: no new
+operator input on the three `#382` checkpoints, `#14` still no labor-setup.com reply, CI green. Two
+genuinely new evaluator issues arrived since firing (mm): `#27` (badges/text with no click-through to
+the panels that explain them) and `#28` (no coherent in-app help surface, per-stage docs exist in the
+repo but aren't linked from the UI).
+
+Picked `#27` -- concrete, well-scoped, matching the DAU-lens pattern this whole persona-testing
+thread has followed. Both `N stalled`/`N risk(s)` Runs-list badges and the Pipeline panel's "the
+Roles panel" text were plain, non-interactive strings, with no discoverable path to either named
+panel (`Risks & Stalled`, `Roles`) for a user who won't ask `devsystem.assistant` -- neither is part
+of the default layout. Made both real `<button>`s: the badges select the run and open Risks &
+Stalled; the Roles mention opens Roles directly. Both had to be siblings of the existing structure,
+not nested children -- a `<button>` can't legally contain another `<button>`, the same constraint the
+Runs-list delete button already worked around. `CADS-devsystem@cbfb493`, live-verified against the
+actual deployment: clicked the real `"1 stalled"` badge on `docs-decision-basis-demo`, confirmed it
+selected that run and opened Risks & Stalled with real content, not just a state flag; confirmed the
+Roles link separately. Full 100/100 stress harness stays clean. Deliberately scoped to only the two
+badge types the report named -- `paused`/`pending review`/`needs attention` badges are unchanged, no
+similar live report asking for those yet.
+
+`#28` is real and related but bigger (an actual in-app help surface, not just two missing links) --
+left open for a future firing, noted on the issue rather than folded into this one.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
