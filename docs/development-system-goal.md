@@ -4678,4 +4678,37 @@ clean. No source change ships -- four mutation-test rounds now this cycle (`[41]
 verification work again -- both remaining flagship-run backlog items still need cross-repo CADS-
 Tunnel changes, and the real production-deploy decision (issue `#18`) stays open with the operator.
 
+**Main-dev-loop firing, 2026-08-07 (r) -- a real, live DAU-lens gap in the Architecture panel, plus
+an honest, still-open finding about this project's own deploy caching.** State check: no new
+operator input on any of the four standing decision points, `#13`/`#14`/PRs unchanged. Deliberately
+switched away from another mutation-test round after five in a row -- picked live GUI investigation
+instead, per the standing "same live-investigation discipline" instruction.
+
+Found a real, significant gap auditing the Architecture panel: "Approve & post to GitHub" (an
+approved `devsystem.assistant` issue proposal) posted a real, public GitHub issue to an external repo
+the instant it was clicked, with **zero confirmation** -- while every structurally similar but
+strictly *less* consequential action in this same codebase (rejecting a stage/issue proposal,
+removing a custom panel, deleting a run) already got a real `confirm()` earlier this session.
+Approving a stage proposal is purely additive to this run's own live spec; approving an issue
+proposal reaches outside the pipeline entirely and isn't meaningfully undoable. Fixed with a real
+`confirm()` naming the real target repo. Live-verified via a real Playwright interaction against the
+actual deployed GUI: seeded a real issue proposal, clicked Approve, captured the dialog firing with
+the correct text, dismissed it, confirmed the proposal genuinely survived -- proof the old click would
+have posted for real with zero warning. Deliberately did not test the accept path (would create a
+real, unwanted GitHub issue as a side effect of testing). Committed to `CADS-devsystem@7d75f58`.
+
+**A real, honest residual finding along the way, not glossed over**: redeploying this pure
+client-side change (`bash scripts/deploy-devsystem-web.sh`, no flags) produced a binary that
+genuinely failed stress check `[38]` live -- the same "shared BuildKit cache mount serves a stale
+binary" bug class this file already named and partially fixed earlier in the session (the fix then:
+a comment saying non-deploy/scratch builds must pass `--no-cache`). This was a *regular* deploy
+invocation, not a scratch build, run shortly after several rapid mutation-test rebuild cycles used
+the same script -- the existing mitigation did not fully cover this case. A `--no-cache` rebuild
+fixed it immediately (98/98 clean afterward, confirmed via real API behavior, not `strings` -- which
+gave a misleading empty result on this binary and should not be trusted for this kind of check going
+forward). Not treating this as fully solved: the underlying shared-cache risk after rapid rebuild
+sequences is real and still open, worth a genuine process fix in a future firing (e.g. always
+passing `--no-cache` after a mutation-test cycle, or a real post-deploy content check less fragile
+than `strings`) rather than assumed away by today's fix.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
