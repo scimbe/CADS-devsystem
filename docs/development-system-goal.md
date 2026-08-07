@@ -4240,4 +4240,27 @@ redeployed the real fix, reconfirmed 90/90 clean. No source change ships.
 Three of today's four new checks are now mutation-verified (`[43]`, `[44]`, `[45]`); only `[42]`
 (the `price_ceiling` careless-re-proposal bypass) remains, for a future firing to complete the set.
 
+**Goal-driven-loop firing, 2026-08-07 -- the mutation-test sweep completed, all four of today's new
+checks now verified.** State check: no new operator input on any of the three open `#382`
+checkpoints, no new PRs, 90/90 clean before starting.
+
+Applied the identical discipline to the last remaining check, `[42]` (`price_ceiling_for`'s own
+"last proposal that actually set a real ceiling" fix). Temporarily reverted to the literal pre-fix
+`latest_proposal_for_stage(...).price_ceiling` -- the exact "just trust the literal last proposal,
+even if it never set a ceiling" bug. Confirmed both layers genuinely fail: the hermetic unit test
+`price_ceiling_for_does_not_let_a_careless_re_proposal_silently_un_bound_a_real_ceiling` panicked
+with `left: None, right: Some(50)`, and the rebuilt, redeployed mutated binary made live stress check
+`[42]` fail precisely as claimed (`expected 400, got 200`) while its sibling `[41]` (the original,
+more basic enforcement check) stayed correctly unaffected -- proof `[42]` catches exactly its own
+narrower regression, not a broader break of the whole enforcement mechanism. Reverted cleanly,
+rebuilt, redeployed the real fix, reconfirmed 90/90 clean. No source change ships.
+
+**All four of today's new stress-harness checks (`[42]`, `[43]`, `[44]`, `[45]`) are now
+mutation-verified**, each individually confirmed to fail against its own real, literal pre-fix code
+at both the hermetic-unit-test layer and the live, redeployed-binary layer, and each confirmed to
+fail *precisely* on its own claimed regression without breaking sibling checks. This closes out the
+mutation-test sweep this session's own "stress-test your harness's assumptions" discipline called
+for -- not just shipping four real fixes today, but proving each one's own regression detector
+actually detects the regression it claims to.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
