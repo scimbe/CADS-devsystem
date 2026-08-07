@@ -3783,6 +3783,53 @@ async function toggleMilestone(id, index) {
   }
 }
 
+// Shared client-side validation for both adding a new requirement and (issue
+// #37, #382 goal doc) correcting one in place -- mirrors the real server-side
+// rules in validate_requirement_fields (web/src/main.rs) so a DAU gets the
+// same early feedback either way, not just on Add. Returns an error message
+// string, or null if the fields are valid.
+function validateRequirementFields(statement, acceptance_criteria) {
+  if (!statement) return 'Statement is required.';
+  if (!acceptance_criteria.length) return 'At least one acceptance criterion is required.';
+  // Same "no client-side early feedback for a real server-side rule" gap as the
+  // length/triviality checks just below -- found live while writing this exact
+  // section's docs page, 2026-08-06: the server's new bidi-control-character
+  // gate (Trojan Source class, see contains_bidi_control_char in main.rs) had
+  // no early warning here either, so a criterion/statement whose on-screen text
+  // is scrambled by e.g. a right-to-left override used to silently round-trip
+  // to the server before failing.
+  const BIDI_CONTROL_RE = /[\u202A-\u202E\u2066-\u2069]/;
+  if (BIDI_CONTROL_RE.test(statement)) {
+    return 'Statement contains a Unicode bidi control character -- its displayed text may not match what would actually be stored.';
+  }
+  const bidiCriterion = acceptance_criteria.find(c => BIDI_CONTROL_RE.test(c));
+  if (bidiCriterion) {
+    // Found live while capturing a screenshot of this exact message, 2026-08-06:
+    // echoing the offending text back verbatim just re-triggers the same
+    // scrambling in the error message itself (the override has no matching pop
+    // character to end its scope). Replace each control character with a
+    // visible placeholder so the message stays legible instead of becoming
+    // exactly the kind of confusing text this check exists to catch.
+    const safeCriterion = bidiCriterion.replace(/[\u202A-\u202E\u2066-\u2069]/g, '[bidi-control-char]');
+    return `"${safeCriterion}" contains a Unicode bidi control character -- its displayed text may not match what would actually be stored.`;
+  }
+  // DAU-lens gap found live 2026-08-06 (#382 goal doc §8): the server's own real
+  // per-criterion checks (over 500 characters; under 5 real alphanumeric characters,
+  // catching "ok"/"."/an invisible-character-only string) had no client-side early
+  // warning at all -- a long or trivial criterion used to silently round-trip to the
+  // server before failing. `maxlength` alone can't express the per-line rule here
+  // (criteria share one textarea, one per line), so checked explicitly instead.
+  const tooLong = acceptance_criteria.find(c => c.length > 500);
+  if (tooLong) {
+    return `"${tooLong.slice(0, 40)}${tooLong.length > 40 ? '\u2026' : ''}" is over 500 characters.`;
+  }
+  const tooTrivial = acceptance_criteria.find(c => (c.match(/[\p{L}\p{N}]/gu) || []).length < 5);
+  if (tooTrivial) {
+    return `"${tooTrivial}" doesn't have enough real content to be checkable (minimum 5 letters/digits).`;
+  }
+  return null;
+}
+
 // Real, structured requirement management (2026-08-04 operator ask, researched
 // against industry spec-driven-development practice -- EARS notation,
 // traceSDD/Spec Kit-style acceptance criteria): distinct from Milestones (a
@@ -3885,6 +3932,16 @@ function renderRequirementsPanel(id, data) {
             <input type="checkbox" class="requirement-auto-judge-toggle" data-index="${i}" ${r.auto_judge ? 'checked' : ''}>
             <span>automode flag (not wired to any real behavior yet -- see tooltip)</span>
           </label>
+          <button type="button" class="btn secondary requirement-edit-toggle" data-index="${i}" style="margin-top:.3rem;font-size:.68rem;padding:.15rem .5rem">✎ Edit</button>
+          <form class="requirement-edit-form inline" data-index="${i}" style="display:none;margin-top:.4rem;flex-direction:column;align-items:stretch;gap:.3rem;border-left:2px solid var(--accent);padding-left:.5rem">
+            <textarea class="requirement-edit-statement" rows="2" maxlength="2000" style="font-size:.8rem">${escapeHtml(r.statement)}</textarea>
+            <textarea class="requirement-edit-criteria" rows="${Math.max(2, r.acceptance_criteria.length)}" style="font-family:var(--mono);font-size:.8rem">${escapeHtml(r.acceptance_criteria.join('\n'))}</textarea>
+            <div class="lede" style="font-size:.65rem">Saving resets this requirement's own verified/confirmed state -- the old confirmation was for the old text.</div>
+            <div style="display:flex;gap:.4rem">
+              <button type="submit" style="font-size:.72rem">Save correction</button>
+              <button type="button" class="btn secondary requirement-edit-cancel" style="font-size:.72rem">Cancel</button>
+            </div>
+          </form>
         </div>`;
       }).join('')
     : '';
@@ -3960,65 +4017,54 @@ function renderRequirementsPanel(id, data) {
   for (const cb of body.querySelectorAll('.requirement-auto-judge-toggle')) {
     cb.onchange = () => toggleRequirementAutoJudge(id, parseInt(cb.dataset.index, 10));
   }
+  // Issue #37 (#382 goal doc): a wrong requirement used to be permanently
+  // load-bearing -- no edit control anywhere in this panel. Real update-in-
+  // place, same client-side validation as the Add form below (kept in sync
+  // deliberately, not copy-pasted-and-forgotten -- see validateRequirementFields).
+  for (const btn of body.querySelectorAll('.requirement-edit-toggle')) {
+    btn.onclick = () => {
+      const form = body.querySelector(`.requirement-edit-form[data-index="${btn.dataset.index}"]`);
+      if (form) form.style.display = form.style.display === 'none' ? 'flex' : 'none';
+    };
+  }
+  for (const btn of body.querySelectorAll('.requirement-edit-cancel')) {
+    btn.onclick = () => { btn.closest('.requirement-edit-form').style.display = 'none'; };
+  }
+  for (const form of body.querySelectorAll('.requirement-edit-form')) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const index = parseInt(form.dataset.index, 10);
+      const status = document.getElementById('requirement-status');
+      const statement = form.querySelector('.requirement-edit-statement').value.trim();
+      const acceptance_criteria = form.querySelector('.requirement-edit-criteria').value.split('\n').map(s => s.trim()).filter(Boolean);
+      const err = validateRequirementFields(statement, acceptance_criteria);
+      if (err) { status.textContent = err; status.className = 'status-line err'; return; }
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements/${index}/update`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ statement, acceptance_criteria })
+        });
+        await selectRun(id);
+      } catch (err2) {
+        status.textContent = err2.message; status.className = 'status-line err';
+      }
+    });
+  }
   document.getElementById('requirement-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const status = document.getElementById('requirement-status');
     const statement = document.getElementById('requirement-statement').value.trim();
     const acceptance_criteria = document.getElementById('requirement-criteria').value.split('\n').map(s => s.trim()).filter(Boolean);
-    if (!statement) { status.textContent = 'Statement is required.'; status.className = 'status-line err'; return; }
-    if (!acceptance_criteria.length) { status.textContent = 'At least one acceptance criterion is required.'; status.className = 'status-line err'; return; }
-    // Same "no client-side early feedback for a real server-side rule" gap as the
-    // length/triviality checks just below -- found live while writing this exact
-    // section's docs page, 2026-08-06: the server's new bidi-control-character
-    // gate (Trojan Source class, see contains_bidi_control_char in main.rs) had
-    // no early warning here either, so a criterion/statement whose on-screen text
-    // is scrambled by e.g. a right-to-left override used to silently round-trip
-    // to the server before failing.
-    const BIDI_CONTROL_RE = /[\u202A-\u202E\u2066-\u2069]/;
-    if (BIDI_CONTROL_RE.test(statement)) {
-      status.textContent = 'Statement contains a Unicode bidi control character -- its displayed text may not match what would actually be stored.';
-      status.className = 'status-line err';
-      return;
-    }
-    const bidiCriterion = acceptance_criteria.find(c => BIDI_CONTROL_RE.test(c));
-    if (bidiCriterion) {
-      // Found live while capturing a screenshot of this exact message, 2026-08-06:
-      // echoing the offending text back verbatim just re-triggers the same
-      // scrambling in the error message itself (the override has no matching pop
-      // character to end its scope). Replace each control character with a
-      // visible placeholder so the message stays legible instead of becoming
-      // exactly the kind of confusing text this check exists to catch.
-      const safeCriterion = bidiCriterion.replace(/[\u202A-\u202E\u2066-\u2069]/g, '[bidi-control-char]');
-      status.textContent = `"${safeCriterion}" contains a Unicode bidi control character -- its displayed text may not match what would actually be stored.`;
-      status.className = 'status-line err';
-      return;
-    }
-    // DAU-lens gap found live 2026-08-06 (#382 goal doc §8): the server's own real
-    // per-criterion checks (over 500 characters; under 5 real alphanumeric characters,
-    // catching "ok"/"."/an invisible-character-only string) had no client-side early
-    // warning at all -- a long or trivial criterion used to silently round-trip to the
-    // server before failing. `maxlength` alone can't express the per-line rule here
-    // (criteria share one textarea, one per line), so checked explicitly instead.
-    const tooLong = acceptance_criteria.find(c => c.length > 500);
-    if (tooLong) {
-      status.textContent = `"${tooLong.slice(0, 40)}${tooLong.length > 40 ? '…' : ''}" is over 500 characters.`;
-      status.className = 'status-line err';
-      return;
-    }
-    const tooTrivial = acceptance_criteria.find(c => (c.match(/[\p{L}\p{N}]/gu) || []).length < 5);
-    if (tooTrivial) {
-      status.textContent = `"${tooTrivial}" doesn't have enough real content to be checkable (minimum 5 letters/digits).`;
-      status.className = 'status-line err';
-      return;
-    }
+    const err = validateRequirementFields(statement, acceptance_criteria);
+    if (err) { status.textContent = err; status.className = 'status-line err'; return; }
     try {
       await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ statement, acceptance_criteria })
       });
       await selectRun(id);
-    } catch (err) {
-      status.textContent = err.message; status.className = 'status-line err';
+    } catch (err2) {
+      status.textContent = err2.message; status.className = 'status-line err';
     }
   });
 }

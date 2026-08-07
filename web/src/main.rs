@@ -220,6 +220,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/milestones", post(add_milestone))
         .route("/api/runs/{id}/milestones/{index}/toggle", post(toggle_milestone_handler))
         .route("/api/runs/{id}/requirements", post(add_requirement))
+        .route("/api/runs/{id}/requirements/{index}/update", post(update_requirement_handler))
         .route("/api/runs/{id}/requirements/{index}/toggle", post(toggle_requirement_handler))
         .route("/api/runs/{id}/requirements/{index}/auto-judge/toggle", post(toggle_requirement_auto_judge_handler))
         .route("/api/runs/{id}/requirements/{index}/criteria/{criterion_index}/toggle", post(toggle_acceptance_criterion_handler))
@@ -1782,34 +1783,29 @@ const MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS: usize = 5;
 /// defeats its entire point (nothing to actually check), so unlike
 /// milestones/backlog this rejects an empty `acceptance_criteria` list, not
 /// just an empty statement.
-async fn add_requirement(
-    State(state): State<AppState>,
-    AxPath(id): AxPath<String>,
-    headers: axum::http::HeaderMap,
-    Json(body): Json<AddRequirementRequest>,
-) -> impl IntoResponse {
-    if !valid_run_id(&id) {
-        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
-    }
-    if !run_exists(&state, &id) {
-        return (StatusCode::NOT_FOUND, "no such run").into_response();
-    }
-    let statement = body.statement.trim().to_string();
+/// Shared statement/acceptance-criteria validation for both adding a new
+/// requirement and (#382 goal doc, issue #37) correcting one in place --
+/// extracted out of what used to be `add_requirement`'s own inline body so
+/// `update_requirement_handler` enforces the identical real rules rather than
+/// a second, separately-maintained copy that could quietly drift. Returns the
+/// trimmed statement and the cleaned acceptance-criteria list on success, or
+/// the exact `(StatusCode, message)` response the caller should return as-is.
+fn validate_requirement_fields(statement: &str, acceptance_criteria: &[String]) -> Result<(String, Vec<String>), (StatusCode, String)> {
+    let statement = statement.trim().to_string();
     if statement.is_empty() {
-        return (StatusCode::BAD_REQUEST, "statement must not be empty").into_response();
+        return Err((StatusCode::BAD_REQUEST, "statement must not be empty".to_string()));
     }
     if statement.len() > MAX_REQUIREMENT_STATEMENT_LEN {
-        return (StatusCode::BAD_REQUEST, format!("statement must be under {MAX_REQUIREMENT_STATEMENT_LEN} characters")).into_response();
+        return Err((StatusCode::BAD_REQUEST, format!("statement must be under {MAX_REQUIREMENT_STATEMENT_LEN} characters")));
     }
     if contains_bidi_control_char(&statement) {
-        return (
+        return Err((
             StatusCode::BAD_REQUEST,
             "statement contains a Unicode bidi control character (e.g. a right-to-left override) \
              -- these can make the visually displayed text not match what's actually stored, which \
              a reviewer relies on reading correctly"
                 .to_string(),
-        )
-            .into_response();
+        ));
     }
     // Real gap found live by the incompetent-agent stress test (#382 goal doc
     // §8, 2026-08-05, DAU lens): a completely non-EARS statement like "asdf"
@@ -1837,20 +1833,19 @@ async fn add_requirement(
     // "SHALL," / "shall." / "shall/could" still correctly do.
     let has_shall_as_a_real_word = statement.to_lowercase().split(|c: char| !c.is_alphanumeric()).any(|w| w == "shall");
     if !has_shall_as_a_real_word {
-        return (
+        return Err((
             StatusCode::BAD_REQUEST,
             "statement doesn't look like a real EARS requirement -- expected something containing \
              \"SHALL\" (e.g. \"WHEN <trigger>, THE SYSTEM SHALL <behavior>\"), not a free-form note."
                 .to_string(),
-        )
-            .into_response();
+        ));
     }
-    let acceptance_criteria: Vec<String> = body.acceptance_criteria.iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect();
+    let acceptance_criteria: Vec<String> = acceptance_criteria.iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect();
     if acceptance_criteria.is_empty() {
-        return (StatusCode::BAD_REQUEST, "at least one non-empty acceptance criterion is required").into_response();
+        return Err((StatusCode::BAD_REQUEST, "at least one non-empty acceptance criterion is required".to_string()));
     }
     if acceptance_criteria.len() > MAX_ACCEPTANCE_CRITERIA {
-        return (StatusCode::BAD_REQUEST, format!("acceptance_criteria is at its defensive cap of {MAX_ACCEPTANCE_CRITERIA} items")).into_response();
+        return Err((StatusCode::BAD_REQUEST, format!("acceptance_criteria is at its defensive cap of {MAX_ACCEPTANCE_CRITERIA} items")));
     }
     // Real gap found and closed by the incompetent-agent stress test (#382 goal
     // doc §8, 2026-08-05): a live round-trip proved criteria like "ok", ".", and
@@ -1896,8 +1891,27 @@ async fn add_requirement(
         })
         .collect();
     if !bad_criteria.is_empty() {
-        return (StatusCode::BAD_REQUEST, format!("acceptance criteria: {}", bad_criteria.join("; "))).into_response();
+        return Err((StatusCode::BAD_REQUEST, format!("acceptance criteria: {}", bad_criteria.join("; "))));
     }
+    Ok((statement, acceptance_criteria))
+}
+
+async fn add_requirement(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<AddRequirementRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let (statement, acceptance_criteria) = match validate_requirement_fields(&body.statement, &body.acceptance_criteria) {
+        Ok(v) => v,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
     let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
@@ -1926,6 +1940,63 @@ async fn add_requirement(
         proposed_by,
         created_by,
     });
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/requirements/{index}/update` -- issue #37 (#382 goal doc):
+/// until this, a requirement could be added but never corrected. A wrong or
+/// unsatisfiable statement (the issue's own live example: `webconference-android`
+/// requirement #1 conflating iteration-succeeded with requirement-verified) was
+/// permanently load-bearing for the review gate and coverage, with the only
+/// "fix" being deleting and recreating the entire run.
+///
+/// Deliberately an update-in-place (the issue's own suggested resolution #1),
+/// not a remove -- `requirement_indices` on iterations is positional, so a
+/// remove would renumber every existing iteration's references (the exact
+/// problem #35 already documents for the Markdown export's numbering). Update
+/// avoids that entirely.
+///
+/// Resets `verified`/`verified_criteria` to their unconfirmed state: the
+/// specific text a human previously verified may no longer be what's being
+/// asked, so carrying old confirmations forward against changed criteria would
+/// misrepresent them as still applying. `proposed_by`/`created_by` (who
+/// originally authored this requirement) are left untouched -- correcting the
+/// text doesn't change who first wrote it.
+async fn update_requirement_handler(
+    State(state): State<AppState>,
+    AxPath((id, index)): AxPath<(String, usize)>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<AddRequirementRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let (statement, acceptance_criteria) = match validate_requirement_fields(&body.statement, &body.acceptance_criteria) {
+        Ok(v) => v,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let Some(requirement) = run_state.requirements.get_mut(index) else {
+        return (StatusCode::NOT_FOUND, format!("no requirement at index {index}")).into_response();
+    };
+    requirement.statement = statement;
+    requirement.acceptance_criteria = acceptance_criteria;
+    requirement.verified = false;
+    requirement.verified_criteria = Vec::new();
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
@@ -6467,6 +6538,157 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    // Issue #37 (#382 goal doc): a wrong requirement used to be permanently
+    // load-bearing -- no edit path anywhere. Real update-in-place, live-verified
+    // end to end: statement and criteria actually change, and any prior
+    // confirmation is honestly reset rather than silently carried over against
+    // now-different text.
+    async fn a_requirement_can_be_corrected_in_place_and_its_old_confirmation_resets() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-update-run"})))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-update-run/requirements",
+                serde_json::json!({"statement": "WHEN a wrong trigger, THE SYSTEM SHALL do the wrong thing", "acceptance_criteria": ["a wrong criterion"]}),
+            ))
+            .await
+            .unwrap();
+        // Confirm it and mark it verified before correcting -- proves the update
+        // actually resets this, not just that a fresh requirement starts unconfirmed.
+        app.clone().oneshot(Request::builder().method("POST").uri("/api/runs/req-update-run/requirements/0/criteria/0/toggle").body(Body::empty()).unwrap()).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-update-run/requirements/0/update",
+                serde_json::json!({"statement": "WHEN a real trigger fires, THE SYSTEM SHALL do the corrected real thing", "acceptance_criteria": ["a corrected, real, checkable criterion"]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["requirements"][0]["statement"], "WHEN a real trigger fires, THE SYSTEM SHALL do the corrected real thing");
+        assert_eq!(body["requirements"][0]["acceptance_criteria"], serde_json::json!(["a corrected, real, checkable criterion"]));
+        assert_eq!(body["requirements"][0]["verified"], false, "correcting the text must not leave a stale verified=true attached to different criteria");
+        assert_eq!(body["requirements"][0]["verified_criteria"], serde_json::json!([]), "the old confirmation was for the old criterion text -- it must not silently carry over");
+
+        // Live-read back via GET to prove this actually persisted, not just the response body.
+        let refetched = body_json(app.oneshot(Request::builder().method("GET").uri("/api/runs/req-update-run").body(Body::empty()).unwrap()).await.unwrap()).await;
+        assert_eq!(refetched["state"]["requirements"][0]["statement"], "WHEN a real trigger fires, THE SYSTEM SHALL do the corrected real thing");
+    }
+
+    #[tokio::test]
+    async fn updating_a_requirement_applies_the_same_real_ears_and_criteria_validation_as_adding_one() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-update-validate-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-update-validate-run/requirements",
+                serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["a real checkable criterion"]}),
+            ))
+            .await
+            .unwrap();
+
+        let non_ears = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-update-validate-run/requirements/0/update",
+                serde_json::json!({"statement": "just a free-form note, not EARS", "acceptance_criteria": ["a real checkable criterion"]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(non_ears.status(), SC::BAD_REQUEST);
+
+        let bad_criterion = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-update-validate-run/requirements/0/update",
+                serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["ok"]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(bad_criterion.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn updating_an_out_of_range_requirement_404s() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-update-oob-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-update-oob-run/requirements/9/update",
+                serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["a real checkable criterion"]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_different_account_cannot_update_someone_elses_requirement() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "owner@example.com", Some(serde_json::json!({"run_id": "req-update-owned-run"}))))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(gate_request(
+                "POST",
+                "/api/runs/req-update-owned-run/requirements",
+                "owner@example.com",
+                Some(serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["a real checkable criterion"]})),
+            ))
+            .await
+            .unwrap();
+
+        let mut update_req = json_request(
+            "POST",
+            "/api/runs/req-update-owned-run/requirements/0/update",
+            serde_json::json!({"statement": "WHEN a hijack, THE SYSTEM SHALL be hijacked", "acceptance_criteria": ["a hijacked criterion"]}),
+        );
+        update_req.headers_mut().insert("x-gate-email", "someone-else@example.com".parse().unwrap());
+        assert_eq!(app.oneshot(update_req).await.unwrap().status(), SC::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn updating_a_requirement_never_touches_who_originally_created_or_proposed_it() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-update-provenance-run"}))).await.unwrap();
+        let mut add_req = json_request(
+            "POST",
+            "/api/runs/req-update-provenance-run/requirements",
+            serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["a real checkable criterion"], "proposed_by": "devsystem.plan"}),
+        );
+        add_req.headers_mut().insert("x-gate-email", "original-author@example.com".parse().unwrap());
+        app.clone().oneshot(add_req).await.unwrap();
+
+        let mut update_req = json_request(
+            "POST",
+            "/api/runs/req-update-provenance-run/requirements/0/update",
+            serde_json::json!({"statement": "WHEN a corrected trigger, THE SYSTEM SHALL do the corrected thing", "acceptance_criteria": ["a corrected, real, checkable criterion"]}),
+        );
+        update_req.headers_mut().insert("x-gate-email", "original-author@example.com".parse().unwrap());
+        let response = app.oneshot(update_req).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["requirements"][0]["created_by"], "original-author@example.com", "correcting the text must not change who originally created it");
+        assert_eq!(body["requirements"][0]["proposed_by"], "devsystem.plan", "correcting the text must not change whether it was human- or LLM-proposed");
     }
 
     #[tokio::test]
