@@ -6216,4 +6216,30 @@ recovered regardless. Suggestion #4 (`#42`'s id-keyed cross-references become bu
 `id` is trustworthy) remains real, open, sequenced work -- `id` is honest now, but nothing yet
 *uses* it for cross-referencing.
 
+**Main-dev-loop firing, 2026-08-07 (vvv) -- a real hard deadlock in the #46/#47 ceiling gate, found
+and fixed the same firing it was reported.** State check: `#382`'s three checkpoints and `#14` still
+unanswered. A fresh comment had landed on `#47` (not a new issue -- same control, correctly reported
+there) describing something serious: `ceiling_already_reached` (the fix that closed `#46`/`#47`'s own
+"Resume steps past the ceiling" gap) checked the run's state *before* the incoming submission, with
+no visibility into what was actually being submitted. Once `consecutive_failures` reached the bound,
+**every** subsequent request was refused with `409` -- including a genuine `succeeded: true`
+submission that would have reset the streak, exactly the remedy the gate's own error message has
+always promised. Live-confirmed before touching anything, the evaluator's own exact repro shape
+(`max_consecutive_failures: 1`): one real failure, Resume, then an identical `succeeded: true`
+resubmission still got refused. The only working remedy was editing the criteria itself -- a door the
+error text never named as the *only* one that actually opened. A genuinely stuck run, reported
+plainly rather than filed as a fresh issue, since it's the same control degrading, not a new one.
+
+Fixed by giving the gate visibility into what's being submitted: `ceiling_already_reached` now takes
+the incoming `succeeded` flag and lets a `true` submission through specifically because applying it
+is what clears the streak (`run_iteration`'s own `consecutive_failures = 0` on success) -- letting it
+land is the resolution, not a bypass. A further `succeeded: false` at the bound is still refused
+outright, so this stays a real ceiling, not unlocked the moment anyone resumes. `max_iterations` has
+no such escape (iteration count only ever grows) and stays blocked regardless of the incoming
+submission's own flag. `CADS-devsystem@ccfb107`. New pipeline-level and HTTP-integration tests prove
+both halves: the escape works, and the ceiling still holds against a further failure. 152/152
+pipeline lib tests, 205/205 web tests, zero warnings. Live-verified against the deployed container
+with the evaluator's own exact repro: the deadlock is gone, the ceiling still genuinely holds. Stress
+harness gained check `[54]`; full suite now 118/118.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
