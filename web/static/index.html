@@ -2271,6 +2271,21 @@ function placeholderIfNoRun(panelId) {
   return false;
 }
 
+// Real, minimal helper (GitHub issue #24): a plain, human "X ago" phrase
+// from a real elapsed-seconds count, used to make the RAG index's own
+// staleness viscerally obvious rather than a bare timestamp a user has to
+// notice and mentally subtract themselves.
+function formatRelativeAge(seconds) {
+  if (!(seconds >= 0)) return 'just now';
+  const mins = Math.floor(seconds / 60);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
 // Real, minimal RAG (#382 task 29): keyword search over whatever the run's
 // repo_url was last synced to. No vector/semantic search claimed -- see
 // web/src/rag.rs's own doc comment for why. "Sync now" is the only trigger
@@ -2285,11 +2300,26 @@ async function renderRagPanel(id, data) {
   } catch (e) {
     status = { configured: false, manual_documents: [] };
   }
+  // Real gap, GitHub issue #24 (a persona-test finding): a text-only user
+  // relying on this panel instead of the Assistant got a silently
+  // incomplete picture -- a stale, partial index (1 of the repo's real
+  // files) missed the single most relevant document for their actual
+  // question, with nothing here suggesting the index might not be current.
+  // Deliberately NOT auto-syncing on every open to fix this: GitHub's own
+  // unauthenticated API allows only ~60 requests/hour (the Code panel's own
+  // commit loader already documents this exact constraint), and every real
+  // action in this GUI re-renders every visible panel -- an auto-sync here
+  // would burn through that budget on actions that have nothing to do with
+  // docs search. A real, honest, always-true caveat instead: this index is
+  // a snapshot from whenever it was last synced, plainly said, every time,
+  // not just implied by a bare timestamp a user has to notice is old.
+  const syncedAgo = status.synced_at ? formatRelativeAge(Date.now() / 1000 - status.synced_at) : null;
+  const staleCaveat = `<div class="lede" style="font-size:.7rem;margin-top:.15rem">This is a snapshot from the last sync -- files added or changed on GitHub since then won't appear until you sync again.</div>`;
   const syncLine = !repoUrl
     ? `<span class="lede" style="font-size:.72rem">No repo_url set (Pipeline panel) -- repo sync unavailable, but uploading documents below works regardless.</span>`
     : status.configured && status.branch
-      ? `<span class="lede" style="font-size:.72rem">Repo: indexed ${status.files_indexed} file(s) from <code>${escapeHtml(status.branch)}</code>, synced ${escapeHtml(new Date(status.synced_at * 1000).toLocaleString())}.</span>`
-      : `<span class="lede" style="font-size:.72rem">Repo: not synced yet.</span>`;
+      ? `<span class="lede" style="font-size:.72rem">Repo: indexed ${status.files_indexed} file(s) from <code>${escapeHtml(status.branch)}</code>, synced <b>${escapeHtml(syncedAgo)}</b> (${escapeHtml(new Date(status.synced_at * 1000).toLocaleString())}).</span>${staleCaveat}`
+      : `<span class="lede" style="font-size:.72rem">Repo: not synced yet.</span>${staleCaveat}`;
   // Re-rendering after an upload/remove replaces body.innerHTML wholesale,
   // which would otherwise silently re-collapse this <details> right after the
   // action that made someone want it open -- found live: the "Remove" button
@@ -2353,9 +2383,15 @@ async function renderRagPanel(id, data) {
     try {
       const r = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/rag/search?q=${encodeURIComponent(q)}`);
       if (!r.configured) { resultsEl.innerHTML = `<span class="lede">Sync a repo or upload a document first -- nothing indexed yet.</span>`; return; }
-      resultsEl.innerHTML = r.results.length
+      // Real gap, GitHub issue #24: repeated right where a user's eyes
+      // actually land after a search (not just in the sync-status line
+      // above, which the report's own persona never noticed) -- especially
+      // for "No matches", where the honest cause could just as easily be a
+      // stale index missing the real file, not that the answer isn't there.
+      const staleReminder = `<div class="lede" style="font-size:.7rem;margin-top:.4rem">Searching the last-synced snapshot -- if you expected a real match and don't see it, try Sync now first.</div>`;
+      resultsEl.innerHTML = (r.results.length
         ? r.results.map(res => `<div class="role-card"><div class="role-meta">${escapeHtml(res.path)} (score ${res.score})</div><div style="font-size:.78rem;margin-top:.3rem">${escapeHtml(res.snippet)}…</div></div>`).join('')
-        : `<span class="lede">No matches.</span>`;
+        : `<span class="lede">No matches.</span>`) + staleReminder;
     } catch (e) {
       resultsEl.innerHTML = `<span class="status-line err">${escapeHtml(e.message)}</span>`;
     }
