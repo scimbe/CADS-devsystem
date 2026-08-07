@@ -4605,4 +4605,26 @@ uncommitted work two firings ago during the analogous check-`[46]` mutation test
 avoided deliberately. Rebuilt, redeployed the real fix, reconfirmed 98/98 clean. Committed to
 `CADS-devsystem@04f980e`. 46 -> 47 checks, 95 -> 98 assertions.
 
+**Main-dev-loop firing, 2026-08-07 (n) -- extending the mutation-test sweep to an older check,
+finding a real (and correct) coupling along the way.** State check: no new operator input on any of
+the four standing decision points, `#13`/`#14`/PRs unchanged. Both remaining backlog items on the
+flagship run (broker-mediated discovery, the responder-side `sender_pubkey` gap) stay correctly
+deferred -- each needs an upstream CADS-Tunnel change, larger scope than one firing, and this is
+deliberately not the moment to start a new cross-repo undertaking with a real production-deploy
+decision (issue `#18`) still sitting open with the operator.
+
+Picked a genuinely older, not-yet-mutation-tested check instead: `[41]`, the direct-accept
+`price_ceiling` enforcement (`web/src/main.rs`'s `if bid.price > ceiling`). Temporarily neutered it
+(`if false && ...`, the literal pre-fix "never enforced" behavior), confirmed the hermetic test
+fails with the exact expected panic, rebuilt and redeployed the mutated binary, ran the full live
+harness. Real, honest finding: **two** checks failed, not one -- `[41]`'s own first assertion, and
+`[42]`'s last assertion too. Not collateral damage: `[42]` (the careless-re-proposal-can't-un-bound
+fix) genuinely reuses this exact same enforcement line for its own final assertion, so both correctly
+fail together when it's neutered -- a real, accurate coupling between the two checks' final
+assertions, not a bug in either. All 45 other checks (96 of 98 assertions) stayed green throughout.
+Reverted cleanly from a pre-mutation backup file, rebuilt, redeployed the real fix, reconfirmed 98/98
+clean. No source change ships from this firing -- the value is the proof itself, and the honestly
+one more data point on this session's own "check independence isn't always what a check's own
+description implies" list.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
