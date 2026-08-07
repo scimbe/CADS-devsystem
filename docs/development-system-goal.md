@@ -3836,4 +3836,25 @@ removed it (`custom_panels: []`) -- the exact scenario that silently destroyed d
 Added stress-harness check `[40]` (81/81 total) asserting the same signal via a direct HTTP round
 trip, not just the Playwright walkthrough.
 
+**Goal-driven-loop firing, 2026-08-07 -- resolved a previously-flagged unknown instead of leaving it
+open a third time.** State check: no new operator input on any of the three open `#382` checkpoints,
+no new PRs, issue #14 unchanged, 81/81 stress harness clean before starting.
+
+Two firings ago this document noted `runs/webconference-android/state.json`'s own `paused` field
+showed `false` on disk while the last commit said `true`, and explicitly left it uninvestigated
+rather than guess. Investigated for real this time instead of re-flagging it a third time:
+`spec.json`'s parallel diff parses byte-identical after `json.loads` (a pure serde field-order
+change, not content drift), and `state.json`'s own real `history` shows two genuine iterations (10,
+11) for `devsystem.android_native_bridge` past the last synced commit (`bf7bca4`) -- both trace to
+real, already-shipped commits on the target repo
+([`CADS-webconference-android@32be6bf`](https://github.com/scimbe/CADS-webconference-android/commit/32be6bf),
+[`CADS-webconference-android@78b4f84`](https://github.com/scimbe/CADS-webconference-android/commit/78b4f84)).
+The only way those iterations could exist at all is a real, legitimate resume after the M1-achieved
+auto-pause -- confirmed, not assumed, since a paused run's own `/iterate` gate returns a real `409`
+(stress check `[36]`). Not a bug: genuine accumulated run state that simply outran this file's own
+"sync" commit cadence, the same pattern nine earlier commits on this exact file already establish
+(`3b0a42a`, `393426a`, `c0c54b7`, etc.). Synced
+([`CADS-devsystem@98308db`](https://github.com/scimbe/CADS-devsystem/commit/98308db)); stress harness
+(81/81) unaffected, a pure data-file change.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
