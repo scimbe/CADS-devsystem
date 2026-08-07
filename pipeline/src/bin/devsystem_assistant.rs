@@ -185,7 +185,7 @@ fn build_system_prompt(context: &str) -> String {
          you are actually taking action; omit it entirely otherwise -- never emit an \
          empty or placeholder block):\n\
          {ACTIONS_FENCE_OPEN}\n\
-         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"...\"}},{{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"...\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}},{{\"type\":\"propose_next_step\",\"text\":\"...\"}},{{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"...\"}},{{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5}}]\n\
+         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"...\"}},{{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"...\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}},{{\"type\":\"propose_next_step\",\"text\":\"...\"}},{{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"...\"}},{{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5}},{{\"type\":\"set_paused\",\"paused\":true}}]\n\
          {ACTIONS_FENCE_CLOSE}\n\
          Indices refer to the real state.milestones/state.backlog/state.requirements \
          arrays already shown to you below -- never guess an index you can't see \
@@ -267,7 +267,7 @@ fn build_system_prompt(context: &str) -> String {
          real bidder sees, and a vague/speculative issue wastes a human reviewer's \
          time. If a request is ambiguous, or you're not confident it's safe to act on, \
          say so in prose and ask instead of emitting an action. You have NO other tool \
-         or system access in this version -- only these eighteen action types against \
+         or system access in this version -- only these nineteen action types against \
          these nine kinds of data (milestones, backlog items, requirements, repo_url, \
          runs, custom panels, stages, issues, next-step drafts); for anything else \
          (e.g. an actual code change, or \
@@ -415,6 +415,24 @@ enum Action {
         max_consecutive_failures: u32,
         checkin_every: u32,
     },
+    /// Real gap closed (#382 goal doc §7.2, gap #2 -- explicitly re-confirmed
+    /// still open live, 2026-08-07, by re-auditing every human-editable GUI
+    /// field against this enum): a human can already pause/resume a run with
+    /// one click (the health panel's own `pause-toggle` button, `POST
+    /// .../pause` / `POST .../resume`) -- "ich weiss nicht... wie ich es
+    /// anhalten kann um es zu korrigieren" was the operator feedback that
+    /// added that button in the first place, and the assistant had no
+    /// matching action at all. Both directions are fully reversible (pause
+    /// then resume is a real no-op) and the human GUI's own button gets zero
+    /// extra confirmation either -- same parity reasoning as
+    /// `UpdateCriteria`/`SetRoleFillMode`. Two real, distinct endpoints
+    /// (`/pause`, `/resume`), not one generic route -- `apply_action` picks
+    /// the right one from `paused`. `pause_reason` becomes "paused manually"
+    /// either way (`set_paused`'s own doc comment: "the one real trigger
+    /// that's always a deliberate human action, never automatic") -- still
+    /// honest when relayed through chat, since the decision to pause really
+    /// was the operator's, not an automatic system trigger.
+    SetPaused { paused: bool },
 }
 
 fn default_stage_units() -> u64 {
@@ -611,6 +629,12 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
             format!("update this run's abort criteria (max_iterations={max_iterations}, max_consecutive_failures={max_consecutive_failures}, checkin_every={checkin_every})"),
             format!("{base}/api/runs/{run_id}/criteria"),
             serde_json::json!({"max_iterations": max_iterations, "max_consecutive_failures": max_consecutive_failures, "checkin_every": checkin_every}),
+            "done",
+        ),
+        Action::SetPaused { paused } => (
+            format!("{} this run", if *paused { "pause" } else { "resume" }),
+            format!("{base}/api/runs/{run_id}/{}", if *paused { "pause" } else { "resume" }),
+            serde_json::json!({}),
             "done",
         ),
     };
@@ -1045,8 +1069,9 @@ mod tests {
                 && prompt.contains("propose_issue")
                 && prompt.contains("propose_next_step")
                 && prompt.contains("set_role_fill_mode")
-                && prompt.contains("update_criteria"),
-            "all eighteen real action types must be documented"
+                && prompt.contains("update_criteria")
+                && prompt.contains("set_paused"),
+            "all nineteen real action types must be documented"
         );
         assert!(
             prompt.contains("state.paused is true") && prompt.contains("2-3 SEPARATE"),
@@ -1058,8 +1083,8 @@ mod tests {
         );
         assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these nine data kinds");
         assert!(
-            prompt.contains("eighteen action types") && prompt.contains("these nine kinds of data"),
-            "real gap found live 2026-08-06: propose_next_step's own addition (fifteenth action type, ninth kind of data -- next-step drafts) updated the action-type count but left the kinds-of-data count at the stale pre-next-step value of eight, so the live assistant's own self-description contradicted itself (\"Eight kinds of data\" followed by a table that itself summed to nine) -- must state nine, matching the real count. Same class of bug found again live 2026-08-06 (docs-loop firing): ToggleRequirementAutoJudge's own addition (sixteenth action type, still the same nine kinds of data -- no new kind, just a new action on the existing requirements kind) left this count stale at fifteen; the live assistant's own self-report ('15 total action types') was checked and found wrong before this fix, not assumed. SetRoleFillMode (seventeenth action type, still nine kinds of data -- roles aren't a new kind, this session already treats role/auction state as covered by the existing surface) grew the count again in the same firing this comment was written, updated together this time rather than in a later separate fix. UpdateCriteria (eighteenth action type, still nine kinds of data -- abort criteria are per-run metadata, already covered by the existing \"runs\" kind) closes the last of §7's own three previously-deferred gaps; count updated in this same commit, not a later separate fix"
+            prompt.contains("nineteen action types") && prompt.contains("these nine kinds of data"),
+            "real gap found live 2026-08-06: propose_next_step's own addition (fifteenth action type, ninth kind of data -- next-step drafts) updated the action-type count but left the kinds-of-data count at the stale pre-next-step value of eight, so the live assistant's own self-description contradicted itself (\"Eight kinds of data\" followed by a table that itself summed to nine) -- must state nine, matching the real count. Same class of bug found again live 2026-08-06 (docs-loop firing): ToggleRequirementAutoJudge's own addition (sixteenth action type, still the same nine kinds of data -- no new kind, just a new action on the existing requirements kind) left this count stale at fifteen; the live assistant's own self-report ('15 total action types') was checked and found wrong before this fix, not assumed. SetRoleFillMode (seventeenth action type, still nine kinds of data -- roles aren't a new kind, this session already treats role/auction state as covered by the existing surface) grew the count again in the same firing this comment was written, updated together this time rather than in a later separate fix. UpdateCriteria (eighteenth action type, still nine kinds of data -- abort criteria are per-run metadata, already covered by the existing \"runs\" kind) closes the last of §7's own three previously-deferred gaps; count updated in this same commit, not a later separate fix. SetPaused (nineteenth action type, still nine kinds of data -- a run's paused/pause_reason are per-run metadata, the same \"runs\" kind update_criteria already covers) closes the §7.2 gap #2 audit's newest finding; count updated in this same commit, not a later separate fix"
         );
         assert!(prompt.contains("none takes effect by itself"), "the panel/panel-removal/panel-edit/stage/issue-proposal approval gate must be explicit, not implied");
         assert!(prompt.contains("BE TERSE") && prompt.contains("mehr tun, weniger reden"), "the operator's own terseness instruction must be explicit, not just implied by 'be concise'");
@@ -1133,8 +1158,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_actions_parses_all_eighteen_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"},{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"alice\"},{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5}]\n```";
+    fn extract_actions_parses_all_nineteen_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"},{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"alice\"},{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5},{\"type\":\"set_paused\",\"paused\":true}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -1172,6 +1197,7 @@ mod tests {
                 Action::ProposeNextStep { text: "Resume and expand M1 with group chat support.".to_string() },
                 Action::SetRoleFillMode { tag: "plan".to_string(), mode: "dedicated".to_string(), label: Some("alice".to_string()) },
                 Action::UpdateCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 5 },
+                Action::SetPaused { paused: true },
             ]
         );
     }
@@ -1541,6 +1567,31 @@ mod tests {
         assert_eq!(parsed["max_iterations"], 20);
         assert_eq!(parsed["max_consecutive_failures"], 3);
         assert_eq!(parsed["checkin_every"], 5);
+    }
+
+    #[test]
+    /// Real gap closed (#382 goal doc §7.2, gap #2, re-audited and found still
+    /// open 2026-08-07): see `Action::SetPaused`'s own doc comment for why
+    /// this is safe -- both directions are fully reversible and the human
+    /// GUI's own pause-toggle button gets no extra confirmation either. Two
+    /// distinct real endpoints, not one generic route with a body flag.
+    fn apply_action_posts_the_real_pause_and_resume_requests() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+
+        let pause = Action::SetPaused { paused: true };
+        let result = apply_action(&client, &addr, "my-run", &pause);
+        assert!(result.starts_with("done:"));
+        let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/pause");
+
+        let resume = Action::SetPaused { paused: false };
+        let result = apply_action(&client, &addr, "my-run", &resume);
+        assert!(result.starts_with("done:"));
+        let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/resume");
     }
 
     #[test]
