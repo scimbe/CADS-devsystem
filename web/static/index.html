@@ -400,20 +400,24 @@
     revealed area stays the same real size regardless of viewport --
     genuinely corner-confined, not viewport-relative. */
  @property --orb-radius{syntax:'<length>';inherits:false;initial-value:0px}
+ /* Real operator ask, live 2026-08-07: match the launcher dot to the site's
+    one real accent color (--accent, #d98a4f) instead of its own one-off
+    green -- every other button on this page is already that orange, the
+    dot was the sole exception. */
  #orb-launcher{
    position:fixed;left:22px;bottom:22px;width:57px;height:57px;border-radius:50%;
    border:none;cursor:pointer;z-index:250000;padding:0;
-   background:radial-gradient(circle at 32% 28%,#8bf3c0,#34d399 55%,#0e9f6e 100%);
-   box-shadow:0 0 0 0 rgba(52,211,153,.4),0 4px 16px rgba(0,0,0,.45);
+   background:radial-gradient(circle at 32% 28%,#f6c896,var(--accent) 55%,#a8642e 100%);
+   box-shadow:0 0 0 0 rgba(217,138,79,.4),0 4px 16px rgba(0,0,0,.45);
    animation:orb-pulse 3.2s ease-in-out infinite;
    transition:transform .18s ease;
  }
  #orb-launcher:hover{transform:scale(1.08)}
  #orb-launcher:active{transform:scale(.94)}
- #orb-launcher[aria-expanded="true"]{animation:none;box-shadow:0 0 0 0 rgba(52,211,153,0),0 4px 16px rgba(0,0,0,.45)}
+ #orb-launcher[aria-expanded="true"]{animation:none;box-shadow:0 0 0 0 rgba(217,138,79,0),0 4px 16px rgba(0,0,0,.45)}
  @keyframes orb-pulse{
-   0%,100%{box-shadow:0 0 0 0 rgba(52,211,153,.32),0 4px 16px rgba(0,0,0,.45)}
-   50%{box-shadow:0 0 0 11px rgba(52,211,153,0),0 4px 16px rgba(0,0,0,.45)}
+   0%,100%{box-shadow:0 0 0 0 rgba(217,138,79,.32),0 4px 16px rgba(0,0,0,.45)}
+   50%{box-shadow:0 0 0 11px rgba(217,138,79,0),0 4px 16px rgba(0,0,0,.45)}
  }
  @media (prefers-reduced-motion:reduce){#orb-launcher{animation:none}}
  .orb-overlay{
@@ -536,8 +540,13 @@
     dot, disconnected from it -- moved to sit directly beside it instead,
     bottom edge aligned with the dot's own bottom (22px) so the two read as
     one control cluster in the corner, not two unrelated floating elements. */
+ /* Real operator ask, live 2026-08-07: nudged further right along the same
+    bottom edge, toward the fan's own outer reach -- still well inside the
+    solid, fully-opaque part of the corner reveal (the mask's own fade only
+    starts past ~576px radius, the field never gets remotely close), just
+    further from the dot than the original "immediately beside it" placement. */
  .orb-filter{
-   position:absolute;left:93px;bottom:22px;width:240px;
+   position:absolute;left:150px;bottom:22px;width:230px;
    background:rgba(13,17,23,.85);backdrop-filter:blur(14px) saturate(180%);-webkit-backdrop-filter:blur(14px) saturate(180%);
    border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:.5rem .7rem;
    color:var(--text);font-family:-apple-system,BlinkMacSystemFont,var(--serif);font-size:.85rem;
@@ -547,7 +556,7 @@
  .orb-overlay.open .orb-filter{opacity:1;transform:translateY(0)}
  .orb-filter:focus{outline:none;border-color:var(--accent2)}
  .orb-filter::placeholder{color:var(--muted)}
- .orb-filter-status{position:absolute;left:93px;bottom:2px;font-size:.68rem;color:var(--muted);
+ .orb-filter-status{position:absolute;left:150px;bottom:2px;font-size:.68rem;color:var(--muted);
    font-family:var(--mono);opacity:0;transition:opacity .3s ease .1s}
  .orb-overlay.open .orb-filter-status.visible{opacity:1}
  /* Real gap, GitHub issue #30 (the residual half left open after the
@@ -1714,14 +1723,26 @@ function renderOrbBubbles() {
   // left-hugging near 90deg) -- still short of the literal axes so no bubble
   // ever renders exactly edge-on with its own puck half clipped off-screen.
   const minA = 3, maxA = 87;
+  // Real operator ask, live 2026-08-07: every tier used the identical
+  // minA..maxA angle sequence, so a bubble in one ring sat on almost the
+  // exact same spoke as the bubble at the same index in the ring next to
+  // it -- straight radial lines rather than a staggered fan. Alternate a
+  // small angular nudge per ring (+/-STAGGER_DEG, sign flipping tier to
+  // tier so each ring is offset from the one immediately inside/outside
+  // it, not just every other one) -- an interlocking "Verzahnung" instead
+  // of aligned spokes. Kept well under minA/maxA's own 3deg margin from
+  // the true axes so this can never push a bubble into the edge-clipping
+  // zone that margin exists to prevent; angleDeg is still clamped to
+  // [minA,maxA] below as a hard backstop regardless.
+  const STAGGER_DEG = 4;
   let cursor = 0;
   let outerEdgeSoFar = 0;
   const placed = [];
-  for (const tier of TIERS) {
+  TIERS.forEach((tier, tierIndex) => {
     const slice = scored.slice(cursor, cursor + tier.count);
     cursor += tier.count;
     const n = slice.length;
-    if (!n) continue;
+    if (!n) return;
     const stepRad = n > 1 ? ((maxA - minA) / (n - 1)) * (Math.PI / 180) : 0;
     // Real fix, live-confirmed via Playwright bounding boxes: a tier's own
     // *configured* minRadius isn't enough on its own -- a tier's real
@@ -1732,14 +1753,16 @@ function renderOrbBubbles() {
     const floor = Math.max(tier.minRadius, outerEdgeSoFar + 48);
     const radius = n > 1 ? Math.max(floor, tier.chordBasis / (2 * Math.sin(stepRad / 2))) : floor;
     outerEdgeSoFar = radius + tier.puck / 2;
+    const stagger = (tierIndex % 2 === 0 ? -1 : 1) * STAGGER_DEG;
     slice.forEach((entry, i) => {
-      const angleDeg = n === 1 ? (minA + maxA) / 2 : minA + ((maxA - minA) * i) / (n - 1);
+      const base = n === 1 ? (minA + maxA) / 2 : minA + ((maxA - minA) * i) / (n - 1);
+      const angleDeg = Math.min(maxA, Math.max(minA, base + stagger));
       const rad = (angleDeg * Math.PI) / 180;
       const x = Math.cos(rad) * radius;
       const y = -Math.sin(rad) * radius;
       placed.push({ ...entry, x, y, puck: tier.puck });
     });
-  }
+  });
   wrap.innerHTML = placed
     .map((p, i) => {
       const d = PANEL_DEFAULTS[p.id];
@@ -4754,7 +4777,7 @@ function saveShortcuts() {
 // behavior ships, same discipline COMMANDS already keeps for ./ commands.
 const FIXED_SHORTCUTS = [
   { combo: 'Escape', description: 'Closes whichever real overlay is currently open -- a popover (refresh interval, fill mode), the New Project dialog, this Shortcuts dialog, or the panel launcher -- always the topmost one, context-aware.' },
-  { combo: 'Ctrl+C', description: 'Closes the panel launcher (the green dot), only while it is actually open -- never intercepts a real copy anywhere else in the app.' },
+  { combo: 'Ctrl+C', description: 'Closes the panel launcher (the round dot, bottom-left), only while it is actually open -- never intercepts a real copy anywhere else in the app.' },
   { combo: 'Enter', description: 'Submits the Process Prompt / autocomplete selection, advances focus through the New Project dialog\'s fields, or applies a fill-mode popover\'s dedicated label -- deliberately never "submit the whole form" in a multi-field context, to avoid a premature-submit footgun.' },
   { combo: 'Tab / Shift+Tab', description: 'Cycles focus within whichever real modal is currently open (New Project, this Shortcuts dialog) -- a real accessible focus trap, never escapes to the page behind it.' },
 ];
