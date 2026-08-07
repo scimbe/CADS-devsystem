@@ -4104,4 +4104,37 @@ found in a single day across `preflight.rs` (`no_price_ceiling`'s careless-re-pr
 firing's own systematic audit of every remaining check in the file found no further instances, and
 this firing's own investigation of the one real open question it named didn't find a fifth.
 
+**Main-dev-loop firing, 2026-08-07 -- a real Android-side fix started, then correctly stopped short
+of shipping, and a genuine operational constraint recorded honestly instead of forced past.** State
+check: no new operator input on any of the three open `#382` checkpoints, no new PRs, issue #14
+unchanged.
+
+Verified first that the assistant's own `Action::SetRoleFillMode` can't bypass the new
+`price_ceiling` enforcement gate: its dispatch never constructs an `accepted_bid` field at all, so it
+can only ever set a role `dedicated` with a label, never accept a specific priced bid -- it doesn't
+reach the code path that would need checking. Confirmed, not assumed; no gap.
+
+Picked up the one real, honest, non-blocking observation from this run's own earlier code review
+(`MessageStore` never explicitly closing its `SQLiteDatabase` handle) as a small, real Android-side
+increment: added a real `onDestroy()` override calling `messageStore.close()`, plus a real Robolectric
+test proving persisted data survives the close/reopen cycle, not just "no crash happened." Both
+changes were written and reviewed for correctness, but **not committed**: this host has no local JDK
+or Android SDK, and this repo has never had a hermetic Docker-based test path built for it (CI has
+always run on GitHub's own runners) -- so verifying it required pulling a new, multi-gigabyte Android
+build image. Checked disk space first rather than just trying: `/` is at **95% full, 4.0G free**, and
+`docker system df` shows the safely-reclaimable margin (dangling images only, not the tagged
+images/volumes other active work on this host depends on) is under 300MB. Pulling a multi-GB image
+into a 4GB margin on a shared production host risked a real, hard-to-reverse disk-full incident
+affecting everything else running here -- a materially worse outcome than not shipping one small fix
+this firing. Reverted the change cleanly (`git checkout --`, confirmed clean via `git status`/
+`git diff --stat`) rather than ship code this session's own discipline could not actually verify.
+
+**Named as a real, standing gap for a future firing, not silently dropped**: `CADS-webconference-android`
+has no hermetic, Docker-based local test path the way `CADS-devsystem`'s two Rust crates do -- every
+verification here has depended on either a real device/emulator or GitHub's own CI runners, neither
+available to a firing operating locally under real disk pressure. A future firing (ideally one that
+starts by checking disk space and, if there's real headroom, either building a minimal JDK +
+Android-cmdline-tools image or reusing whatever `mingc/android-build-box`-style image the emulator
+work already established) should build this properly rather than each firing improvising.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
