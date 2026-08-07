@@ -550,6 +550,16 @@
  .orb-filter-status{position:absolute;left:93px;bottom:2px;font-size:.68rem;color:var(--muted);
    font-family:var(--mono);opacity:0;transition:opacity .3s ease .1s}
  .orb-overlay.open .orb-filter-status.visible{opacity:1}
+ /* Real gap, GitHub issue #30 (the residual half left open after the
+    permanence fix): a panel getting auto-hidden or auto-restored by a
+    window resize used to happen with zero feedback -- this shows real,
+    plain-text notice of what just happened, self-dismissing rather than
+    needing a click to acknowledge (it's informational, not a decision). */
+ .viewport-fit-notice{position:fixed;left:16px;top:60px;z-index:10000;max-width:min(360px,calc(100vw - 32px));
+   background:rgba(13,17,23,.92);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:8px;
+   padding:.5rem .7rem;font-size:.75rem;font-family:var(--mono);color:var(--text);box-shadow:0 8px 24px rgba(0,0,0,.35);
+   opacity:0;transform:translateY(6px);pointer-events:none;transition:opacity .25s ease,transform .25s ease}
+ .viewport-fit-notice.visible{opacity:1;transform:translateY(0)}
  /* Matches .orb-overlay.open .orb-bubble's own specificity (two ancestor
     classes + the element) rather than reaching for !important -- the same
     CSS-specificity care this codebase already learned the hard way once
@@ -591,6 +601,7 @@
  </div>
 </div>
 <button type="button" id="orb-launcher" aria-haspopup="true" aria-expanded="false" aria-label="Open panel launcher" title="Panels"></button>
+<div id="viewport-fit-notice" class="viewport-fit-notice" role="status" aria-live="polite" aria-atomic="true"></div>
 <div id="orb-overlay" class="orb-overlay">
  <a id="orb-product-link" class="orb-product-link" href="#" target="_blank" rel="noopener" hidden></a>
  <input id="orb-filter" class="orb-filter" type="text" placeholder="Type to jump to a panel…" autocomplete="off" spellcheck="false">
@@ -1850,9 +1861,28 @@ function initOrbLauncher() {
 // die Fenster dann automatisch ausgeblendet werden, die nicht mehr
 // hineinpassen." Panel state (not layout's stale x/y/w/h) drives the check so
 // it reflects whatever the panel's actual on-screen rect is right now.
+let viewportFitNoticeTimer = null;
+// Real gap, GitHub issue #30's own residual half, left open after the
+// permanence fix: auto-hiding/auto-restoring a panel used to happen with
+// zero feedback -- a real evaluator found up to 10 panels vanish from one
+// window resize with "no toast, no confirmation, no undo." Self-dismissing
+// (not a decision that needs a click to acknowledge), real plain-text
+// naming which panels and what happened, not just a generic "layout
+// changed" message.
+function showViewportFitNotice(text) {
+  const el = document.getElementById('viewport-fit-notice');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.add('visible');
+  clearTimeout(viewportFitNoticeTimer);
+  viewportFitNoticeTimer = setTimeout(() => el.classList.remove('visible'), 6000);
+}
+
 function checkPanelsFitViewport() {
   const desktop = document.getElementById('desktop');
   if (!desktop) return;
+  const hiddenTitles = [];
+  const restoredTitles = [];
   for (const id of Object.keys(PANEL_DEFAULTS)) {
     const rect = panelRect(id);
     const win = document.getElementById(`win-${id}`);
@@ -1864,6 +1894,7 @@ function checkPanelsFitViewport() {
       if (!fits) {
         win.style.display = 'none';
         layout[id] = { ...rect, visible: false, autoHidden: true };
+        hiddenTitles.push(PANEL_DEFAULTS[id].title);
       }
     } else if (rect.autoHidden) {
       // Real gap, GitHub issue #30 (evaluator finding, 2026-08-07): an
@@ -1882,11 +1913,21 @@ function checkPanelsFitViewport() {
         applyRect(win, placed);
         win.style.display = 'flex';
         layout[id] = { ...placed, visible: true, autoHidden: false };
+        restoredTitles.push(PANEL_DEFAULTS[id].title);
       }
     }
   }
   saveLayout();
   renderPanelToggleBar();
+  if (hiddenTitles.length) {
+    showViewportFitNotice(
+      `Hid ${hiddenTitles.length === 1 ? 'a panel' : hiddenTitles.length + ' panels'} that no longer fit this window: ${hiddenTitles.join(', ')} -- comes back automatically if the window grows, or reopen from the launcher.`
+    );
+  } else if (restoredTitles.length) {
+    showViewportFitNotice(
+      `${restoredTitles.length === 1 ? 'A panel' : restoredTitles.length + ' panels'} fit again and came back: ${restoredTitles.join(', ')}.`
+    );
+  }
 }
 
 // A dragged-and-saved prompt-dock position can end up off-screen after the
