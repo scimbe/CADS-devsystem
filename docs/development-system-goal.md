@@ -5413,4 +5413,27 @@ assertion and every other check stayed green. Reverted from the real backup (`di
 `[4]` moves from "written but never proven" to real, mutation-verified proof it has teeth --
 `[5]`-`[35]` remain the honestly-named backlog.
 
+**Main-dev-loop firing, 2026-08-07 (rr) -- mutation-tested check `[5]`'s fix_target regression
+guard, the next real check off the `[5]`-`[35]` backlog.** State check: no new issues, no new
+operator input on `#14` or the three `#382` checkpoints, CI green.
+
+Check `[5]` has three real assertions (approving an unbounded proposal succeeds; the run shows the
+real "no price ceiling set" risk; the finding's own `fix_target` names the real role for the GUI's
+"Fix it" button). Picked the third -- the most recently added (2026-08-07, alongside the "Fix it" GUI
+action itself) and explicitly the one whose own code comment says a regression here "wouldn't
+400/409 anywhere; it would just make the GUI's own Fix it button quietly stop pre-filling anything" --
+the kind of silent failure this stress-test infrastructure exists to catch. Backed up
+`pipeline/src/preflight.rs`, mutated the `no_price_ceiling` finding's `fix_target: Some(...)` down to
+a literal `fix_target: None` regression, marked with `// MUTATION-TEST PROBE`. Hermetic `cargo test`
+confirmed the exact test (`no_price_ceiling_finding_carries_a_real_fix_target_every_other_check_leaves_none`)
+fails as expected. Rebuilt and redeployed the mutated binary locally, ran the full 100-assertion
+harness: `99 passed, 1 failed` -- precisely the `fix_target` assertion failed, the sibling "risk
+present" assertion and every other check stayed green, proving the mutation's blast radius was exactly
+as narrow as the code comment claimed. Reverted from the real backup (`diff` against
+`git show HEAD:pipeline/src/preflight.rs` confirmed byte-identical), rebuilt, redeployed, reconfirmed
+`100 passed, 0 failed`.
+
+`[5]` moves from "written but never proven" to real, mutation-verified proof it has teeth --
+`[6]`-`[35]` remain the honestly-named backlog.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
