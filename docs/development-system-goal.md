@@ -5526,4 +5526,23 @@ them, growing back real-restores them with the real notice). Full 100/100 stress
 Closed `#30` for real this time -- both real halves of the original report (permanence, silence) are
 now genuinely fixed, not just one.
 
+**Main-dev-loop firing, 2026-08-07 (vv) -- issue #32 fixed and closed: requirement ordinals now
+actually rendered.** State check: no new operator input on `#14` or the three `#382` checkpoints, CI
+green. One genuinely new issue arrived: `#32` -- requirement text and iteration feedback cite
+requirements by ordinal ("requirement 0"), but the Requirements panel never rendered that number
+anywhere; it existed only as a `data-index` DOM attribute, so resolving a cross-reference meant
+opening devtools or guessing 0-based counting. The same gap repeated in New Iteration's "Addresses"
+traceability list, where two entries truncated to a near-identical prefix with no way to tell them
+apart.
+
+Concrete, well-scoped, two-line fix: a real `#N` badge on each Requirements panel card (the identical
+ordinal the prose already uses, with a tooltip explaining what it is), and the same index prefixed
+onto each New Iteration "Addresses" entry. `CADS-devsystem@5e5b27d`, live-verified against the actual
+deployment's real `webconference-android` run (6 requirements, matching the report's own repro):
+badges read `#0` through `#5` correctly in both places, the two previously-indistinguishable
+truncated entries now disambiguated. Full 100/100 stress harness stays clean. Left the report's
+"longer term" suggestion (a stable requirement id surviving reorder/delete, since positional ordinals
+silently retarget) as an honestly-named, real, separate, bigger question -- not attempted in this
+bounded increment.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
