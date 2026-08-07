@@ -3758,4 +3758,52 @@ matching stress-harness check (`[39]`, 80/80 total) in the same firing, not a la
 ([`CADS-devsystem@f06b2ba`](https://github.com/scimbe/CADS-devsystem/commit/f06b2ba),
 [`CADS-devsystem@599a5c6`](https://github.com/scimbe/CADS-devsystem/commit/599a5c6))
 
+**Goal-driven-loop firing, 2026-08-07 -- a real DAU-lens gap in a SECOND entry point to an
+already-fixed action.** State check: no new operator input on any of the three open `#382`
+checkpoints, no new PRs, issue #14 unchanged, 80/80 stress harness clean before starting.
+
+Went back to the "two/three real entry points, one bug class" pattern this document has already
+named several times this session, applied to the earlier reject-confirmation fix (`CADS-devsystem@
+645a88d`, §8): that fix added a real `confirm()` to the three DEDICATED reject buttons -- the Custom
+Panels manager's own panel-proposal reject, the Architecture panel's own stage/issue-proposal
+reject. It never touched the OTHER real place those exact same reject actions are reachable from:
+the unified Open Points panel (`renderOpenPointsPanel`, `web/static/index.html`), whose own generic
+`op-act-reject` button routes through `OPEN_POINT_APPROVE_PATHS` to the identical five real
+endpoints (`panels/proposals/.../reject`, `panels/removal-proposals/.../reject`, `panels/edit-
+proposals/.../reject`, `stages/proposals/.../reject`, `issues/proposals/.../reject`) with zero
+confirmation at all. Open Points is plausibly the FIRST place a DAU looks (it's the unified pending-
+items queue, one click away from the run header) -- reaching it and clicking Reject on real,
+possibly valuable assistant work discarded it permanently with no warning, the exact failure mode
+already fixed once elsewhere and missed here.
+
+Fixed by adding the same real `confirm()`, naming the open point's own kind via the existing
+`OPEN_POINT_KIND_LABELS` map, to `op-act-reject`'s handler -- with one deliberate exception:
+`delete_run_proposal` stays confirm-free on reject, since rejecting it is genuinely safe (the run
+was never touched), matching its own already-correct precedent on the neighboring Approve button
+(`CADS-devsystem@f06b2ba`, this same file, above).
+
+Pure frontend change; 194/194 web tests unchanged. Live-verified via Playwright against the real
+redeployed container, not assumed from source: seeded a real stage proposal via
+`POST /stages/propose`, opened Open Points, clicked Reject -- the real dialog fired with
+`"Reject this new pipeline stage proposal? This discards it for real -- there's no undo."`;
+dismissing it left the proposal genuinely still pending (`pending_stage_proposals` unchanged);
+accepting it genuinely removed it (`pending_stage_proposals: []`). Separately proposed a real
+delete-run proposal on the same scratch run and confirmed its own Reject click fires NO dialog at
+all, and still genuinely clears `pending_delete_run_proposal` to `null` -- the one correct exception
+behaving as designed, not silently broken by this fix. Full stress harness (80/80) unaffected;
+scratch run deleted after verification.
+
+Two of the five newly-guarded kinds (`panel_edit_proposal` overwrite-reject and the general shape)
+were not separately live-seeded this firing -- covered by the same code path and the same
+`confirm()` call as the two kinds that were, not a materially different case, but named honestly
+rather than claimed as individually proven.
+
+**Also observed, not investigated or fixed this firing**: the real `runs/webconference-android/`
+state on disk currently shows `paused: false`, differing from this repo's own last commit
+(`paused: true`, from the M1-achieved auto-pause). Confirmed this firing's own Playwright
+verification never touched that run (a separate scratch run id was used throughout) -- the drift
+predates this firing and its cause is unknown. Left uncommitted and unresolved rather than guessed
+at or silently absorbed into an unrelated commit; worth a future firing's live investigation before
+assuming either state is the "right" one.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).

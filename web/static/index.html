@@ -2984,8 +2984,21 @@ async function renderOpenPointsPanel(id, data) {
         runOpenPointAction(approveCall);
       }
     };
-    document.getElementById('op-act-reject').onclick = () =>
+    document.getElementById('op-act-reject').onclick = () => {
+      // Real DAU-lens gap (#382 goal doc §7.2, 2026-08-07): rejecting a
+      // panel/panel-removal/panel-edit/stage/issue proposal already gets a
+      // real confirm() when clicked from its own dedicated panel (Custom
+      // Panels manager, Architecture panel) -- the same reject, reaching the
+      // identical real endpoint, had none here. A DAU using Open Points as
+      // their review surface (plausibly the first place they'd look) could
+      // discard real, valuable assistant work with one careless click, the
+      // exact failure mode already fixed once for the dedicated panels.
+      // delete_run_proposal is the one genuine exception: rejecting it is
+      // real, safe no-op (the run itself was never touched), matching its
+      // own already-correct precedent on the Approve button just above.
+      if (!isDeleteRun && !confirm(`Reject this ${(OPEN_POINT_KIND_LABELS[p.kind] || p.kind).toLowerCase()}? This discards it for real -- there's no undo.`)) return;
       runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/${base}/${encodeURIComponent(p.id)}/reject`, { method: 'POST' }));
+    };
   }
 }
 
