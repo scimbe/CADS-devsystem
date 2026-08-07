@@ -3710,7 +3710,7 @@ function renderRequirementsPanel(id, data) {
         <div class="role-card">
           <label class="backlog-item${r.verified ? ' done' : ''}" style="align-items:flex-start">
             <input type="checkbox" class="requirement-toggle" data-index="${i}" ${r.verified ? 'checked' : ''}>
-            <span>${escapeHtml(r.statement)}</span>
+            <span><span title="This requirement's own ordinal -- the same number requirement text and iteration feedback use when they say &quot;requirement ${i}&quot;" style="font-family:var(--mono);font-size:.7rem;color:var(--accent2);border:1px solid var(--accent2);border-radius:3px;padding:0 .3rem;margin-right:.35rem;white-space:nowrap">#${i}</span>${escapeHtml(r.statement)}</span>
             ${r.proposed_by
               ? `<span title="Proposed by ${escapeHtml(r.proposed_by)} -- an LLM's first draft, not yet written/reviewed by a human" style="margin-left:.4rem;font-size:.65rem;color:var(--accent);border:1px solid var(--accent);border-radius:3px;padding:0 .3rem;white-space:nowrap">LLM-proposed</span>`
               : ''}
@@ -4176,7 +4176,7 @@ function renderNewIterationPanel(id, data) {
       ${data.state.requirements.map((r, i) => `
         <label class="backlog-item" style="font-size:.8rem">
           <input type="checkbox" class="it-requirement-cb" value="${i}" style="width:auto">
-          <span>${escapeHtml(truncate(r.statement, 90))}</span>
+          <span><span style="font-family:var(--mono);font-size:.7rem;color:var(--accent2);margin-right:.35rem">#${i}</span>${escapeHtml(truncate(r.statement, 90))}</span>
         </label>`).join('')}
     </div>` : ''}
 
