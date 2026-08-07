@@ -19,7 +19,7 @@ use devsystem_pipeline::envelope::{append_to_memory_log, envelope_from_iteration
 use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::{preflight_annotations, process_annotations};
 use devsystem_pipeline::runner::{
-    duplicate_of_last_iteration, load_or_init_run, persist_run, push_chat_exchange, qualifying_review_evidence, render_requirements_markdown, run_iteration, toggle_acceptance_criterion,
+    checkin_pending, duplicate_of_last_iteration, load_or_init_run, persist_run, push_chat_exchange, qualifying_review_evidence, render_requirements_markdown, run_iteration, toggle_acceptance_criterion,
     toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, valid_run_id, validate_requirement_indices, BacklogItem, CustomPanel,
     Milestone, PendingDeleteRunProposal, PendingIssueProposal, PendingNextStepDraft, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal,
     Requirement, RoleFillMode, RunOutcome, RunState,
@@ -209,6 +209,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/criteria", post(update_criteria))
         .route("/api/runs/{id}/pause", post(pause_run))
         .route("/api/runs/{id}/resume", post(resume_run))
+        .route("/api/runs/{id}/checkin/acknowledge", post(acknowledge_checkin))
         .route("/api/runs/{id}/memory", get(memory_run))
         .route("/api/runs/{id}/memory/{index}/govern", post(govern_memory))
         .route("/api/runs/{id}/backlog", post(add_backlog_item))
@@ -561,7 +562,7 @@ struct RunSummary {
 /// surface either case (matches the stalled-stage badge precedent: proactive, not
 /// only-on-click).
 fn needs_attention(health: &RunHealth, pending_reviews: usize) -> bool {
-    pending_reviews > 0 || health.consecutive_failures + 1 >= health.criteria.max_consecutive_failures || health.iterations_until_checkin <= 1
+    pending_reviews > 0 || health.consecutive_failures + 1 >= health.criteria.max_consecutive_failures || health.iterations_until_checkin <= 1 || health.checkin_pending
 }
 
 async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap) -> impl IntoResponse {
@@ -1036,6 +1037,9 @@ struct RunHealth {
     iterations_completed: u32,
     iterations_until_checkin: u32,
     iterations_until_ceiling: u32,
+    /// Real, persistent signal a one-time toast can never give -- see
+    /// [`devsystem_pipeline::runner::checkin_pending`]'s own doc comment.
+    checkin_pending: bool,
 }
 
 fn run_health(run_state: &devsystem_pipeline::runner::RunState) -> RunHealth {
@@ -1064,6 +1068,7 @@ fn run_health(run_state: &devsystem_pipeline::runner::RunState) -> RunHealth {
         iterations_completed: completed,
         iterations_until_checkin: until_checkin,
         iterations_until_ceiling: criteria.max_iterations.saturating_sub(completed),
+        checkin_pending: checkin_pending(run_state),
     }
 }
 
@@ -1396,6 +1401,37 @@ async fn set_paused(state: AppState, id: String, paused: bool, headers: axum::ht
     run_state.pause_reason = if paused { Some("paused manually".to_string()) } else { None };
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"paused": run_state.paused, "pause_reason": run_state.pause_reason})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// Real, explicit acknowledgment that a human has actually reviewed this run's
+/// most recently fired check-in -- see [`RunState::checkin_acknowledged_through`]'s
+/// own doc comment for the real gap this closes. A visible, deliberate action
+/// (matches this project's own "never let state change silently" discipline),
+/// not something inferred from merely viewing the check-in markdown -- a
+/// background refresh or an automated poll must never count as a real human
+/// review. Idempotent: acknowledging when nothing is pending is a real, cheap
+/// no-op, not an error -- a careless double-click must never fail.
+async fn acknowledge_checkin(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    run_state.checkin_acknowledged_through = run_state.history.len() as u32;
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"checkin_acknowledged_through": run_state.checkin_acknowledged_through})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
     }
 }
@@ -7541,6 +7577,67 @@ exit 1"#);
             .await
             .unwrap();
         assert_eq!(body_json(response).await["pause_reason"], serde_json::Value::Null, "resuming must clear the reason, not leave it stale");
+    }
+
+    #[tokio::test]
+    /// Real gap found live 2026-08-07 against the actual `webconference-android`
+    /// deployment: right after a real check-in fired, `iterations_until_checkin`
+    /// silently reset to the full `checkin_every` value again, and
+    /// `needs_attention` (which only ever looked at `iterations_until_checkin <=
+    /// 1`) cleared at the exact moment it should have been most true -- a fired,
+    /// never-reviewed check-in was indistinguishable from a healthy run mid-cycle.
+    /// Proves the real fix end to end through the actual HTTP surface: pending
+    /// stays visible until a real, explicit acknowledge call, then re-flags on a
+    /// genuinely later boundary rather than staying silently satisfied forever
+    /// (the same staleness-bug class this session already closed four other
+    /// instances of in `preflight.rs`).
+    async fn checkin_pending_persists_until_acknowledged_then_re_flags_on_the_next_boundary() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "checkin-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/checkin-run/criteria", serde_json::json!({"max_iterations": 20, "max_consecutive_failures": 3, "checkin_every": 2})))
+            .await
+            .unwrap();
+
+        for i in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(json_request("POST", "/api/runs/checkin-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": format!("real work {i}"), "succeeded": true})))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::OK);
+        }
+
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/checkin-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(get).await;
+        assert_eq!(body["health"]["checkin_pending"], true, "iteration 2 of a checkin_every: 2 run must show a real, persistent pending signal");
+
+        let list = app.clone().oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap();
+        let runs = body_json(list).await;
+        let entry = runs.as_array().unwrap().iter().find(|r| r["run_id"] == "checkin-run").unwrap();
+        assert_eq!(entry["needs_attention"], true, "the Runs list badge must reflect the real pending check-in, not just iterations_until_checkin");
+
+        let ack = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/checkin-run/checkin/acknowledge").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(ack.status(), SC::OK);
+
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/checkin-run").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(body_json(get).await["health"]["checkin_pending"], false, "acknowledging the real boundary that fired must clear it");
+
+        // A genuinely later boundary must re-flag, not stay silently satisfied by
+        // an earlier acknowledgment forever.
+        for i in 2..4 {
+            app.clone()
+                .oneshot(json_request("POST", "/api/runs/checkin-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": format!("real work {i}"), "succeeded": true})))
+                .await
+                .unwrap();
+        }
+        let get = app.oneshot(Request::builder().uri("/api/runs/checkin-run").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(body_json(get).await["health"]["checkin_pending"], true, "iteration 4's boundary is a real, new pending check-in, not covered by the earlier acknowledgment");
     }
 
     #[tokio::test]

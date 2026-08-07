@@ -638,10 +638,38 @@ check "the real security-sensitive iteration stays flagged after an unrelated it
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$security_stale_run"
 
 echo
+echo "[46] a fired check-in (checkin_every boundary crossed) must stay a real, persistent pending signal -- not silently reset to the full cadence value the instant it fires -- until a human explicitly acknowledges it, then must re-flag on a genuinely later boundary rather than staying satisfied forever (found live against the actual webconference-android run, #382 goal doc §8, 2026-08-07)"
+checkin_run="${RUN}-checkin-pending-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$checkin_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$checkin_run/criteria" -H 'content-type: application/json' -d '{"max_iterations":20,"max_consecutive_failures":3,"checkin_every":2}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$checkin_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"first real iteration toward the cadence boundary","succeeded":true}'
+pending_before_boundary=$(curl -s "$BASE/api/runs/$checkin_run" | python3 -c 'import json,sys; print(json.load(sys.stdin)["health"]["checkin_pending"])' 2>/dev/null)
+check "iteration 1 of a checkin_every: 2 run has not crossed the boundary yet" "False" "$pending_before_boundary"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$checkin_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"second real iteration, crosses the checkin_every: 2 boundary","succeeded":true}'
+pending_after_boundary=$(curl -s "$BASE/api/runs/$checkin_run" | python3 -c 'import json,sys; print(json.load(sys.stdin)["health"]["checkin_pending"])' 2>/dev/null)
+check "iteration 2 crosses the boundary -- must be a real, persistent pending signal, not just a one-time toast" "True" "$pending_after_boundary"
+needs_attention_after_boundary=$(curl -s "$BASE/api/runs" -H "x-owner: test" | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+print(next(r["needs_attention"] for r in d if r["run_id"] == "'"$checkin_run"'"))' 2>/dev/null)
+check "the Runs list badge reflects the real pending check-in too, not just the per-run health object" "True" "$needs_attention_after_boundary"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$checkin_run/checkin/acknowledge"
+pending_after_ack=$(curl -s "$BASE/api/runs/$checkin_run" | python3 -c 'import json,sys; print(json.load(sys.stdin)["health"]["checkin_pending"])' 2>/dev/null)
+check "acknowledging the real boundary that fired clears it" "False" "$pending_after_ack"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$checkin_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"third real iteration, no new boundary crossed yet","succeeded":true}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$checkin_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"fourth real iteration, crosses a genuinely later boundary","succeeded":true}'
+pending_after_later_boundary=$(curl -s "$BASE/api/runs/$checkin_run" | python3 -c 'import json,sys; print(json.load(sys.stdin)["health"]["checkin_pending"])' 2>/dev/null)
+check "a genuinely later boundary re-flags, not stays silently satisfied by the earlier acknowledgment forever" "True" "$pending_after_later_boundary"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$checkin_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the forty-five gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the forty-six gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."

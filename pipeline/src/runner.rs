@@ -500,6 +500,46 @@ pub struct RunState {
     /// `state.json` files (no history recorded yet) still load as empty.
     #[serde(default)]
     pub chat_history: Vec<ChatExchange>,
+    /// Real gap found live 2026-08-07: the `checkin_every` cadence firing
+    /// (`RunOutcome::CheckinDue`) was purely a one-time HTTP response value and a
+    /// GUI toast shown right after the triggering `iterate` call -- nothing durable
+    /// recorded that a check-in had actually become due. The moment a human missed
+    /// that toast (a different tab, a page reload, coming back later, another
+    /// session entirely), `run_health`'s own `iterations_until_checkin` silently
+    /// reset to the *full* `checkin_every` value again (confirmed live against the
+    /// real `webconference-android` run right after its own iteration 15 crossed
+    /// this exact boundary: `iterations_until_checkin: 5`, `needs_attention:
+    /// false` -- indistinguishable from a run that simply hadn't reached its next
+    /// cadence point yet), silently clearing `needs_attention`'s own `<= 1` signal
+    /// at the exact moment it should have been most true. The whole mandatory
+    /// check-in mechanism (goal doc §8's "periodic check-ins with the human
+    /// owner") was real at the moment it fired and then invisible forever after.
+    /// The highest iteration count a human has explicitly acknowledged reviewing
+    /// the check-in for, via the real `POST /checkin/acknowledge` endpoint this
+    /// fix adds -- `0` means "never acknowledged," matching every pre-existing
+    /// `state.json`'s real history honestly (none of them were ever acknowledged
+    /// under a mechanism that didn't exist yet). `#[serde(default)]` for the same
+    /// reason.
+    #[serde(default)]
+    pub checkin_acknowledged_through: u32,
+}
+
+/// True when this run has genuinely crossed a real `checkin_every` boundary (or
+/// hit the `max_iterations` ceiling) that hasn't been explicitly acknowledged
+/// since -- the real, persistent signal `iterations_until_checkin` alone cannot
+/// give (see [`RunState::checkin_acknowledged_through`]'s own doc comment for
+/// why). `checkin_every: 0` has no real boundary to cross (mirrors
+/// `should_checkin`'s own identical fallback), so this is always `false` then --
+/// the hard `max_iterations` ceiling is still a real, separate, already-visible
+/// signal via `iterations_until_ceiling`.
+pub fn checkin_pending(state: &RunState) -> bool {
+    let completed = state.history.len() as u32;
+    let every = state.criteria.checkin_every;
+    if every == 0 || completed == 0 {
+        return false;
+    }
+    let last_boundary = (completed / every) * every;
+    last_boundary > 0 && last_boundary > state.checkin_acknowledged_through
 }
 
 /// See [`RunState::chat_history`]'s own doc comment for why this is rolling,
@@ -694,6 +734,7 @@ impl RunState {
             requirements: Vec::new(),
             assistant_usage: AssistantUsageTotals::default(),
             chat_history: Vec::new(),
+            checkin_acknowledged_through: 0,
         }
     }
 }
@@ -1926,6 +1967,59 @@ mod tests {
 
         let outcome = run_iteration(&mut spec, &mut state, record(5, true, vec![]), &criteria);
         assert_eq!(outcome, RunOutcome::CheckinDue);
+    }
+
+    #[test]
+    fn checkin_pending_is_false_before_the_first_real_boundary_is_crossed() {
+        let mut state = RunState::new("run-x");
+        state.criteria = AbortCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 5 };
+        for i in 1..5 {
+            state.history.push(record(i, true, vec![]));
+        }
+        assert!(!checkin_pending(&state), "iteration 4 of 5 hasn't crossed the boundary yet");
+    }
+
+    #[test]
+    fn checkin_pending_stays_true_across_further_iterations_until_explicitly_acknowledged() {
+        let mut state = RunState::new("run-x");
+        state.criteria = AbortCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 5 };
+        for i in 1..=7 {
+            state.history.push(record(i, true, vec![]));
+        }
+        // The real gap this closes: two whole iterations (6, 7) have passed since
+        // the boundary at 5 fired, with zero human acknowledgment -- this must
+        // still read as pending, not silently reset just because more iterations
+        // ran.
+        assert!(checkin_pending(&state), "iteration 5's boundary was crossed and never acknowledged");
+
+        state.checkin_acknowledged_through = 5;
+        assert!(!checkin_pending(&state), "acknowledging through the real boundary that fired clears it");
+    }
+
+    #[test]
+    fn checkin_pending_re_flags_on_a_later_boundary_even_after_an_earlier_one_was_acknowledged() {
+        let mut state = RunState::new("run-x");
+        state.criteria = AbortCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 5 };
+        for i in 1..=5 {
+            state.history.push(record(i, true, vec![]));
+        }
+        state.checkin_acknowledged_through = 5;
+        assert!(!checkin_pending(&state));
+
+        for i in 6..=10 {
+            state.history.push(record(i, true, vec![]));
+        }
+        assert!(checkin_pending(&state), "a genuinely later boundary (10) must re-flag, not stay silently satisfied by an earlier acknowledgment forever");
+    }
+
+    #[test]
+    fn checkin_pending_is_false_when_the_cadence_is_disabled() {
+        let mut state = RunState::new("run-x");
+        state.criteria = AbortCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 0 };
+        for i in 1..=10 {
+            state.history.push(record(i, true, vec![]));
+        }
+        assert!(!checkin_pending(&state), "checkin_every: 0 has no real boundary to cross, mirroring should_checkin's own fallback");
     }
 
     #[test]

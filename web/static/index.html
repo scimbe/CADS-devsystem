@@ -2022,8 +2022,34 @@ async function selectRun(id) {
     renderMilestonesPanel(id, data);
     renderRequirementsPanel(id, data);
     renderOpenPointsPanel(id, data);
-    document.getElementById('body-checkin').innerHTML = `<button class="secondary" id="view-checkin">View check-in</button><div id="checkin-view"></div>`;
+    // Real gap found live 2026-08-07: a fired check-in used to be visible ONLY as
+    // a one-time toast right after the triggering iteration -- nothing persistent
+    // survived a page reload, a different tab, or coming back later, and
+    // needs_attention's own <=1 threshold silently cleared the instant the cadence
+    // actually fired (iterations_until_checkin resets to the full checkin_every
+    // value, not 0, right when it becomes due). data.health.checkin_pending is the
+    // real, persistent signal; this banner + explicit Acknowledge button is the
+    // one place it becomes visible and actionable, matching this project's own
+    // "never let a real state change happen silently" discipline -- viewing the
+    // markdown alone must never count as review.
+    const checkinBanner = data.health.checkin_pending
+      ? `<div class="risk-item" style="margin-bottom:.4rem"><b>⚠ Check-in due</b> -- this run crossed its own check-in cadence and hasn't been acknowledged yet. <button type="button" class="secondary" id="ack-checkin">Acknowledge check-in</button></div>`
+      : '';
+    document.getElementById('body-checkin').innerHTML = `${checkinBanner}<button class="secondary" id="view-checkin">View check-in</button><div id="checkin-view"></div>`;
     document.getElementById('view-checkin').onclick = () => viewCheckin(id);
+    const ackBtn = document.getElementById('ack-checkin');
+    if (ackBtn) {
+      ackBtn.onclick = async () => {
+        ackBtn.disabled = true;
+        try {
+          await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/checkin/acknowledge`, { method: 'POST' });
+          await selectRun(id);
+        } catch (e) {
+          ackBtn.disabled = false;
+          alert(`Could not acknowledge check-in: ${e.message}`);
+        }
+      };
+    }
     document.getElementById('body-memory').innerHTML = `<button class="secondary" id="view-memory">View memory log</button><div id="memory-view"></div>`;
     document.getElementById('view-memory').onclick = () => viewMemory(id);
     renderCodePanel(id, data);
@@ -2720,8 +2746,8 @@ function renderProcessPanel(id, data) {
     <div class="health" style="margin-bottom:.6rem">
       <span class="stat${h.consecutive_failures >= h.criteria.max_consecutive_failures - 1 ? ' danger' : ''}">
         iteration <b>${h.iterations_completed}</b> / ${h.criteria.max_iterations}</span>
-      <span class="stat${h.iterations_until_checkin <= 1 ? ' warn' : ''}">
-        check-in in <b>${h.iterations_until_checkin}</b></span>
+      <span class="stat${h.checkin_pending || h.iterations_until_checkin <= 1 ? ' warn' : ''}">
+        ${h.checkin_pending ? 'check-in <b>due</b>, unacknowledged' : `check-in in <b>${h.iterations_until_checkin}</b>`}</span>
       <span class="stat${h.consecutive_failures > 0 ? ' danger' : ''}">
         failures <b>${h.consecutive_failures}</b> / ${h.criteria.max_consecutive_failures}</span>
     </div>`;
@@ -2775,8 +2801,8 @@ function renderHealthCriteriaPanel(id, data) {
     <div class="health">
       <span class="stat${h.consecutive_failures >= h.criteria.max_consecutive_failures - 1 ? ' danger' : ''}">
         consecutive failures: <b>${h.consecutive_failures}</b> / ${h.criteria.max_consecutive_failures}</span>
-      <span class="stat${h.iterations_until_checkin <= 1 ? ' warn' : ''}">
-        next check-in in: <b>${h.iterations_until_checkin}</b> iteration(s)</span>
+      <span class="stat${h.checkin_pending || h.iterations_until_checkin <= 1 ? ' warn' : ''}">
+        ${h.checkin_pending ? 'check-in <b>due</b>, unacknowledged' : `next check-in in: <b>${h.iterations_until_checkin}</b> iteration(s)`}</span>
       <span class="stat${h.iterations_until_ceiling <= 2 ? ' danger' : ''}">
         iterations: <b>${h.iterations_completed}</b> / ${h.criteria.max_iterations}</span>
     </div>
