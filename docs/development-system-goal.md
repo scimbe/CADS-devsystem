@@ -5961,4 +5961,25 @@ genuinely unaddressed. Caught on the very next check, reopened immediately with 
 Same failure class as the earlier `#42` incident this session -- the lesson clearly hasn't fully taken
 yet, applying it more mechanically going forward rather than trusting memory alone.
 
+**Main-dev-loop firing, 2026-08-07 (mmm) -- issue #47: the New Iteration form's succeeded checkbox no
+longer re-arms itself.** State check: `#382`'s three checkpoints and `#14` still unanswered; no new
+issues since the last check. Continued `#47`'s own remaining findings -- picked the most concerning of
+the three: the New Iteration form's `succeeded` checkbox was hardcoded `checked` in the template that
+`renderNewIterationPanel` regenerates on every render, including every post-submit re-render, so it
+silently re-armed itself to checked no matter what the operator had just unchecked. It is also the
+*only* control that resets `consecutive_failures` back to `0` -- the real evaluator hit this
+themselves mid-test, submitted what they intended as a failing iteration, and the still-checked box
+silently reset the streak instead.
+
+Removed the hardcoded attribute so the box now defaults to unchecked -- marking work succeeded is
+meant to be a deliberate act, the same principle `#45` already applied to run deletion this firing
+batch (the control that matters most should not be the path of least resistance). `CADS-devsystem@e32c741`.
+Live-verified against the actual deployment: a freshly rendered form shows the checkbox unchecked; since
+`renderNewIterationPanel` uses one identical template for both the initial render and every post-submit
+re-render (no separate code path exists), this one confirmation covers both cases. Full 100/100 stress
+harness stays clean.
+
+`#47`'s other two findings -- the unclamped `N / M` consecutive-failures display, and the ambiguous
+collapsed abort-reason text shared with `#46` -- remain real, open, smaller work.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
