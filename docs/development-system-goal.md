@@ -4391,4 +4391,25 @@ endpoint a human uses. No operator decision needed: naming a target from work al
 open isn't a new commitment, it's making an already-real intention legible. 90/90 stress harness
 stays clean. Committed to `CADS-devsystem@267b065`.
 
+**Main-dev-loop firing, 2026-08-07 (f) -- the flagship run's first real requirement, live-proving a
+gate that had never actually been exercised on it.** State check: no new operator input on any of
+the four standing decision points, `#13`/`#14`/CI/PRs all unchanged.
+
+The assistant's own reply two firings ago named it plainly: "0 declared -- the review gate added at
+iteration 8 has nothing to gate." Checked and confirmed: `webconference-android` had zero
+requirements across its entire fourteen-iteration real history, meaning the mandatory review gate
+(`toggle_requirement`'s `qualifying_review_evidence` check, closed iteration 8, the very first §5
+quality-bar item made real and mandatory) had only ever been exercised in hermetic tests and other
+stress-test scratch runs -- never once, end to end, on the project's own flagship proof.
+
+Added a real, EARS-format requirement for the newly declared M2 (broker-mediated channel discovery),
+with three concrete acceptance criteria, derived directly from the run's own already-open backlog
+item -- not invented scope. Then live-proved the gate on this exact run for the first time: attempted
+to mark it verified with zero real `devsystem.review` iterations addressing it, got a real `409`
+(`"no successful devsystem.review iteration addressing requirement 0 ... Submit one first"`), and
+confirmed `verified: false` genuinely held afterward. 90/90 stress harness stays clean. Committed to
+`CADS-devsystem@8f09367`. The natural next real step (a future firing, not rushed here): a real
+`devsystem.review` iteration addressing this requirement, closing the loop the gate is meant to
+enforce.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
