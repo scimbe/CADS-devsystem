@@ -5092,4 +5092,48 @@ Docs: `CADS-devsystem-docs` gets a matching entry for this whole thread -- the t
 incidents, the precondition fix, and the two-cargo-builds discovery -- once this firing's own docs
 loop runs next.
 
+**Goal-driven-loop firing, 2026-08-07 (gg) -- the persona-account access work paid off for real: four
+genuine, well-documented issues arrived from live evaluators, one fixed and closed this firing.**
+State check: no new operator input on any of the four standing decision points. `gh issue list
+--author scimbe --state open` on `CADS-devsystem` turned up four brand-new issues (`#19`-`#22`), all
+filed within the hour, all from labor-setup.com's own persona-comparison testing against the real,
+now-accessible `devsystem-demo.bunsenbrenner.org` -- the direct, concrete payoff of the earlier
+`workflow-maintainer` ownership reassignment and allowlist work: real evaluators are now actually
+using the platform and finding real gaps, exactly the loop this whole `#382` overhaul exists to
+close.
+
+Investigated a Memory Log gap first, live -- `Trust::Governed`/`Unreviewed` on a memory entry is
+never read anywhere except the GUI's own display and the govern endpoint itself (confirmed via a
+direct grep across `pipeline/src/*.rs` and `web/src/main.rs`), so an "unreviewed" entry not being
+surfaced as a risk or open point isn't a real gap -- it's a deliberately lightweight attestation, not
+a gate. Correctly not built into a new risk check; would have been over-engineering something
+intentionally simple.
+
+Picked `#19` (no visible Sign In entry point when logged out) for this firing: highest-leverage of
+the four (blocks discovery of the entire authentication flow for every first-time evaluator, not just
+a specific workflow), squarely in `devsystem-web`'s own scope, and cleanly bounded. Live-validated
+first -- the reporter's own finding held exactly as described: "not signed in" rendered as plain
+text, `signInLinks: []` via a real Playwright DOM query. Fixed
+(`CADS-devsystem@fd7d29f`): a real `<a href>` "Sign in" link next to the status text, pointing at the
+same `gate/start?host=<hostname>&return=/` route the redirect flow already uses. Live-verified after
+redeploy: the link is real, resolves to the correct URL for the exact serving hostname, full
+100/100 stress harness stays clean (pure client-side change). GitHub auto-closed `#19` from the
+commit message; posted a real closing comment naming exactly what was verified, not just "fixed."
+
+`#20` (in-app logout doesn't end the shared Keycloak SSO session) traced to its real root cause --
+`/gate/logout`/`/gate/start` are both CADS-Tunnel's own `crate::gate` routes, not this repo's. No
+standing to fix CADS-Tunnel's own session behavior from this loop; commented with the real root
+cause and two concrete fix directions for whoever picks it up there, rather than silently dropping it
+or attempting an out-of-scope fix. `#21` (floating panels can spawn stacked, invisible z-index
+overlap, real dead clicks) and `#22` (Runs panel has no search/filter across 80+ entries) remain
+open, real, in-scope, well-documented candidates for the next firings -- deliberately not attempted
+together with `#19` in the same increment.
+
+Also worth noting given this firing's own investigation: this host's disk sat at 2.1GB free the
+whole time, right at the new precondition floor from firing (ff) -- this firing's own deploy stayed
+fast and safe specifically because the fix only touched `web/static/index.html` (a static asset), so
+Docker's own layer cache fully skipped the expensive `cargo build` step entirely. A future firing
+whose fix touches Rust source, with disk still this tight, should expect (and budget time for) a
+slow, cold rebuild, or free more real space first.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
