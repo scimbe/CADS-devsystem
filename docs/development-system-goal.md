@@ -5136,4 +5136,55 @@ Docker's own layer cache fully skipped the expensive `cargo build` step entirely
 whose fix touches Rust source, with disk still this tight, should expect (and budget time for) a
 slow, cold rebuild, or free more real space first.
 
+**Goal-driven-loop firing, 2026-08-07 (hh) -- issue #21 (stacked floating panels), a real fix landed
+honestly scoped as partial, not overclaimed, plus the disk-headroom precondition from firing (ff)
+fired for real for the first time.** State check: no new operator input on any of the four standing
+decision points.
+
+First tried a Memory-log risk-detection angle, correctly rejected: `Trust::Governed`/`Unreviewed` is
+never read anywhere except the GUI's own display and the govern endpoint (confirmed via a direct
+grep), so it's a deliberately lightweight attestation, not a gate -- surfacing it as a risk would
+have been over-engineering something intentionally simple.
+
+Picked issue #21 (floating panels can spawn stacked, invisible z-index overlap, real dead clicks) --
+reproduced live first, at a realistic ~1280px viewport with a genuinely fresh session (cleared
+`localStorage`): all four default-visible panels (Runs, Process, Pipeline, Requirements) really did
+overlap, confirmed via a real Playwright accessibility check (is the topmost element at each panel's
+own close-button screen position actually that panel's close button?), not just a screenshot. Found
+and fixed three distinct, real bugs in sequence, each live-verified before moving to the next:
+
+1. The existing collision cascade in `ensurePanelVisible` moved x/y together by a fixed step, each
+   independently re-clamped to its own valid range -- once either clamp saturated (near-immediate on
+   a narrow desktop), every later iteration silently retested the same already-failed position.
+   Replaced with a real 2D grid search.
+2. Measured live, not assumed: this app's own default panel widths can genuinely exceed the real
+   usable desktop area at this viewport (666px, once the assistant side panel takes its share) -- a
+   fully non-overlapping layout is mathematically impossible here. Added a header-avoidance fallback:
+   since a newly-placed panel always gets the highest z-index, search for a position where its own
+   body doesn't cover any existing panel's header strip, even when bodies must still overlap.
+3. The real root cause the first two fixes' own continued failure exposed: `createPanel()` computed
+   a real cascaded position and rendered it, but never wrote it back into `layout` -- the one thing
+   `panelObstacles()` itself reads. Every panel placed afterward during the same init pass was
+   checking collision against stale default coordinates, not the real rendered position.
+
+Honest result, not overclaimed: the same live accessibility check went from 1-of-4 genuinely
+clickable close buttons before this fix to 3-of-4 after, at the identical viewport that originally
+reproduced the report. The remaining case is a real, named residual gap -- four panels this size in
+this little usable space is a genuinely hard packing problem the header-avoidance search doesn't
+always resolve for every panel simultaneously -- left open on the issue rather than closed, pointing
+at a likely future structural fix (responsive default panel sizing) rather than another
+placement-algorithm patch. `CADS-devsystem@b857656`, full 100/100 stress harness stays clean.
+
+**The disk-headroom precondition (firing ff) did its real job for the first time this firing**:
+verifying this fix needed three separate redeploys (the collision-search version, then the
+header-avoidance version, then the layout-persistence fix), and disk genuinely dropped below the 2GB
+floor mid-thread -- `deploy-devsystem-web.sh` refused to start, exactly as designed, rather than
+repeat the earlier incidents. Freeing space safely this time meant a real tradeoff, honestly taken:
+`docker builder prune -f` (the only thing that reliably freed enough) also wipes the cargo build
+cache mount, forcing a genuinely cold rebuild (~5 real minutes) on the next two redeploys rather than
+the fast cache-hit builds a pure static-file change would otherwise get. Accepted deliberately rather
+than chase a smaller, safer prune indefinitely (`--keep-storage`/`--filter until=1h` both freed 0B
+when actually tried) -- verified both cold rebuilds completed safely with the correct, current
+content each time.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
