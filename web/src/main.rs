@@ -259,7 +259,26 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/assistant", post(ask_assistant))
         .route("/api/assistant/status", get(assistant_status))
         .route("/api/me", get(whoami))
+        .route("/api/version", get(version))
         .with_state(state)
+}
+
+/// Real gap found live 2026-08-07 (#382 goal doc §8): the existing post-deploy
+/// smoke test proves one specific behavior (`duplicate_of_last_iteration`)
+/// matches source, not that the WHOLE binary does -- a shared BuildKit cache
+/// mount served a genuinely stale binary that passed that one check while a
+/// real, unrelated feature (`checkin_cadence_effectively_disabled`) was
+/// silently missing, caught only by the full stress harness, not the deploy
+/// script itself. `DEVSYSTEM_GIT_SHA` is baked into the image at build time
+/// (`web/Dockerfile`'s own `ARG`/`ENV`, set from `git rev-parse HEAD` by
+/// `deploy-devsystem-web.sh`) -- comparing this against the real, current
+/// `git rev-parse HEAD` after every deploy catches ANY staleness, not just
+/// whichever one behavior a smoke test happens to exercise. `"unknown"` when
+/// unset (a local `cargo run` outside Docker, or an older image built before
+/// this endpoint existed) -- never fabricated.
+async fn version() -> impl IntoResponse {
+    let git_sha = std::env::var("DEVSYSTEM_GIT_SHA").unwrap_or_else(|_| "unknown".to_string());
+    Json(serde_json::json!({ "git_sha": git_sha }))
 }
 
 /// Real identity, or honestly none -- never fabricated. Caddy's `forward_auth`
@@ -4459,6 +4478,23 @@ mod tests {
         assert_eq!(response.status(), SC::OK);
         let body = body_json(response).await;
         assert!(body["email"].is_null(), "no header reaching this process must never be papered over with a fabricated identity");
+    }
+
+    #[tokio::test]
+    /// Real gap this endpoint closes -- see `version`'s own doc comment. The
+    /// "set" case (a real deploy always sets DEVSYSTEM_GIT_SHA) is exercised
+    /// by the actual deploy script's own post-deploy check against a real
+    /// running container, not here -- mutating a process-global env var in a
+    /// multi-threaded test binary would race unpredictably with any other
+    /// test reading it. This proves the one thing safe and worth proving
+    /// hermetically: an unset value is reported honestly, never fabricated.
+    async fn version_reports_unknown_honestly_when_git_sha_is_unset() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        let response = app.oneshot(Request::builder().uri("/api/version").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["git_sha"], "unknown");
     }
 
     #[tokio::test]

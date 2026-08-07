@@ -70,6 +70,20 @@
 # used to fix this exact incident), and a real behavioral smoke test after
 # the container comes up (below) that would have caught this the moment it
 # happened, rather than an unrelated future firing noticing by accident.
+#
+# Real gap found live 2026-08-07: the smoke test above proves ONE specific
+# behavior matches source -- it genuinely caught one real incident, but a
+# regular (non-scratch) run of THIS script served a binary missing a
+# completely different, unrelated feature
+# (`checkin_cadence_effectively_disabled`) while that one smoke-tested
+# behavior still worked fine, only caught by the full stress harness
+# afterward, not this script. Chasing individual behavioral proxies one at a
+# time doesn't scale. General fix: the image now bakes in its own build-time
+# `git rev-parse HEAD` (`GIT_SHA` build-arg -> `DEVSYSTEM_GIT_SHA` ->
+# `GET /api/version`, see `version`'s own doc comment in web/src/main.rs) and
+# this script compares it against the real, current source right after the
+# container comes up -- catches ANY staleness, not just whichever behavior a
+# smoke test happens to exercise.
 set -euo pipefail
 
 LOCK_FILE="/tmp/deploy-devsystem-web.lock"
@@ -99,8 +113,10 @@ if [ -z "$CT_CHANNEL_NOISE_KEY" ] || [ -z "$CT_CHANNEL_PEER_NOISE_KEY" ]; then
   exit 1
 fi
 
+CURRENT_GIT_SHA="$(cd "$ROOT" && git rev-parse HEAD 2>/dev/null || echo unknown)"
+
 echo "Building $IMAGE_TAG from $ROOT/web/Dockerfile ...${NO_CACHE_FLAG:+ (--no-cache)}"
-docker build "${NO_CACHE_FLAG[@]}" -f "$ROOT/web/Dockerfile" -t "$IMAGE_TAG" "$ROOT"
+docker build "${NO_CACHE_FLAG[@]}" --build-arg "GIT_SHA=$CURRENT_GIT_SHA" -f "$ROOT/web/Dockerfile" -t "$IMAGE_TAG" "$ROOT"
 
 echo "Stopping/removing any existing devsystem-web container ..."
 docker stop devsystem-web >/dev/null 2>&1 || true
@@ -141,6 +157,22 @@ if [ "$UP" -ne 1 ]; then
   exit 1
 fi
 echo "devsystem-web is up: http://127.0.0.1:8790"
+
+# Real gap found live 2026-08-07: the behavioral smoke test below proves ONE
+# specific behavior matches source -- it already caught one real staleness
+# incident, but a DIFFERENT, unrelated stale binary (missing
+# checkin_cadence_effectively_disabled while duplicate_of_last_iteration
+# still worked fine) would have passed it clean. Comparing the running
+# binary's own baked-in build SHA against the real, current source directly
+# catches ANY staleness, not just whichever one behavior happens to be
+# checked -- general, not another specific-behavior proxy to maintain.
+DEPLOYED_GIT_SHA="$(curl -sS --max-time 5 http://127.0.0.1:8790/api/version 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get("git_sha","unknown"))' 2>/dev/null || echo unknown)"
+if [ "$DEPLOYED_GIT_SHA" != "$CURRENT_GIT_SHA" ]; then
+  echo "GIT SHA MISMATCH: the running container reports build SHA '$DEPLOYED_GIT_SHA', but the real current source is '$CURRENT_GIT_SHA'." >&2
+  echo "This binary does not match this repo's actual source -- try: scripts/deploy-devsystem-web.sh --no-cache" >&2
+  exit 1
+fi
+echo "Git SHA verified: running container matches real current source ($CURRENT_GIT_SHA)."
 
 # The OTHER direction (this container -> devsystem_assistant --serve, if one is
 # running on the host) -- a real, unauthenticated status probe, not just "the

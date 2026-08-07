@@ -87,6 +87,17 @@ COPY --from=builder /tmp/devsystem-web /app/devsystem-web
 COPY --from=builder /tmp/github_issue_channel_client /app/github_issue_channel_client
 COPY --from=builder /tmp/devsystem_document_extraction_client /app/devsystem_document_extraction_client
 COPY web/static /app/web/static
+# Real gap found live 2026-08-07 (#382 goal doc §8): a shared BuildKit cache
+# mount can serve a genuinely stale binary that still passes the deploy
+# script's own narrow smoke test (one specific behavior) while missing an
+# unrelated, real, already-committed feature. GIT_SHA (deploy-devsystem-
+# web.sh's own `git rev-parse HEAD` at build time) baked in here lets a
+# post-deploy check compare the RUNNING binary's own build source against
+# the CURRENT real source directly -- see `version`'s own doc comment
+# (web/src/main.rs) for the real endpoint that reports it. Defaults to
+# "unknown" for a build that doesn't pass --build-arg (never fabricated).
+ARG GIT_SHA=unknown
+ENV DEVSYSTEM_GIT_SHA=$GIT_SHA
 ENV DEVSYSTEM_STATIC_DIR=/app/web/static
 ENV DEVSYSTEM_RUNS_DIR=/app/runs
 # #48 slice 6: where approve_issue_proposal finds its own copy of the client
