@@ -4543,8 +4543,13 @@ async function submitIteration(id) {
       cls = 'status-line warn';
       showCheckin = true;
     } else if (result.outcome === 'Abort') {
-      text = `Iteration ${result.iteration} recorded -- RUN ABORTED (too many consecutive failures, or the ` +
-        `iteration ceiling was reached). This run should not continue unsupervised.`;
+      // Real gap found live, issues #46/#47/#48: this used to always show the same
+      // generic "too many consecutive failures, or the iteration ceiling was
+      // reached" regardless of which one actually fired -- the server has always
+      // known the real, specific reason (result.pause_reason, the identical text
+      // the Health & Criteria banner shows), it just never reached this line.
+      const reason = result.pause_reason || 'too many consecutive failures, or the iteration ceiling was reached';
+      text = `Iteration ${result.iteration} recorded -- RUN ABORTED (${reason}). This run should not continue unsupervised.`;
       cls = 'status-line err';
     } else {
       text = `Iteration ${result.iteration} recorded -- outcome: ${result.outcome}, roles now ${result.roles_now}.`;

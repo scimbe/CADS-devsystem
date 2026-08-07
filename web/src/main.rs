@@ -1292,11 +1292,23 @@ async fn iterate_run(
         RunOutcome::CheckinDue => "CheckinDue",
         RunOutcome::Abort => "Abort",
     };
+    // Real gap found live by a non-technical evaluator, issues #46/#47/#48: this
+    // response never carried WHY an Abort or CheckinDue fired -- consecutive
+    // failures vs. the iteration ceiling vs. the check-in cadence collapse into the
+    // identical outcome string, even though `run_state.pause_reason` (set by
+    // `run_iteration`, same match order it itself checks the real conditions in)
+    // has always distinguished them correctly server-side. The GUI's own status
+    // line had to fall back to a generic "too many consecutive failures, or the
+    // iteration ceiling was reached" -- unable to tell an operator which one
+    // actually happened even though the server already knew. Included here so the
+    // one real, authoritative reason reaches the surface that reports it, instead
+    // of the client re-deriving or guessing at it.
     Json(serde_json::json!({
         "outcome": outcome_str,
         "iteration": iteration,
         "roles_now": spec.roles.len(),
         "added_stages": run_state.added_stages,
+        "pause_reason": run_state.pause_reason,
     }))
     .into_response()
 }
@@ -8268,6 +8280,62 @@ exit 1"#);
         let body = body_json(response).await;
         assert_eq!(body["state"]["history"].as_array().unwrap().len(), 2, "history must stay at exactly the two real iterations that were actually accepted, not grow past the configured bound");
         assert_eq!(body["state"]["paused"], true);
+    }
+
+    #[tokio::test]
+    /// Real gap found live, issues #46/#47/#48: the iterate response never carried
+    /// WHY an Abort/CheckinDue fired -- consecutive failures, the iteration ceiling,
+    /// and the check-in cadence all collapsed into the same bare outcome string, so
+    /// the GUI's own status line had to show a generic "too many consecutive
+    /// failures, or the iteration ceiling was reached" regardless of which one
+    /// actually happened. `pause_reason` was always computed and set server-side by
+    /// this point (RunState::pause_reason's own doc comment) -- it just never
+    /// reached the response. Proves all three real reasons are now distinguishable
+    /// directly from one real endpoint's response, not just from a separate GET.
+    async fn iterate_response_names_the_real_reason_for_abort_and_checkin_due() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "reason-ceiling-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/reason-ceiling-run/criteria", serde_json::json!({"max_iterations": 1, "max_consecutive_failures": 3, "checkin_every": 0})))
+            .await
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/reason-ceiling-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "hits the ceiling", "succeeded": true})))
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["outcome"], "Abort");
+        assert_eq!(body["pause_reason"], "reached the 1-iteration limit");
+
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "reason-failures-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/reason-failures-run/criteria", serde_json::json!({"max_iterations": 20, "max_consecutive_failures": 1, "checkin_every": 0})))
+            .await
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/reason-failures-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "a real failure, not the ceiling", "succeeded": false})))
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["outcome"], "Abort");
+        assert_eq!(body["pause_reason"], "1 consecutive failed iterations (limit 1)", "must name the real, distinct reason, not the identical ceiling text");
+
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "reason-checkin-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/reason-checkin-run/criteria", serde_json::json!({"max_iterations": 20, "max_consecutive_failures": 3, "checkin_every": 1})))
+            .await
+            .unwrap();
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/reason-checkin-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "crosses the cadence", "succeeded": true})))
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["outcome"], "CheckinDue");
+        assert_eq!(body["pause_reason"], "check-in due -- iteration 1 crossed the every-1-iteration cadence");
     }
 
     #[tokio::test]
