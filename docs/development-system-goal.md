@@ -4442,4 +4442,40 @@ itself, not just hermetic tests or scratch runs. The iteration also landed exact
 design (unlike `Abort`, it never sets `paused`), not a bug. 90/90 stress harness stays clean.
 Committed to `CADS-devsystem@3395f29`.
 
+**Goal-driven-loop firing, 2026-08-07 (h) -- a real, significant §8 gate: the mandatory check-in
+cadence was silently invisible the moment it fired.** State check: no new operator input on any of
+the four standing decision points, `#13`/`#14`/CI/PRs all unchanged.
+
+Applying the DAU lens to iteration 15's own real `CheckinDue` outcome from the previous firing: does
+that signal actually reach a human anywhere persistent, or only as the one-time toast right after the
+triggering call? Traced it and found a real, significant gap -- `run_health`'s own
+`iterations_until_checkin` computation resets to the *full* `checkin_every` value the instant a
+boundary fires (`rem == 0` branch returns `checkin_every`, not `0`), and `needs_attention` only ever
+looked at `iterations_until_checkin <= 1`. Live-confirmed on the actual flagship run right after its
+own iteration 15 crossed exactly this boundary: `iterations_until_checkin: 5`, `needs_attention:
+false` -- a genuinely fired, never-reviewed mandatory check-in, completely indistinguishable from a
+healthy run mid-cycle, anywhere in the entire GUI, the instant the browser tab closed.
+
+Fixed with a real, minimal piece of durable state rather than a client-side patch: `RunState::
+checkin_acknowledged_through`, `pipeline::runner::checkin_pending(state)` (crossed a real boundary
+not yet acknowledged; `checkin_every: 0` always false, mirroring `should_checkin`'s own fallback),
+wired into `RunHealth`/`needs_attention` (both the per-run object and the Runs list badge/sort), a
+real `POST /checkin/acknowledge` endpoint (explicit, idempotent -- viewing the markdown alone never
+counts as review), and a persistent GUI banner + Acknowledge button replacing the misleading
+countdown text once due. 4 new hermetic pipeline tests (crossing, staying pending across further
+iterations, re-flagging on a genuinely later boundary after an earlier acknowledgment -- the same
+staleness discipline as today's four `preflight.rs` fixes), 1 new end-to-end web test, both crates
+clippy-clean. Live-verified against the actual redeployed run: `checkin_pending` flipped `true` ->
+acknowledged -> `false` exactly as designed.
+
+Mutation-tested the same day it shipped: reverted `checkin_pending` to always-`false` (the literal
+pre-fix behavior), confirmed 2 hermetic tests fail with the exact expected panics, rebuilt+redeployed
+the mutated binary, confirmed live stress check `[46]` fails on exactly its 3 mutation-sensitive
+assertions while all 92 sibling assertions (checks `[1]`-`[45]`) stay green. One real near-miss during
+this: `git checkout --` (intended to revert only the mutation) took the file back to its last real
+*commit*, not the just-written real fix, since the fix hadn't been committed yet -- caught
+immediately by checking the file's own content rather than trusting the command, restored from a
+pre-mutation backup, no real loss. Rebuilt, redeployed the real fix, reconfirmed 95/95 clean.
+Committed to `CADS-devsystem@c1253b9`. 45 -> 46 checks, 90 -> 95 assertions.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
