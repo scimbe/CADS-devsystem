@@ -170,11 +170,19 @@ Extends §4's user-support goal with concrete GUI requirements:
    by two lines since the last time this was checked, from this same day's own "nine kinds of data"
    system-prompt fix growing the doc comment above the enum; re-verified via `grep -n "^enum Action"`
    rather than trusted from the last note), a real but narrow, pre-enumerated set. **Still a
-   real, genuinely open gap** (re-confirmed 2026-08-06, not stale like the two siblings here): no
+   real, genuinely open gap** (re-confirmed 2026-08-07, not stale like the two siblings here): no
    *general* "the assistant can edit whatever a human could edit in this panel" capability exists —
-   every new editable field still needs a new hand-written `Action` variant, fifteen of them as of
+   every new editable field still needs a new hand-written `Action` variant, nineteen of them as of
    this writing (see the ranked list's item 4 for the specific panels/fields already covered one at
-   a time, and stack-mode's own `propose_next_step` for the newest one).
+   a time, and `set_paused`, added 2026-08-07 by re-auditing every human-editable GUI field against
+   this enum, for the newest one). **One real candidate found by that same 2026-08-07 audit,
+   deliberately deferred rather than guessed at**: a human can already delete a whole run (the Runs
+   panel's own delete button, DAU-lens-hardened with a real confirmation --
+   `web/static/index.html:759`), but this is a materially different risk than `pause`/`resume` --
+   destructive and irreversible, the same class `ProposeRemoveCustomPanel` already treats as
+   proposal-gated rather than a direct action. Whether (and how) the assistant should get an
+   equivalent `propose_delete_run` is a real, separate decision, not folded into the same firing that
+   closed the safe `set_paused` case.
 3. **A real overview of every agent used, its tokens, and its cost must exist.** **Corrected,
    2026-08-06**: this entry's own "real gap, confirmed by direct check" framing went stale the same
    way item 1's did — the ranked list below (item 5) already marks this **done**: a real Assistant
@@ -3684,5 +3692,38 @@ check-in-cadence risk fires for real AND its `fix_target` is genuinely absent --
 is real, targeted data for the one risk kind that needs it, not a generic field silently defaulting
 onto others. 75/75 passing (was 73), live against the real deployed `devsystem-web`.
 ([`CADS-devsystem@22c8ad7`](https://github.com/scimbe/CADS-devsystem/commit/22c8ad7))
+
+**Goal-driven-loop firing, 2026-08-07 -- re-audited §7.2 gap #2 (explicitly named "still a real,
+genuinely open gap" in this doc) and closed its newest instance.** State check: no new operator
+input on any of the three open `#382` checkpoints, no new PRs, issue #14 unchanged, CI healthy
+(no longer stuck in queue, actively completing runs) -- 75/75 stress harness clean before starting.
+Rather than re-touch the risk panel a third time, went back to gap #2's own literal framing --
+"every new editable field still needs a new hand-written Action variant" -- and re-audited every
+real human-editable GUI field against the current 18-variant enum from scratch, the same discipline
+that found `toggle_requirement_auto_judge`/`set_role_fill_mode`/`update_criteria` earlier this
+session.
+
+Found one real, safe candidate: pause/resume has a genuine one-click GUI button (the health panel's
+own `pause-toggle` -- added directly from the operator's own feedback, "ich weiss nicht... wie ich
+es anhalten kann um es zu korrigieren") and two real endpoints (`/pause`, `/resume`), with no
+matching assistant action at all. Safe by the identical parity reasoning as `update_criteria`/
+`set_role_fill_mode`: both directions are fully reversible (pause then resume is a real no-op) and
+the human GUI's own button gets zero extra confirmation either. Added `Action::SetPaused { paused:
+bool }`, dispatching to whichever of the two real endpoints matches -- not one generic route with a
+body flag. Updated the system prompt's action-type count/JSON example in the same commit (the exact
+stale-count bug class already caught and fixed four times this session), extended the
+`parses_all_*_action_types` test to nineteen, added a dedicated `apply_action` test covering both
+directions. Hermetic `cargo test`/`clippy` clean (51/51 assistant tests, 0 warnings). Redeployed,
+then live-verified end to end against a real scratch run: a plain-English pause request genuinely
+paused it (`paused:true`, `pause_reason:"paused manually"`, confirmed via the real persisted
+state), a resume request genuinely cleared both fields, and the assistant's own self-report now
+correctly says "nineteen total action types". Full stress harness (75/75) unaffected; scratch run
+deleted after verification. ([`CADS-devsystem@cdf7829`](https://github.com/scimbe/CADS-devsystem/commit/cdf7829))
+
+The same audit found one more real candidate -- deleting a whole run -- but deliberately did NOT
+build it in this firing: destructive and irreversible is a materially different risk than
+pause/resume, the same class this project's own `ProposeRemoveCustomPanel` already treats as
+proposal-gated, not a direct action. Recorded above (§7 item 2) as a real, separate decision rather
+than guessed at or silently dropped.
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).
