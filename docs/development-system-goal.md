@@ -126,7 +126,7 @@ not just referenced:
 | Term | Working definition for this project | Where it's checked today |
 |---|---|---|
 | **Anerkannte Regeln der Technik** (recognized rules of engineering) | Follows this ecosystem's own established, load-bearing patterns (hermetic gates, no secrets in git, real tests over mocks) | **Partially, corrected 2026-08-06** — this row's own `check-no-secrets.sh` claim was stale: that script never actually existed in this repo (a different project's convention referenced but never built here, confirmed live). `scripts/check-no-secrets.sh` now genuinely exists and runs in real CI (`CADS-devsystem@3a6f390`); the hermetic build/test gate is real and covered elsewhere in this table. Still no single explicit gate role for "load-bearing patterns" as a whole — that's a broader, fuzzier claim than any one mechanical check can fully close |
-| **Stand der Technik** (state of the art) | Current, non-deprecated dependencies and idioms at time of delivery | **Partially checked** — this row's own "no gate exists" claim was stale: `.github/dependabot.yml` (`CADS-devsystem@9c97211`/`8949cbf`) already runs a real weekly `cargo` freshness check against both crates plus GitHub Actions versions, confirmed live 2026-08-06 — three real, currently-open PRs exist right now (`rand` 0.8.7→0.10.2 in both crates, `ed25519-dalek` 2.2.0→3.0.0 in `web`). What's still genuinely open: those PRs are opened, not enforced — nothing blocks a merge to `main` while one sits open, and reviewing/merging them is the operator's own call (out of scope here — they're not scimbe-authored, and a major-version bump like `ed25519-dalek` 2→3 needs a real compatibility read, not a rubber-stamp merge) |
+| **Stand der Technik** (state of the art) | Current, non-deprecated dependencies and idioms at time of delivery | **Partially checked** — this row's own "no gate exists" claim was stale: `.github/dependabot.yml` (`CADS-devsystem@9c97211`/`8949cbf`) already runs a real weekly `cargo` freshness check against both crates plus GitHub Actions versions, confirmed live 2026-08-06 — three real, currently-open PRs exist right now (`rand` 0.8.7→0.10.2 in both crates, `ed25519-dalek` 2.2.0→3.0.0 in `web`). What's still genuinely open: those PRs are opened, not enforced — nothing blocks a merge to `main` while one sits open, and reviewing/merging them is the operator's own call (out of scope here — they're not scimbe-authored). **Checked their real CI status 2026-08-07, not just left as "needs a look"**: all three genuinely fail CI right now, and the "major bump needs a real compatibility read" caution above is proven concretely true, not just generically asserted — the actual `cargo test`/`cargo build` errors trace to one real, correlated root cause across all three: `rand` 0.10's `OsRng` moved out of `rand::rngs` (a real `E0425` where this codebase's own `web/src/main.rs:3988` constructs `rand::rngs::OsRng` directly for `quick_submit_offer`'s ephemeral signing key), and `ed25519-dalek` 3.0.0's own `rand_core` major-version bump means its `CryptoRng` trait bound genuinely isn't satisfied by the `OsRng` the currently-pinned `rand` provides (a real `E0277`) — three separate PRs, one real breaking-change ripple through the `rand`/`rand_core` ecosystem. Merging any of the three today would break CI outright, not just theoretically risk it; still the operator's own call, now backed by real evidence instead of a general caution |
 | **Vertragsgemäße / Sachmangelfreie Leistung** (contract-conforming, defect-free delivery) | Satisfies every declared acceptance criterion, zero known open defects at delivery | Requirements/acceptance-criteria machinery exists; **partially checked as of `CADS-devsystem@9f9f5d2`** -- a `succeeded: true` iteration whose own feedback admits a known defect (`DEFECT_ADMISSION_PHRASES`) is now flagged as a real risk. Advisory, not a hard block, and beatable by phrasing a real defect without those exact words -- not the whole gap closed |
 | **Fachgerecht / Fachmännisch** (professionally correct) | Passes the same review bar a competent human reviewer would apply | The `review` stage exists as a role; not mandatory for every change today |
 | **Kunstgerecht** (in accordance with the craft) | Idiomatic to the language/framework, not just "works" | **Checked as of `CADS-devsystem@9861abe`** (stress-test run 29) -- `cargo clippy --all-targets -- -D warnings` runs in real CI for both real crates, same hermetic-gate discipline as the existing `RUSTFLAGS=-D warnings` compiler-warnings gate. Rust-specific and this project's own two crates only -- a role-filler's target repo in a different language, or a future crate this pipeline builds, isn't covered by this gate automatically |
@@ -4160,5 +4160,28 @@ architectural question -- should `/iterate` ever require proof of winning an auc
 change to who's allowed to do what -- not a scoped implementation task, and not guessed at here.
 Corrected the record in `preflight.rs`'s own doc comment (this same commit) rather than leave the
 inaccurate "needs a CADS-Tunnel change" claim standing for a future firing to inherit and act on.
+
+**Goal-driven-loop firing, 2026-08-07 -- real, concrete evidence found for an existing caution,
+instead of just re-flagging it again.** State check: no new operator input on any of the three open
+`#382` checkpoints, no new scimbe-authored PRs, issue #14 unchanged, CI healthy, disk unchanged.
+
+The three open Dependabot PRs have been correctly named "out of scope, needs a real compatibility
+read" for a while now, but that caution had never actually been checked against their real CI
+results. Did that this firing, read-only (`gh pr checks`, `gh api .../logs`) -- no merge, no code
+change, nothing not already explicitly authorized. All three genuinely fail CI right now, and all
+three trace to the same real, correlated root cause: `rand` 0.10's `OsRng` moved out of
+`rand::rngs` (a real `E0425` compile error, hitting this codebase's own `quick_submit_offer` in
+`web/src/main.rs`, which constructs `rand::rngs::OsRng` directly), and `ed25519-dalek` 3.0.0's own
+`rand_core` major-version bump means its `CryptoRng` trait bound genuinely isn't satisfied by the
+`rand` version currently pinned (a real `E0277`). Not three independent, unrelated dependency bumps
+-- one real breaking-change ripple through the `rand`/`rand_core` ecosystem, hitting all three PRs
+for the same underlying reason.
+
+Recorded in §5's own quality-bar table with the real evidence, replacing the generic "needs a
+compatibility read" caution with what that read actually found. Still correctly out of scope to act
+on further -- these PRs aren't scimbe-authored, and deciding whether/when to absorb this rand/
+rand_core migration (which would mean real source changes at the one real call site found, plus
+whatever else the eventual dependency bump touches) is the operator's own call, now backed by
+concrete evidence instead of a general worry.
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).
