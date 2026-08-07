@@ -149,6 +149,15 @@
       "proposals": [],
       "succeeded": true,
       "requirement_indices": []
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.improve",
+      "iteration": 13,
+      "feedback": "Real self-optimization step, not a code change: read channel.rs and message.rs in full (native-bridge crate) as a genuine follow-up to iteration 12 own review, since touches auth/security correctly flagged this run again. Both modules are solid -- impostor-key handshake rejection is real and tested (dialing_with_the_wrong_peer_public_key_fails_the_handshake), the deadlock labor-setup.com found is genuinely fixed with a real regression test, every FFI decode path is panic-free with typed errors, and the private key is zeroized on drop, never crossing the FFI boundary as a value. One honest, non-blocking observation: TextMessage sender_pubkey is self-reported by the sender at compose time, not derived from the authenticated Noise session -- currently harmless since MainActivity never reads it back for any real decision (direction alone drives rendering), but worth remembering if a later increment ever trusts it for something real. The actual next real gap is exactly what both modules own doc comments already name honestly: broker-mediated discovery. Direct-address-only means both devices still have to manually exchange public key and IP out of band before this app is useful beyond a LAN test -- recorded as a real backlog item rather than guessed at or half-built speculatively, since it needs ct-agent channel join against the real CADS-Tunnel broker (SignedChannelGrant, rendezvous, NAT traversal, relay fallback), a genuinely separate, larger increment living in a different crate entirely.",
+      "proposals": [],
+      "succeeded": true,
+      "requirement_indices": []
     }
   ],
   "added_stages": [
@@ -177,6 +186,10 @@
     {
       "text": "Lokale Nachrichten-Persistenz auf Android (Room) + minimale Chat-UI gegen die UniFFI-API, Ziel: zwei Geräte tauschen Text über einen Channel",
       "done": true
+    },
+    {
+      "text": "Broker-vermittelte Kanal-Discovery: aktuell direct-address-only (beide Seiten tauschen Public Key/Adresse manuell out-of-band aus, channel.rs eigener Modul-Kommentar). Naechster echter Schritt fuer echte Geraet-zu-Geraet-Nutzung ohne manuellen Adressaustausch: ct-agent channel join gegen den echten CADS-Tunnel Broker (SignedChannelGrant, Rendezvous, NAT-Traversal, :443 Relay-Fallback) -- lebt aktuell komplett in ct-agent/ct_edge, nicht in dieser Crate.",
+      "done": false
     }
   ],
   "milestones": [
