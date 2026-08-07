@@ -5436,4 +5436,40 @@ as narrow as the code comment claimed. Reverted from the real backup (`diff` aga
 `[5]` moves from "written but never proven" to real, mutation-verified proof it has teeth --
 `[6]`-`[35]` remain the honestly-named backlog.
 
+**Main-dev-loop firing, 2026-08-07 (ss) -- issue #26 actually fixed and closed, root cause found via
+a real evaluator follow-up.** State check: no new operator input on `#14` or the three `#382`
+checkpoints, CI green. `#26` (left open, honestly unreproduced, in firing (ll)) got a precise
+follow-up comment: the anfaenger persona reproduced the exact symptom for real this time, and
+correctly identified the differentiator every earlier repro attempt this session missed -- a
+**restored, non-fresh** `localStorage` layout (panels already open from a previous session) rather
+than a fresh one. Every one of firing (ll)'s four repro attempts started from `localStorage.clear()`,
+which is exactly the condition that hid the bug.
+
+Traced it to the real root cause: `toggleMaximize()`'s maximize branch only ever sets the DOM style
+directly, never persisting the real maximized `w`/`h` into `layout` -- only `maximized:true` and
+`preMax` survive a reload. `createPanel()`/`createCustomPanelWindow()` then ran a restored maximized
+panel through `ensurePanelVisible()`'s small-panel collision-avoidance cascade against those stale,
+pre-maximize dimensions, rendering it **small** on reload while its own `maximized` flag still said
+`true` -- a real state/render mismatch. The first click read `maximized:true` and correctly performed
+a *restore* per that stale state (small back to its own already-small `preMax`, a real, visually
+identical no-op); the second click, now correctly reading `maximized:false`, actually maximized.
+Exactly the reported symptom.
+
+Reproduced the bug directly before touching any fix: manually set a restored-maximized
+`localStorage` entry, reloaded, confirmed the panel rendered small with `maximized:true` still set,
+confirmed the first click's computed style was byte-identical before/after while the internal flag
+silently flipped. Fixed at the actual root -- a restored `maximized:true` panel now renders at the
+real maximized size directly, the identical formula `toggleMaximize`'s own maximize branch uses.
+Reran the same repro against the fix: correct render on reload, a real visible restore on first
+click. `CADS-devsystem@0ee6394`.
+
+Real, separate incident mid-verification: a redeploy reused a stale compiled Docker layer despite a
+correct git-SHA label (the label only proves the build-arg matched, not that cargo actually
+recompiled) -- caught because check `[5]`'s own `fix_target` field, mutation-verified as real just
+one firing earlier, suddenly came back missing from a live API response with source confirmed
+identical to `HEAD`. `--no-cache` resolved it; confirmed via a direct `curl` that `fix_target` was
+genuinely present before trusting the stress harness's `100 passed` again. A real, concrete argument
+for why this session keeps re-running the full harness after every redeploy, not just after a code
+change -- the deploy step itself can silently lie.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
