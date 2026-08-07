@@ -5614,4 +5614,27 @@ confirmed byte-identical), rebuilt, redeployed, reconfirmed `100 passed, 0 faile
 `[7]` moves from "written but never proven" to real, mutation-verified proof it has teeth --
 `[8]`-`[35]` remain the honestly-named backlog.
 
+**Main-dev-loop firing, 2026-08-07 (zz) -- mutation-tested check `[8]`'s gap-#10 assistant-review
+gate, second increment of this batch.** State check unchanged from firing (yy) -- no new operator
+input anywhere, CI green.
+
+Backed up `web/src/main.rs`, mutated `is_assistant_actor()` down to an unconditional `false` -- the
+literal pre-fix "gap #10" bug where nothing server-side could tell a human's own click apart from
+`devsystem.assistant`'s chat-driven relay, letting the assistant be talked into verifying a
+requirement from a plain instruction with zero real evidence. Hermetic `cargo test` confirmed the
+exact regression: `assistant_driven_verification_requires_real_review_evidence_even_with_no_review_role_declared`
+failed (`200` where `409` was required) while its sibling,
+`assistant_driven_verification_succeeds_once_real_review_evidence_exists`, correctly still passed --
+a real evidence-present case is unaffected by this exact mutation, precise proof the test suite
+itself distinguishes "gate exists" from "gate lets real evidence through." Rebuilt and redeployed the
+mutated binary locally, ran the full 100-assertion harness: `99 passed, 1 failed` -- precisely check
+`[8]`'s "assistant cannot mark verified with zero evidence" assertion failed, its sibling "a plain
+human click needs no such evidence" assertion stayed correctly green (the human path is deliberately
+unaffected by this gate, and the mutation correctly didn't touch it either). Reverted from the real
+backup (`diff` confirmed byte-identical to `HEAD`), rebuilt, redeployed, reconfirmed
+`100 passed, 0 failed`.
+
+`[8]` moves from "written but never proven" to real, mutation-verified proof it has teeth --
+`[9]`-`[35]` remain the honestly-named backlog.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
