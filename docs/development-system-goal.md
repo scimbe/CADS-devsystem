@@ -3999,4 +3999,32 @@ reproduced the exact bypass first (a real `200` on the over-ceiling accept), con
 it (`400`, same real numbers stated). Added stress-harness check `[42]` (85/85 total) so this exact
 bypass can never silently regress unnoticed again.
 
+**Goal-driven-loop firing, 2026-08-07 -- the same bug class found again by applying the exact same
+lens to a different risk check, and it fired on the flagship run itself.** State check: no new
+operator input on any of the three open `#382` checkpoints, no new PRs, CI healthy -- 85/85 stress
+harness clean before starting.
+
+Having just found "once satisfied, satisfied forever" in `no_price_ceiling`'s enforcement, checked
+the OTHER risk this document's own §5 names as the direct next step toward a mandatory quality gate:
+`no_review_for_succeeded_work`. Same shape, same bug: the old check asked "has there EVER been a
+substantive `devsystem.review` iteration anywhere in this run's history," so a single early review
+satisfied it permanently, no matter how much further unreviewed work landed afterward. Live-confirmed
+against the actual `webconference-android` run before fixing, not assumed: iteration 12 (this
+session's own real review, closed a few firings ago) genuinely cleared the risk -- but iteration 13
+(`devsystem.improve`, real, `succeeded: true`, landed right after) was never itself reviewed, and the
+risk stayed silently gone regardless. A real, previously-invisible fact about the project's own
+flagship proof, the same way the risk's very first live-check was.
+
+Fixed by finding the run's own MOST RECENT succeeded, non-review iteration, then requiring a
+substantive review at or after that point -- not just anywhere in history. A run that keeps shipping
+real work after its last real review now correctly stays flagged until a fresh review actually covers
+the new work, closing the exact "silently satisfied forever" gap the price_ceiling fix closed the
+same day, in a completely different check.
+
+Hermetic `cargo test`/`clippy` clean on both crates (123/123 pipeline, 196/196 web, 0 warnings) -- new
+test proves the exact scenario: review clears the risk, new unreviewed work re-flags it. Redeployed;
+live-verified against the real, actual flagship run: `no review stage for real, succeeded work` is
+now genuinely back in its risk list, an honest, real fact about this project's own state, not a
+synthetic example. Added stress-harness check `[43]` (87/87 total).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).

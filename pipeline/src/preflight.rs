@@ -395,27 +395,35 @@ fn missing_test_before_implement(state: &RunState) -> Option<RiskAnnotation> {
 /// makes the gap visible first, the same safe rollout shape every other real
 /// quality signal in this file already took before (if ever) becoming a gate.
 fn no_review_for_succeeded_work(state: &RunState) -> Option<RiskAnnotation> {
-    let has_succeeded_work = state.history.iter().any(|r| r.succeeded && r.stage != STAGE_REVIEW);
-    if !has_succeeded_work {
-        return None;
-    }
-    let has_real_review = state.history.iter().any(|r| {
+    // Real gap found live 2026-08-07, the same "once satisfied, satisfied forever"
+    // shape as `no_price_ceiling`'s own careless-re-proposal bypass fixed the same
+    // day (`runner::price_ceiling_for`'s own doc comment) -- confirmed against the
+    // actual `webconference-android` run before fixing: a real review (iteration
+    // 12) genuinely cleared this risk, but real, NEW succeeded work (iteration 13,
+    // `devsystem.improve`) landed right after it and was never itself reviewed --
+    // the risk stayed silently gone regardless, since the old check only asked "has
+    // there EVER been a substantive review anywhere," not "has the run's own most
+    // recent succeeded work actually been covered by one." A run could ship
+    // unlimited further unreviewed work forever after a single early review and
+    // this would never flag it again.
+    let last_work_idx = state.history.iter().rposition(|r| r.succeeded && r.stage != STAGE_REVIEW)?;
+    let has_real_review_since = state.history[last_work_idx..].iter().any(|r| {
         r.stage == STAGE_REVIEW && {
             let trimmed = r.feedback.trim();
             trimmed.chars().count() >= MIN_TEST_FEEDBACK_LEN && distinct_word_count(trimmed) >= MIN_TEST_DISTINCT_WORDS
         }
     });
-    if has_real_review {
+    if has_real_review_since {
         None
     } else {
         Some(RiskAnnotation {
             label: "no review stage for real, succeeded work".into(),
             evidence: format!(
-                "this run has at least one succeeded:true iteration, but no devsystem.review \
-                 iteration anywhere in its history that's substantive enough to count as real \
-                 evidence review happened ({MIN_TEST_FEEDBACK_LEN}+ characters and \
-                 {MIN_TEST_DISTINCT_WORDS}+ distinct words of feedback, not a rubber-stamp) -- \
-                 advisory today, not a block (goal doc §5)"
+                "this run has at least one succeeded:true iteration with no substantive \
+                 devsystem.review iteration since it -- {MIN_TEST_FEEDBACK_LEN}+ characters and \
+                 {MIN_TEST_DISTINCT_WORDS}+ distinct words of feedback, not a rubber-stamp, and not \
+                 just an earlier review of now-superseded work -- advisory today, not a block \
+                 (goal doc §5)"
             ),
             fix_target: None,
         })
@@ -839,6 +847,30 @@ mod tests {
         assert!(
             findings.iter().any(|f| f.label == "no review stage for real, succeeded work"),
             "a rubber-stamp review iteration must not silently satisfy this check: {findings:?}"
+        );
+    }
+
+    #[test]
+    /// Real gap found live 2026-08-07 against the actual `webconference-android`
+    /// run: a real, substantive review genuinely cleared this risk, but new,
+    /// real succeeded work landed right after it and was never itself reviewed --
+    /// the old "has there EVER been a substantive review anywhere" check stayed
+    /// silently satisfied forever regardless. This is what closes it: a review
+    /// only counts if it's at or after the run's own MOST RECENT succeeded work.
+    fn re_flags_when_real_new_work_lands_after_the_only_real_review() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_IMPLEMENT, 1, "shipped a real feature", vec![]));
+        state.history.push(iteration(STAGE_REVIEW, 2, "reviewed the diff line by line, confirmed the edge cases are covered and the naming is clear", vec![]));
+        assert!(
+            !preflight_annotations(&state).iter().any(|f| f.label == "no review stage for real, succeeded work"),
+            "sanity check: the review above must genuinely clear the risk first"
+        );
+
+        state.history.push(iteration(STAGE_IMPLEMENT, 3, "shipped a second, later real feature, never reviewed", vec![]));
+        let findings = preflight_annotations(&state);
+        assert!(
+            findings.iter().any(|f| f.label == "no review stage for real, succeeded work"),
+            "real new work after the only review must re-flag this risk, not stay silently satisfied forever: {findings:?}"
         );
     }
 

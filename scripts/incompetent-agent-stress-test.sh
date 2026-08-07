@@ -582,10 +582,30 @@ check "the real, earlier ceiling still applies after a careless omission -- not 
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$widen_run"
 
 echo
+echo "[43] real NEW succeeded work landing after the run's only real review must re-flag 'no review stage for real, succeeded work' -- a review must not silently satisfy this forever, no matter how much unreviewed work follows it (found live against the actual webconference-android run, #382 goal doc §5/§8, 2026-08-07)"
+review_stale_run="${RUN}-review-staleness-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$review_stale_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$review_stale_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"shipped a real first feature for the review-staleness probe","succeeded":true}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$review_stale_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.review","feedback":"reviewed the diff line by line, confirmed the edge cases are covered and the naming is clear","succeeded":true}'
+risk_after_review=$(curl -s "$BASE/api/runs/$review_stale_run" | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+print("yes" if any(r["label"] == "no review stage for real, succeeded work" for r in d.get("risks", [])) else "no")' 2>/dev/null)
+check "the real review genuinely clears the risk first" "no" "$risk_after_review"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$review_stale_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"shipped a second, later real feature, never reviewed at all","succeeded":true}'
+risk_after_new_work=$(curl -s "$BASE/api/runs/$review_stale_run" | python3 -c 'import json,sys
+d = json.load(sys.stdin)
+print("yes" if any(r["label"] == "no review stage for real, succeeded work" for r in d.get("risks", [])) else "no")' 2>/dev/null)
+check "real new unreviewed work after the only review re-flags the risk, not stays silently satisfied forever" "yes" "$risk_after_new_work"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$review_stale_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the forty-two gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the forty-three gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
