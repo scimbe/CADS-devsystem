@@ -24,7 +24,10 @@ use devsystem_pipeline::runner::{
     Milestone, PendingDeleteRunProposal, PendingIssueProposal, PendingNextStepDraft, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal,
     Requirement, RoleFillMode, RunOutcome, RunState,
 };
-use devsystem_pipeline::{apply_proposal, contains_bidi_control_char, validate_feedback, validate_proposals, validate_stage, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal, MAX_ROLE_UNITS};
+use devsystem_pipeline::{
+    apply_proposal, contains_bidi_control_char, validate_feedback, validate_proposals, validate_stage, AbortCriteria, IterationRecord, ProposalOutcome,
+    StageProposal, ALL_STAGES, MAX_ROLE_UNITS,
+};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
 use ct_common::pipeline::SelectionState;
 use serde::{Deserialize, Serialize};
@@ -740,6 +743,22 @@ async fn get_run(State(state): State<AppState>, AxPath(id): AxPath<String>, head
                 "stalled_stages": stalled,
                 "health": health,
                 "risks": risks,
+                // Real evaluator finding, issue #51: the "+ New Project" dialog claims a
+                // "generic 7-stage pipeline template", but a new run deliberately only ever
+                // seeds `devsystem.plan` -- speculatively pre-declaring all seven as
+                // auction-backed roles would contradict the self-optimizing design (#382's
+                // own reframing: "let the system inform itself about the task" rather than
+                // build the whole pipeline up front). That left the New Iteration stage
+                // dropdown offering only the plan role, forcing every other real stage name
+                // to be hand-typed into the unvalidated free-text box -- confirmed live to
+                // produce exactly the kind of typo `validate_stage` (issue #49) now rejects
+                // (`devsystem.reveiw`), but the GUI still made hand-typing the only path to
+                // 6 of 7 real stages. `ALL_STAGES` (single source of truth, same constant
+                // `validate_stage` itself checks) lets the GUI offer all seven canonical
+                // names as real, pickable options -- without pretending they're declared
+                // roles, since `validate_stage` already accepts any of them regardless of
+                // `spec.roles`.
+                "canonical_stages": ALL_STAGES,
             }))
             .into_response()
         }
@@ -8015,6 +8034,28 @@ exit 1"#);
         assert_eq!(body["health"]["iterations_completed"], 0);
         assert_eq!(body["health"]["iterations_until_checkin"], 5, "fresh run is 5 iterations from the default checkin_every cadence");
         assert_eq!(body["health"]["iterations_until_ceiling"], 20);
+    }
+
+    #[tokio::test]
+    /// Real evaluator finding, issue #51: a fresh run only ever declares `devsystem.plan`
+    /// as a role (by design), which left the New Iteration dropdown offering nothing else
+    /// -- every other real stage had to be hand-typed into the unvalidated free-text box,
+    /// producing exactly the kind of typo `validate_stage` (issue #49) now rejects. This
+    /// field is the fix's other half: the real `ALL_STAGES` constant, so the GUI can offer
+    /// all seven canonical stages as real, pickable options without pretending they're
+    /// declared roles.
+    async fn get_run_reports_the_real_canonical_stages_regardless_of_declared_roles() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "canon-run"}))).await.unwrap();
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/canon-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        let canonical = body["canonical_stages"].as_array().expect("canonical_stages is a real array");
+        assert_eq!(canonical.len(), 7, "all seven canonical stages, regardless of how many roles this run has actually declared");
+        let names: Vec<&str> = canonical.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(names.contains(&"devsystem.plan"));
+        assert!(names.contains(&"devsystem.improve"), "devsystem.improve must be offered even though a fresh run never declares it as a role");
     }
 
     #[tokio::test]

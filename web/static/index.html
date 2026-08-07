@@ -2169,7 +2169,13 @@ function openNewProjectDialog() {
   overlay.innerHTML = `
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="new-project-title">
       <h3 id="new-project-title">New Project</h3>
-      <p class="lede" style="font-size:.8rem">Creates a real run with the generic 7-stage pipeline template -- roles get added as the run self-optimizes, same as every other project here.</p>
+      <!-- Real evaluator finding, issue #51: this used to read "Creates a real run with the
+           generic 7-stage pipeline template", which a first-time reader took as "all seven
+           stages are already set up" -- what actually gets created is one role
+           (devsystem.plan), by design (pre-declaring all seven up front would contradict the
+           self-optimizing design). The old copy stated an aspiration as a fact; this states
+           what really happens. -->
+      <p class="lede" style="font-size:.8rem">Creates a real run that starts with one role (<code>devsystem.plan</code>) -- the other six of this project's seven canonical stages (implement, test, review, verify, remember, improve) are real, valid stage names from the start (offered in the New Iteration dropdown), but only become auction-backed roles here as the run self-optimizes and proposes them, same as every other project here.</p>
       <form id="new-project-form">
         <label>Project id<input id="np-run-id" placeholder="e.g. my-other-project" pattern="[A-Za-z0-9_\\-]+" required autofocus></label>
         <label>GitHub repo URL <span style="opacity:.7">(optional -- powers the Pipeline panel and Docs Search sync)</span>
@@ -4252,16 +4258,30 @@ function renderNewIterationPanel(id, data) {
   // kann im Moment auch nur eine devsystem.implement auswählen" (the datalist
   // affordance was invisible/non-discoverable). Every live role is a real,
   // labeled option; "other / new stage id" covers a genuinely new/stalled stage.
-  const roleOptions = data.spec.roles
-    .map(r => r.service && r.service.Custom)
-    .filter(Boolean)
-    .map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`)
-    .join('');
+  const declaredStages = data.spec.roles.map(r => r.service && r.service.Custom).filter(Boolean);
+  const roleOptions = declaredStages.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+  // Real evaluator finding, issue #51: a new run only ever seeds `devsystem.plan` (correct
+  // -- pre-declaring all seven as auction-backed roles would contradict the self-optimizing
+  // design), but that left every other real stage name only reachable by hand-typing into
+  // the free-text box below -- confirmed live to produce exactly the kind of typo
+  // `validate_stage` (issue #49) now rejects (`devsystem.reveiw`). `canonical_stages`
+  // (`GET /api/runs/{id}`, the real `ALL_STAGES` constant `validate_stage` itself checks)
+  // lets this dropdown offer the other six real stage names too, without pretending
+  // they're declared roles -- listed in their own group so "this run's live roles" (an
+  // auction actually cleared for these) stays visually distinct from "not yet declared,
+  // but still a real, valid stage name".
+  const canonicalOnly = (data.canonical_stages || []).filter(s => !declaredStages.includes(s));
+  const canonicalOptions = canonicalOnly.length
+    ? `<optgroup label="Other canonical stages (not yet a declared role here)">
+         ${canonicalOnly.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
+       </optgroup>`
+    : '';
   body.innerHTML = `
     ${paused ? `<div class="paused-banner">⏸ this run is paused -- resume it (Health &amp; Criteria panel) before submitting</div>` : ''}
-    <label>Stage (pick from this run's live roles)</label>
+    <label>Stage (pick from this run's live roles, or any of the seven canonical stages)</label>
     <select id="it-stage-select">
-      ${roleOptions}
+      ${roleOptions ? `<optgroup label="This run's live roles">${roleOptions}</optgroup>` : ''}
+      ${canonicalOptions}
       <option value="__custom__">other / new stage id…</option>
     </select>
     <input id="it-stage-custom" placeholder="e.g. devsystem.my_new_stage" style="display:none;margin-top:.4rem">

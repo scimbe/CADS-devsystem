@@ -736,10 +736,20 @@ check "a case/whitespace near-miss on a real canonical stage is rejected, not si
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$stage_run"
 
 echo
+echo "[51] a fresh run's own real GET response must expose all seven canonical stage names, regardless of how many are actually declared roles yet -- the New Iteration dropdown's fix for issue #51 (a fresh run only ever declares devsystem.plan by design, which left every other real stage hand-typed into the unvalidated free-text box, exactly the typo trap issue #49 closed) reads this field, not a hardcoded client-side list (#382 goal doc §8, 2026-08-07)"
+canon_run="canonical-stages-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$canon_run\"}"
+canonical_count=$(curl -s "$BASE/api/runs/$canon_run" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("canonical_stages", [])))' 2>/dev/null)
+check "a fresh run (one declared role: devsystem.plan) still reports all seven canonical stages" "7" "$canonical_count"
+has_improve=$(curl -s "$BASE/api/runs/$canon_run" | python3 -c 'import json,sys; print("yes" if "devsystem.improve" in json.load(sys.stdin).get("canonical_stages", []) else "no")' 2>/dev/null)
+check "devsystem.improve is among them even though this run never declares it as a role" "yes" "$has_improve"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$canon_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the fifty gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the fifty-one gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
