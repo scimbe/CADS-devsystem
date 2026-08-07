@@ -4769,4 +4769,17 @@ stress harness stays clean (unaffected -- exercises `devsystem-web` only, a real
 gap worth naming: this new `devsystem_assistant` endpoint has no stress-harness coverage of its own
 yet, unlike `devsystem-web`'s check `[48]`). Committed to `CADS-devsystem@1cdc0f5`.
 
+**Main-dev-loop firing, 2026-08-07 (v) -- closing the residual coverage gap named honestly last
+firing.** State check: no new operator input on any of the four standing decision points,
+`#13`/`#14`/PRs unchanged.
+
+Added check `[49]` for `devsystem_assistant`'s own `GET /version` (shipped last firing, no
+stress-harness coverage of its own). Designed deliberately defensive, not a hard dependency: this is
+a genuinely separate, optional process not every environment running this harness has deployed
+locally, so an unreachable address at the default `172.17.0.1:8791` (overridable via
+`$DEVSYSTEM_ASSISTANT_ADDR`) is a real, honest `SKIP`, never a failure. Verified both paths live: the
+real check passes against the actual currently-deployed assistant (100/100 total), and the skip path
+fires cleanly and harmlessly against a deliberately unreachable address (99/99, no false failure).
+Committed to `CADS-devsystem@4f3cc7b`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
