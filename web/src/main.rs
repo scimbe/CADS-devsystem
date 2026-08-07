@@ -845,7 +845,19 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
     // real open item, one queue." No `id`/`proposed_at` -- unlike every other
     // kind here, this isn't a discrete record with its own creation timestamp,
     // it's a real, derived fact about the run's own history vs. its criteria.
-    if checkin_pending(run_state) {
+    // Real gap found live by a non-technical evaluator, issue #48, the same fix that
+    // made a fired check-in actually pause the run (above): once that lands, a
+    // pending check-in is represented TWICE here whenever it's also the reason the
+    // run is paused -- the paused_checkpoint entry above (real pause_reason:
+    // "check-in due -- ...") and this one, both naming the identical real fact.
+    // Only add this separate entry when the check-in ISN'T already covered by a
+    // paused_checkpoint for that same reason -- still needed for the real, reachable
+    // case where checkin_pending is true but the run isn't currently paused for it
+    // (e.g. a manual resume past an unacknowledged check-in, or legacy state that
+    // predates this fix).
+    let checkin_already_shown_as_paused_checkpoint =
+        run_state.paused && run_state.pause_reason.as_deref().is_some_and(|r| r.starts_with("check-in due"));
+    if checkin_pending(run_state) && !checkin_already_shown_as_paused_checkpoint {
         points.push(OpenPoint {
             kind: "checkin_due",
             id: "checkin".to_string(),
@@ -1094,7 +1106,19 @@ fn run_health(run_state: &devsystem_pipeline::runner::RunState) -> RunHealth {
     // threshold below, permanently false-flagging such a run as needing
     // attention for a reason that was never real. Report the real distance
     // to the actual next check-in event (the ceiling) instead.
-    let until_checkin = if criteria.checkin_every == 0 {
+    // Real gap found live by a non-technical evaluator, issue #48: this used to
+    // compute purely off `completed % checkin_every`, with no idea whether the
+    // LAST real boundary it crossed was ever acknowledged
+    // (`checkin_acknowledged_through`) -- so a run sitting on an overdue,
+    // unacknowledged check-in (`checkin_pending: true`) could still report
+    // `iterations_until_checkin: 1`, counting down toward a future boundary as if
+    // the one that already fired didn't matter. `checkin_pending` is the real,
+    // authoritative "is one actually due right now" signal; when it's true, the
+    // honest distance is `0` (due now), not a countdown to the next one.
+    let pending = checkin_pending(run_state);
+    let until_checkin = if pending {
+        0
+    } else if criteria.checkin_every == 0 {
         criteria.max_iterations.saturating_sub(completed)
     } else {
         let rem = completed % criteria.checkin_every;
@@ -1106,7 +1130,7 @@ fn run_health(run_state: &devsystem_pipeline::runner::RunState) -> RunHealth {
         iterations_completed: completed,
         iterations_until_checkin: until_checkin,
         iterations_until_ceiling: criteria.max_iterations.saturating_sub(completed),
-        checkin_pending: checkin_pending(run_state),
+        checkin_pending: pending,
     }
 }
 
@@ -1486,6 +1510,22 @@ async fn acknowledge_checkin(State(state): State<AppState>, AxPath(id): AxPath<S
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
     }
     run_state.checkin_acknowledged_through = run_state.history.len() as u32;
+    // Real gap found live by a non-technical evaluator, issue #48: `run_iteration`
+    // now actually pauses the run when a check-in is due (it always should have --
+    // see `RunOutcome::CheckinDue`'s own doc comment), reusing the same real
+    // `paused` mechanism every other pause reason uses. But a cadence check-in is
+    // conceptually a review CHECKPOINT, not a stop like a milestone or a ceiling --
+    // its own AbortCriteria field literally means "pause at least this often for a
+    // human to look," not "pause forever until a separate deliberate decision."
+    // Acknowledging it IS that decision. Only resumes when the real, current pause
+    // reason is a check-in pause specifically (the tag `run_iteration` itself
+    // writes) -- a milestone/ceiling/manual pause that happens to coincide is left
+    // exactly as it was; acknowledging a check-in must never silently wave through
+    // an unrelated, still-real reason to stay stopped.
+    if run_state.paused && run_state.pause_reason.as_deref().is_some_and(|r| r.starts_with("check-in due")) {
+        run_state.paused = false;
+        run_state.pause_reason = None;
+    }
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"checkin_acknowledged_through": run_state.checkin_acknowledged_through})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
@@ -7714,6 +7754,87 @@ exit 1"#);
     }
 
     #[tokio::test]
+    /// Real evaluator finding, issue #48: `run_iteration` now actually pauses the run
+    /// when a check-in fires (RunOutcome::CheckinDue's own doc comment always
+    /// promised this). A cadence check-in is a review checkpoint, not a stop like a
+    /// milestone -- acknowledging it must also resume the run, or the mandatory
+    /// "at least this often" cadence would otherwise wedge the run on every single
+    /// boundary until a second, separate Resume click. The very next submission
+    /// after acknowledging must be accepted, not still 409 "run is paused".
+    async fn acknowledging_a_real_checkin_pause_also_resumes_the_run() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "ack-resume-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/ack-resume-run/criteria", serde_json::json!({"max_iterations": 20, "max_consecutive_failures": 3, "checkin_every": 1})))
+            .await
+            .unwrap();
+
+        let iter1 = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/ack-resume-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "real work", "succeeded": true})))
+            .await
+            .unwrap();
+        assert_eq!(iter1.status(), SC::OK, "the iteration that crosses the boundary is still accepted and recorded");
+
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/ack-resume-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(get).await;
+        assert_eq!(body["state"]["paused"], true, "a fired check-in must actually pause the run, not just report CheckinDue");
+        assert!(body["state"]["pause_reason"].as_str().unwrap().starts_with("check-in due"));
+
+        let blocked = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/ack-resume-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "must be refused", "succeeded": true})))
+            .await
+            .unwrap();
+        assert_eq!(blocked.status(), SC::CONFLICT, "paused must actually block the next submission");
+
+        let ack = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/ack-resume-run/checkin/acknowledge").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(ack.status(), SC::OK);
+
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/ack-resume-run").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(body_json(get).await["state"]["paused"], false, "acknowledging a real check-in pause must also resume the run");
+
+        let iter2 = app
+            .oneshot(json_request("POST", "/api/runs/ack-resume-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "accepted after acknowledging", "succeeded": true})))
+            .await
+            .unwrap();
+        assert_eq!(iter2.status(), SC::OK, "the next real submission after acknowledging must be accepted, not still blocked");
+    }
+
+    #[tokio::test]
+    /// The other real half of the same fix: acknowledging must never silently wave
+    /// through an UNRELATED pause reason that happens to also be set (a manual
+    /// pause, a milestone, a ceiling) -- only a real check-in pause is ever cleared
+    /// by acknowledging one.
+    async fn acknowledging_a_checkin_does_not_clear_an_unrelated_manual_pause() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "ack-manual-pause-run"}))).await.unwrap();
+
+        app.clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/ack-manual-pause-run/pause").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        let ack = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/ack-manual-pause-run/checkin/acknowledge").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(ack.status(), SC::OK, "acknowledging is idempotent/real even when nothing is actually pending");
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/ack-manual-pause-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(get).await;
+        assert_eq!(body["state"]["paused"], true, "a real manual pause must survive acknowledging an (unrelated, nonexistent) check-in");
+        assert_eq!(body["state"]["pause_reason"], "paused manually");
+    }
+
+    #[tokio::test]
     async fn update_criteria_persists_and_health_reflects_it() {
         let (state, _dir) = test_state();
         let app = api_router(state);
@@ -8232,6 +8353,17 @@ exit 1"#);
 
         app.clone()
             .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "concurrent-run"})))
+            .await
+            .unwrap();
+        // Real interaction found while fixing issue #48: the default criteria
+        // (checkin_every: 5, max_iterations: 20) would fire a real check-in pause
+        // partway through this exact race, correctly 409-ing some of the still-
+        // in-flight concurrent requests -- that's the new fix working as intended,
+        // not a bug, but it's an unrelated concern to what this test actually
+        // proves (write_lock closes the load-then-persist race, not check-in
+        // gating). Generous bounds keep the two concerns decoupled.
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/concurrent-run/criteria", serde_json::json!({"max_iterations": 1000, "max_consecutive_failures": 1000, "checkin_every": 0})))
             .await
             .unwrap();
 
@@ -9202,6 +9334,14 @@ exit 1"#);
     /// purpose is "every real item this run is actually waiting on a human to
     /// decide" -- a genuinely fired, unacknowledged check-in reached the Runs
     /// list badge and the per-run health object, but never this panel.
+    ///
+    /// Updated for issue #48: a fired check-in now actually pauses the run (it
+    /// always should have -- RunOutcome::CheckinDue's own doc comment promised
+    /// it), so the real, single open point for it is now `paused_checkpoint`
+    /// with a real "check-in due -- ..." reason, not a separate `checkin_due`
+    /// entry -- `open_points()` deliberately suppresses that second entry once
+    /// the paused_checkpoint already names the identical real fact (see its own
+    /// doc comment), so a human sees ONE card per real event, not two.
     async fn open_points_surfaces_a_real_pending_checkin_and_acknowledging_it_through_here_clears_it() {
         let (state, _dir) = test_state();
         let app = api_router(state);
@@ -9218,8 +9358,9 @@ exit 1"#);
         let response = app.clone().oneshot(Request::builder().uri("/api/runs/checkin-points-run/open-points").body(Body::empty()).unwrap()).await.unwrap();
         let points = body_json(response).await;
         let points = points.as_array().unwrap();
-        assert_eq!(points.len(), 1, "the fired, unacknowledged check-in is the one real open point");
-        assert_eq!(points[0]["kind"], "checkin_due");
+        assert_eq!(points.len(), 1, "the fired, unacknowledged check-in is the one real open point, not double-counted");
+        assert_eq!(points[0]["kind"], "paused_checkpoint");
+        assert!(points[0]["summary"].as_str().unwrap().starts_with("check-in due"));
 
         let ack = app
             .clone()
@@ -9230,7 +9371,7 @@ exit 1"#);
 
         let response = app.oneshot(Request::builder().uri("/api/runs/checkin-points-run/open-points").body(Body::empty()).unwrap()).await.unwrap();
         let points = body_json(response).await;
-        assert_eq!(points.as_array().unwrap().len(), 0, "acknowledging must clear it from open-points too, the same real signal every other view reflects");
+        assert_eq!(points.as_array().unwrap().len(), 0, "acknowledging must clear it from open-points too (both the pause it now sets AND the derived checkin_pending signal), the same real signal every other view reflects");
     }
 
     #[test]

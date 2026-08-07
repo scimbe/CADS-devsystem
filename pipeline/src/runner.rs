@@ -1226,6 +1226,30 @@ pub fn run_iteration(
         });
         RunOutcome::Abort
     } else if checkin_check {
+        // Real gap found live by a non-technical evaluator, issue #48, 2026-08-07:
+        // `RunOutcome::CheckinDue`'s own doc comment has always promised "the run
+        // must pause here" -- but nothing ever did. `iterate_run` only ever turned
+        // this variant into a string for the JSON response; `state.paused` stayed
+        // `false`. Live-confirmed the real severity: with `checkin_every: 1`, six
+        // iterations submitted back to back each correctly reported
+        // `outcome: "CheckinDue"` and each was accepted and durably recorded anyway
+        // -- a "mandatory" human check-in that never actually stopped anything, in
+        // sharp contrast to the real, hard 409 `ceiling_already_reached` (#46/#47)
+        // already gives the OTHER two `AbortCriteria` fields. One content-free
+        // `POST /checkin/acknowledge` click then retroactively cleared all six
+        // missed boundaries at once, with no durable record of which were actually
+        // reviewed. Reuses the exact same `paused` mechanism `should_abort`'s own
+        // branch above (and `toggle_milestone`) already established -- the next
+        // real iterate call is blocked by code that already exists, not new
+        // enforcement logic, and a genuinely tight cadence (`checkin_every: 1`)
+        // correctly re-pauses after every single subsequent iteration too, exactly
+        // as "mandatory, at least this often" implies.
+        state.paused = true;
+        state.pause_reason = Some(if iteration >= criteria.max_iterations {
+            format!("check-in due -- reached the {}-iteration ceiling", criteria.max_iterations)
+        } else {
+            format!("check-in due -- iteration {iteration} crossed the every-{}-iteration cadence", criteria.checkin_every)
+        });
         RunOutcome::CheckinDue
     } else {
         RunOutcome::Continue
@@ -2034,6 +2058,12 @@ mod tests {
     }
 
     #[test]
+    /// Real evaluator finding, issue #48: `RunOutcome::CheckinDue`'s own doc comment
+    /// has always promised "the run must pause here" -- this test's own name said so
+    /// too -- but until this fix, nothing actually did: `state.paused` stayed `false`
+    /// and a submission right after a fired check-in was accepted and durably
+    /// recorded exactly like any other, unlike `should_abort`'s own real pause a few
+    /// lines above this in the same function.
     fn checkin_cadence_pauses_the_run_without_aborting_it() {
         let mut spec = plan_only_spec("run-x", None);
         let mut state = RunState::new("run-x");
@@ -2041,6 +2071,33 @@ mod tests {
 
         let outcome = run_iteration(&mut spec, &mut state, record(5, true, vec![]), &criteria);
         assert_eq!(outcome, RunOutcome::CheckinDue);
+        assert!(state.paused, "a due check-in must actually pause the run, not just report CheckinDue");
+        assert!(
+            state.pause_reason.as_deref().is_some_and(|r| r.starts_with("check-in due")),
+            "the real reason must be recorded, not left None: {:?}",
+            state.pause_reason
+        );
+    }
+
+    #[test]
+    /// Real evaluator finding, issue #48, the exact live repro: a tight cadence
+    /// (`checkin_every: 1`) must re-pause on every single subsequent submission, not
+    /// just the first -- "mandatory, at least this often" means every boundary, not
+    /// only the earliest one. Live-reported before this fix: six iterations
+    /// submitted back to back with `checkin_every: 1` were all accepted, none paused
+    /// the run.
+    fn checkin_cadence_of_one_pauses_every_single_iteration() {
+        let mut spec = plan_only_spec("run-tight-cadence", None);
+        let mut state = RunState::new("run-tight-cadence");
+        let criteria = AbortCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 1 };
+
+        for i in 1..=3 {
+            state.paused = false; // the real effect of an operator resuming/acknowledging between iterations
+            let outcome = run_iteration(&mut spec, &mut state, record(i, true, vec![]), &criteria);
+            assert_eq!(outcome, RunOutcome::CheckinDue, "iteration {i} of a checkin_every:1 run must be CheckinDue");
+            assert!(state.paused, "iteration {i} must pause the run for real");
+        }
+        assert_eq!(state.history.len(), 3);
     }
 
     #[test]

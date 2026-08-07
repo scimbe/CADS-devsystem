@@ -666,7 +666,7 @@ check "a genuinely later boundary re-flags, not stays silently satisfied by the 
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$checkin_run"
 
 echo
-echo "[47] a fired, unacknowledged check-in must reach Open Points too -- the one endpoint whose entire stated purpose is 'every real item this run is actually waiting on a human to decide' -- and clear from there when acknowledged, the same real signal every other vantage point already reflects (found live 2026-08-07, the same firing right after check [46] shipped, #382 goal doc §8)"
+echo "[47] a fired, unacknowledged check-in must reach Open Points too -- the one endpoint whose entire stated purpose is 'every real item this run is actually waiting on a human to decide' -- and clear from there when acknowledged, the same real signal every other vantage point already reflects (found live 2026-08-07, the same firing right after check [46] shipped, #382 goal doc §8). Updated 2026-08-07 for issue #48: a fired check-in now actually pauses the run too (RunOutcome::CheckinDue's own doc comment always promised this), so the one real open point is now a paused_checkpoint naming the real check-in reason, not a separate checkin_due entry -- and acknowledging must resume the run as well as clear the point, since a cadence check-in is a review checkpoint, not a permanent stop."
 checkin_op_run="${RUN}-checkin-open-points-check"
 curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$checkin_op_run\"}"
 curl -s -o /dev/null -X POST "$BASE/api/runs/$checkin_op_run/criteria" -H 'content-type: application/json' -d '{"max_iterations":20,"max_consecutive_failures":3,"checkin_every":1}'
@@ -677,10 +677,16 @@ curl -s -o /dev/null -X POST "$BASE/api/runs/$checkin_op_run/iterate" -H 'conten
 op_kind=$(curl -s "$BASE/api/runs/$checkin_op_run/open-points" | python3 -c 'import json,sys
 d = json.load(sys.stdin)
 print(d[0]["kind"] if len(d) == 1 else f"WRONG COUNT: {len(d)}")' 2>/dev/null)
-check "the fired, unacknowledged check-in is the one real open point, kind checkin_due" "checkin_due" "$op_kind"
+check "the fired, unacknowledged check-in is the one real open point, kind paused_checkpoint (the run is now actually paused for it)" "paused_checkpoint" "$op_kind"
+blocked_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$checkin_op_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"must be refused while paused","succeeded":true}')
+check "a real check-in pause actually blocks the next submission, not just the display" "409" "$blocked_status"
 curl -s -o /dev/null -X POST "$BASE/api/runs/$checkin_op_run/checkin/acknowledge"
 op_after=$(curl -s "$BASE/api/runs/$checkin_op_run/open-points" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null)
 check "acknowledging through the real endpoint clears it from Open Points too" "0" "$op_after"
+resumed_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$checkin_op_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"accepted after acknowledging","succeeded":true}')
+check "acknowledging a real check-in pause also resumes the run -- the next real submission is accepted, not still blocked" "200" "$resumed_status"
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$checkin_op_run"
 
 echo
