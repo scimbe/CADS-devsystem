@@ -5885,4 +5885,25 @@ state of the run being viewed (`data.state.owner_email`) instead of only the rul
 harness stays clean. Suggestion #1 (populate at creation) was already shipped before this issue was
 filed. Suggestion #2 (backfill/claim-run for the existing 138 runs) remains real, open, larger work.
 
+**Live operator design session, 2026-08-07 (jjj) -- launcher recolored/restaggered, plus a real
+clickability bug found and fixed along the way.** Not a state-check-driven firing -- three direct,
+live operator design asks, handled in turn: the launcher dot recolored from its own one-off green to
+the site's real accent orange (matching every other button); the filter field nudged further right
+along the bottom edge, toward the fan's own outer reach; each bubble ring given a small alternating
+angular offset from its neighbor so rings interlock instead of sharing the identical spoke sequence.
+`CADS-devsystem@8d34e25`, live-verified via Playwright screenshots against the actual deployment (dot
+renders orange, filter has clear clearance from the nearest bubbles, rings visibly offset), full
+100/100 stress harness stays clean.
+
+While capturing docs screenshots of these changes (the very next firing, kkk below), a real, separate,
+pre-existing bug surfaced: `document.elementFromPoint()` at the filter field's own screen center
+returned `#orb-bubbles` (a later-in-DOM, inset:0, fully transparent layer with no `pointer-events`
+override), not the `<input>` itself -- a real mouse click there was silently swallowed regardless of
+the field's position. Confirmed via the same check that this predates today's reposition; the field
+only ever worked through `openOrbLauncher()`'s own auto-focus on open, never by a user clicking back
+into it after clicking away. Fixed with `z-index:1` on the field and its status line -- `#orb-bubbles`'
+own pointer-events, and the deliberate "click empty space closes the launcher" behavior built on them,
+untouched. `CADS-devsystem@4127c6b`, `elementFromPoint()` re-verified clean (correctly returns the
+`<input>` now) against the actual deployment, full 100/100 stress harness stays clean.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
