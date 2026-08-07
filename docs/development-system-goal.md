@@ -4478,4 +4478,26 @@ immediately by checking the file's own content rather than trusting the command,
 pre-mutation backup, no real loss. Rebuilt, redeployed the real fix, reconfirmed 95/95 clean.
 Committed to `CADS-devsystem@c1253b9`. 45 -> 46 checks, 90 -> 95 assertions.
 
+**Main-dev-loop firing, 2026-08-07 (i) -- devsystem.assistant's own action set gains the 21st real
+action, closing the gap the check-in gate itself left behind.** State check: no new operator input
+on any of the four standing decision points, `#13`/`#14`/CI/PRs all unchanged.
+
+The check-in-pending gate shipped two firings ago added a real, direct human action
+(`POST /checkin/acknowledge`) with no matching entry in `devsystem.assistant`'s own `Action` enum --
+the same "cross-check every real actionable GUI control against this enum" discipline this file has
+already applied five times (`ToggleRequirementAutoJudge`, `SetRoleFillMode`, `UpdateCriteria`,
+`SetPaused`, `ProposeDeleteRun`) found the newest instance. Added `Action::AcknowledgeCheckin`,
+given `SetPaused`'s own direct-action treatment (explicit, idempotent, never destructive) rather than
+a proposal gate. System-prompt counts updated in the same commit, continuing this file's own
+established discipline of never letting the action-type count and the kinds-of-data count drift
+apart in separate commits (fourteen direct actions, twenty-one total, still nine kinds of data --
+per-run metadata, no new kind). 1 new dispatch test, the "parses all N action types" test extended to
+21, full 129-test pipeline suite and 53-test `devsystem_assistant` suite green, clippy-clean.
+
+Deployed via `deploy-devsystem-assistant.sh` and live-verified against the real LLM bridge, not just
+hermetic tests: created a real scratch run, crossed its `checkin_every: 1` boundary, asked the actual
+deployed assistant "please acknowledge the check-in for me" -- it correctly emitted the new action on
+its own, confirmed by `checkin_pending` flipping `true` -> `false` afterward via the genuine LLM-
+driven call, not a scripted one. Committed to `CADS-devsystem@a6387ce`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
