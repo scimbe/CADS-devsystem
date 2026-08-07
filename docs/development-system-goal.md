@@ -5637,4 +5637,31 @@ backup (`diff` confirmed byte-identical to `HEAD`), rebuilt, redeployed, reconfi
 `[8]` moves from "written but never proven" to real, mutation-verified proof it has teeth --
 `[9]`-`[35]` remain the honestly-named backlog.
 
+**Main-dev-loop firing, 2026-08-07 (aaa) -- mutation-tested check `[9]`, and a real hermetic-coverage
+gap closed as a side effect.** Third increment of this batch. Investigating check `[9]`'s own
+`fence_wrap` widening defense before mutating it surfaced a real gap: no hermetic `cargo test`
+exercised the specific case a crafted statement embeds a real ` ``` ` run trying to close the
+wrapping fence early -- only the live stress-test script's own check `[9]` ever covered it, and the
+one existing hermetic test in this area has a payload with no embedded backticks, so it structurally
+cannot tell a real widening fence apart from a regressed fixed-3-backtick one.
+
+Added `fence_wrap_widens_past_an_embedded_triple_backtick_run` directly against the pure function
+first (`CADS-devsystem@0134b11`), confirmed it passes against the real implementation. Then backed up
+`pipeline/src/runner.rs`, mutated `fence_wrap` down to a literal fixed-3-backtick fence (the pre-fix
+bug), confirmed the new test fails precisely while the pre-existing containment test stays green --
+real proof the new test closes a gap the old one genuinely couldn't. Rebuilt and redeployed the
+mutated binary, ran the full 100-assertion harness: `99 passed, 1 failed`, precisely check `[9]`.
+Reverted from the real backup (keeping the new test, only reverting the mutation to `fence_wrap`
+itself -- confirmed via `diff` that only the intentional new-test addition remained), rebuilt,
+redeployed, reconfirmed `100 passed, 0 failed`.
+
+`[9]` moves from "written but never proven" to real, mutation-verified proof it has teeth, AND its
+hermetic-coverage blind spot is closed for good, not just proven once live -- `[10]`-`[35]` remain
+the honestly-named backlog.
+
+**Interrupted mid-firing by real, live operator input**: the operator asked to handle CADS-Tunnel
+PR #391 (a CSRF-mismatch retry fix) and a related high-priority issue. Pausing this loop's own
+increment cadence to review that PR for real, per the operator's own direct instruction -- picking
+this loop back up afterward.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
