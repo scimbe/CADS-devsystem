@@ -6018,4 +6018,18 @@ history (issue #38) and two real requirements (#6, #7) already live since firing
 Captured honestly (`CADS-devsystem@8dfba04`) -- no new iteration, no data loss, `checkin_acknowledged_through`
 unchanged.
 
+**Main-dev-loop firing, 2026-08-07 (ooo) -- issues #46/#47's shared "also worth a look" item: the
+iterate response now names the real abort/checkin reason.** State check: `#382`'s three checkpoints
+and `#14` still unanswered; no new issues. Picked the cheap, shared item both issues named: the
+`/iterate` response collapsed consecutive-failures, ceiling, and check-in-cadence into one bare
+outcome string, even though `run_state.pause_reason` has always distinguished them correctly
+server-side -- the GUI's own status line fell back to a generic "too many consecutive failures, or the
+iteration ceiling was reached" regardless of which actually fired.
+
+`POST /iterate` now includes the real `pause_reason` in its response; the GUI's status line uses it
+directly instead of the static ambiguous string. `CADS-devsystem@754f356`. New hermetic test proves
+all three real reasons are distinguishable from one response. 203/203 web tests pass. Live-verified
+against the actual deployment: a ceiling abort and a consecutive-failures abort on two separate real
+runs each report their own distinct reason. Full 100/100 stress harness stays clean.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
