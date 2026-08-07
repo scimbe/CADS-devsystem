@@ -514,6 +514,21 @@ fn no_review_for_succeeded_work(state: &RunState) -> Option<RiskAnnotation> {
 /// anywhere -- this risk still correctly fires for those, and `evidence` below
 /// says so honestly rather than claiming the whole gap is closed.
 ///
+/// **Correction, same day, later firing**: an earlier version of this note (and the
+/// goal doc) framed closing the "auction-cleared" half as needing a change to
+/// CADS-Tunnel's own `convene_with_policy` -- checked, not assumed, and that
+/// framing was wrong. `convene`/`convene_with_policy` are never actually called
+/// anywhere in this repo's real request-handling code at all (confirmed by
+/// grepping every real call site; the only real hits are this crate's own unit
+/// tests and `ct_common`'s). `POST /api/runs/{id}/iterate` has no auction-winner
+/// check of any kind -- any caller can submit real work for any stage regardless
+/// of bidding, by this project's own established "the signature is the
+/// authentication" convention. There is no real "a bid won the auction, now it may
+/// submit work" code path in production to attach a ceiling check to at all --
+/// the honest remaining gap is a genuinely open architectural question (should
+/// `/iterate` ever require proof of winning?), not a smaller cross-repo patch,
+/// and not guessed at here.
+///
 /// `p.stage_id` in the evidence string below is `inline_code_escape`d for the
 /// same reason as `security_keyword_hit`'s own doc comment above -- this is the
 /// exact evidence line whose raw, unescaped `stage_id` first proved the markdown-

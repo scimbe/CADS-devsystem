@@ -4137,4 +4137,28 @@ starts by checking disk space and, if there's real headroom, either building a m
 Android-cmdline-tools image or reusing whatever `mingc/android-build-box`-style image the emulator
 work already established) should build this properly rather than each firing improvising.
 
+**Main-dev-loop firing, 2026-08-07 -- a correction to an earlier firing's own unverified claim, found
+while looking for real infrastructure the pipeline genuinely needs next.** State check: no new
+operator input on any of the three open `#382` checkpoints, no new PRs, issues #13/#14 unchanged,
+disk still at 4.0G free (unchanged from last firing).
+
+The `no_price_ceiling` risk's own real remaining gap, "auction-cleared bids still aren't checked,"
+was earlier framed here as needing a change to CADS-Tunnel's own `convene_with_policy` -- "a
+materially larger, cross-repo increment." Checked that claim for real rather than let it stand
+unverified: grepped every real call site of `.convene(`/`convene_with_policy` across this entire
+repo. The only hits are unit tests -- this crate's own and `ct_common`'s own -- **never** a real
+call from `web/src/main.rs`'s actual request-handling code. `GET /api/runs/{id}/auction` only ever
+calls the read-only `PipelineSpec::auction_view` (a display projection, never a real "clear the
+auction and commit a winner" step), and `POST /api/runs/{id}/iterate` has no auction-winner check of
+any kind at all -- any caller can submit real work for any stage regardless of bidding, by this
+project's own established "the signature is the authentication" convention.
+
+That means the earlier framing was backwards: closing this gap isn't a smaller cross-repo patch
+waiting on CADS-Tunnel, because there is no real "a bid won, now it may submit work" code path in
+production to attach a ceiling check to *at all*. The honest remaining gap is a genuinely open
+architectural question -- should `/iterate` ever require proof of winning an auction, a real behavior
+change to who's allowed to do what -- not a scoped implementation task, and not guessed at here.
+Corrected the record in `preflight.rs`'s own doc comment (this same commit) rather than leave the
+inaccurate "needs a CADS-Tunnel change" claim standing for a future firing to inherit and act on.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
