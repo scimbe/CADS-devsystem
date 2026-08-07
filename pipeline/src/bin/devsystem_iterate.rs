@@ -74,6 +74,18 @@ fn run_local(run_id: &str, record_path: &str) -> std::process::ExitCode {
         eprintln!("rejected: run is paused -- resume it first (devsystem-web POST /api/runs/{{id}}/resume, or clear state.paused directly) before submitting another local iteration");
         return std::process::ExitCode::FAILURE;
     }
+    // Real gap found live by a non-technical evaluator, issue #46: same "two real
+    // entry points, one bug class" shape as the `paused` check just above --
+    // devsystem-web's own equivalent check (POST /api/runs/{id}/iterate) refuses a
+    // submission that would exceed max_iterations/max_consecutive_failures even
+    // after `paused` was cleared by a resume, since `paused` alone was never a real
+    // bound (Resume clears it without re-checking whether the ceiling is still
+    // true). This local path had no equivalent -- see
+    // `ceiling_already_reached`'s own doc comment for the full story.
+    if let Some(reason) = devsystem_pipeline::runner::ceiling_already_reached(&state, &state.criteria) {
+        eprintln!("rejected: {reason}");
+        return std::process::ExitCode::FAILURE;
+    }
 
     // Real gap found live by the incompetent-agent stress test's twelfth run (#382
     // goal doc §8, 2026-08-06): this local path calls run_iteration directly, with

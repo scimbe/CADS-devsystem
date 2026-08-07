@@ -1151,6 +1151,15 @@ async fn iterate_run(
     if run_state.paused {
         return (StatusCode::CONFLICT, "run is paused -- resume it first (POST /api/runs/{id}/resume)").into_response();
     }
+    // Real gap found live by a non-technical evaluator, issue #46: `paused` alone
+    // isn't a real bound -- `POST /resume` clears it without re-checking whether the
+    // ceiling that caused the pause is still true, so a submission right after
+    // Resume was accepted and recorded past max_iterations/max_consecutive_failures
+    // every time, one Resume click at a time. Checked independently of `paused` so
+    // it refuses regardless of how `paused` got cleared.
+    if let Some(reason) = devsystem_pipeline::runner::ceiling_already_reached(&run_state, &run_state.criteria) {
+        return (StatusCode::CONFLICT, reason).into_response();
+    }
     // DAU-lens gap found live 2026-08-06 (#382 goal doc §8), same lens and shape as the
     // add_requirement/validate_proposals fixes: this used to `find` and reject on the
     // FIRST out-of-range index in the batch only. `requirement_indices` is a real batch

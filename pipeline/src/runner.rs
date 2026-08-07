@@ -1007,6 +1007,45 @@ pub fn validate_requirement_indices(state: &RunState, indices: &[usize]) -> Resu
     }
 }
 
+/// Real gap found live by a non-technical evaluator, issue #46, 2026-08-07: `paused`
+/// (checked at the top of `web/src/main.rs`'s `iterate_run`) is the ONLY gate a
+/// submission has to clear -- and `POST /resume` unconditionally clears it without
+/// re-checking whether the condition that caused the pause is still true. Reaching
+/// `max_iterations` correctly pauses the run and correctly refuses the very next
+/// submission (`paused` is still `true`) -- but the moment a human clicks Resume,
+/// `paused` flips back to `false` with the ceiling never having moved, and the
+/// following submission is accepted and durably recorded, `history.len()` now one
+/// past the declared bound. Repeat: Resume, submit, re-pause, Resume, submit... a
+/// stated "bounded super loop" (this project's own repeated architectural claim,
+/// #382 goal doc's own governing principle) was not actually bounded at the one
+/// place that matters. Reported live: `iterations: 2 / 1` in the real Health panel.
+///
+/// This is independent of `paused` on purpose -- checked directly against the run's
+/// own current history/failure count and the criteria that (still) apply, so it
+/// refuses regardless of how `paused` got cleared, not just the specific Resume path
+/// that surfaced it. `Resume` remains the correct action for every OTHER pause
+/// reason (a milestone, a manual pause) where the underlying condition genuinely
+/// isn't still true the moment the run resumes.
+pub fn ceiling_already_reached(state: &RunState, criteria: &AbortCriteria) -> Option<String> {
+    if state.consecutive_failures >= criteria.max_consecutive_failures {
+        Some(format!(
+            "already at {} consecutive failed iteration(s), at or past the configured limit of {} -- \
+             raise max_consecutive_failures for this run, or a real, succeeded iteration is needed \
+             to reset the streak before another can be accepted",
+            state.consecutive_failures, criteria.max_consecutive_failures
+        ))
+    } else if state.history.len() as u32 >= criteria.max_iterations {
+        Some(format!(
+            "already at {} of {} max iterations -- raise max_iterations for this run, or close it out; \
+             resuming a run that already reached its ceiling does not raise the ceiling",
+            state.history.len(),
+            criteria.max_iterations
+        ))
+    } else {
+        None
+    }
+}
+
 /// A fourth gap of the identical "two real entry points, one bug class" shape (#382
 /// goal doc §8, 2026-08-06), deliberately deferred out of the `paused`-check fix
 /// (firing ttt) rather than bundled in, since it protects a different and less severe
@@ -2094,6 +2133,66 @@ mod tests {
         assert_eq!(run_iteration(&mut spec, &mut state, record(2, true, vec![]), &criteria), RunOutcome::Abort);
         assert!(state.paused, "reaching max_iterations must actually pause the run, not just report Abort");
         assert_eq!(state.pause_reason.as_deref(), Some("reached the 2-iteration limit"));
+    }
+
+    #[test]
+    /// Real evaluator finding, issue #46: reproduces the exact live repro -- reach the
+    /// ceiling, resume (the one real action `POST /resume` performs: clear `paused`,
+    /// nothing else), and confirm the run is STILL refused. Before this fix,
+    /// `run_iteration` itself had no opinion here -- only the HTTP handler's now-cleared
+    /// `paused` flag stood in the way, so this exact sequence let iteration 2 through
+    /// against `max_iterations: 1`.
+    fn ceiling_already_reached_still_refuses_after_paused_is_cleared_by_resume() {
+        let mut spec = plan_only_spec("run-resume-ceiling", None);
+        let mut state = RunState::new("run-resume-ceiling");
+        let criteria = AbortCriteria { max_iterations: 1, max_consecutive_failures: 3, checkin_every: 0 };
+
+        assert!(ceiling_already_reached(&state, &criteria).is_none(), "a fresh run has real headroom");
+        assert_eq!(run_iteration(&mut spec, &mut state, record(1, true, vec![]), &criteria), RunOutcome::Abort);
+        assert!(state.paused);
+
+        // The one real effect `POST /api/runs/{id}/resume` has: clear `paused`. It does
+        // NOT raise the ceiling -- state.history/state.criteria are untouched.
+        state.paused = false;
+
+        let reason = ceiling_already_reached(&state, &criteria);
+        assert!(
+            reason.is_some(),
+            "a run already at its max_iterations ceiling must still be refused after paused is cleared, \
+             not just while paused was true"
+        );
+        assert!(reason.unwrap().contains("1 of 1"), "the refusal must name the real, current count");
+    }
+
+    #[test]
+    /// Sibling case, issue #46/#47: the same real gap for max_consecutive_failures,
+    /// which `should_abort`/`run_iteration` treat identically to the iteration ceiling
+    /// but which resume clears exactly the same way.
+    fn ceiling_already_reached_also_refuses_on_consecutive_failures_after_resume() {
+        let mut spec = plan_only_spec("run-resume-failures", None);
+        let mut state = RunState::new("run-resume-failures");
+        let criteria = AbortCriteria { max_iterations: 20, max_consecutive_failures: 1, checkin_every: 0 };
+
+        assert_eq!(run_iteration(&mut spec, &mut state, record(1, false, vec![]), &criteria), RunOutcome::Abort);
+        assert!(state.paused);
+        assert_eq!(state.consecutive_failures, 1);
+
+        state.paused = false;
+
+        let reason = ceiling_already_reached(&state, &criteria);
+        assert!(reason.is_some(), "a run already past max_consecutive_failures must still be refused after resume");
+        assert!(reason.unwrap().contains("consecutive failed"));
+    }
+
+    #[test]
+    /// A run mid-way through its budget (not yet at either bound) must not be refused --
+    /// this gate is the ceiling itself, not a blanket block on every submission.
+    fn ceiling_already_reached_allows_a_run_with_real_headroom_left() {
+        let mut state = RunState::new("run-headroom");
+        state.history.push(record(1, true, vec![]));
+        state.consecutive_failures = 1;
+        let criteria = AbortCriteria { max_iterations: 5, max_consecutive_failures: 3, checkin_every: 0 };
+        assert!(ceiling_already_reached(&state, &criteria).is_none());
     }
 
     #[test]
