@@ -106,27 +106,8 @@
     },
     {
       "run_id": "webconference-android",
-      "stage": "devsystem.improve",
-      "iteration": 8,
-      "feedback": "Real groundwork for the incompetent-agent stress test (goal doc §8): the just-shipped mandatory review gate (toggle_requirement, gap #2) only has teeth on a run that actually declares devsystem.review as a role -- this run never has. Adding it now, forward-looking only: this run currently has zero declared Requirement objects (checked directly, not assumed), so this cannot retroactively block anything already in progress -- it only means any future requirement added to this run cannot be marked verified without a real, successful devsystem.review iteration naming it first.",
-      "proposals": [
-        {
-          "proposed_by": "devsystem.improve",
-          "stage_id": "devsystem.review",
-          "tag": "review",
-          "rationale": "Makes the goal doc real mandatory quality gate load-bearing on this actual project, not just hermetic tests -- a real prerequisite for the incompetent-agent stress test to have any teeth against this run.",
-          "use_existing_service": null,
-          "units": 1,
-          "price_ceiling": null
-        }
-      ],
-      "succeeded": true,
-      "requirement_indices": []
-    },
-    {
-      "run_id": "webconference-android",
       "stage": "devsystem.android_native_bridge",
-      "iteration": 10,
+      "iteration": 9,
       "feedback": "Real bounded increment: found and fixed a real gap in MainActivity.onConnectClicked -- tapping Connect with the peer public key or address field blank went straight to a real native dialChannelDirect() FFI call, surfacing whatever error message the Rust side happened to produce for malformed input. Now validated locally first, before any native call and before the identity-readiness check, with a clear, actionable message (a real DAU-lens fix, goal doc #382). New Robolectric test proves the native call path is genuinely never reached for this case (the connect button staying enabled is the real evidence, not just a matching error string). 12/12 app unit tests + assembleDebug green, real Docker build against the cached Android SDK. CADS-webconference-android@32be6bf.",
       "proposals": [],
       "succeeded": true,
@@ -135,7 +116,7 @@
     {
       "run_id": "webconference-android",
       "stage": "devsystem.android_native_bridge",
-      "iteration": 11,
+      "iteration": 10,
       "feedback": "Real bounded increment: found and fixed a real gap in MainActivity.onSendClicked -- tapping Send with an empty or whitespace-only message silently did nothing (no feedback), and .isEmpty() alone never caught whitespace-only input, so a single-space message would actually have been sent as real content. Now caught explicitly before the session-readiness guard, with a real status message and focus kept on the input for retry. This genuinely closes the exact requirement written during the incompetent-agent stress test scratch work on CADS-devsystem (stress-incompetent-agent test run): the app now actually behaves per that requirement, not just an aspirational spec sitting in a test run. New Robolectric test proves no message renders on a no-op tap, focus is retained, and whitespace-only input is caught the same way as truly-empty input. 6/6 app unit tests + assembleDebug green, real Docker build against the cached Android SDK. CADS-webconference-android@78b4f84.",
       "proposals": [],
       "succeeded": true,
@@ -144,7 +125,7 @@
     {
       "run_id": "webconference-android",
       "stage": "devsystem.review",
-      "iteration": 12,
+      "iteration": 11,
       "feedback": "Reviewed the real M1 delivery in MainActivity.kt and MessageStore.kt against this run own declared milestone. Connect/send/receive flow is correct: onConnectClicked and onSendClicked both validate real user input (blank peer fields, blank/whitespace-only message body) before any native FFI call, matching the DAU-lens fixes already shipped. Session-loss recovery via resetForNewConnection genuinely clears the dead session and re-enables both connect controls, so a peer disconnect no longer permanently wedges the app. Persistence is real: MessageStore uses CONFLICT_REPLACE on msg_id, correctly deduplicating an at-least-once redelivered message instead of crashing, and loadAll orders by timestamp ascending, matching the threads own append order. One real, non-blocking observation for a future iteration: MessageStore never explicitly closes its SQLiteDatabase handle (no close() call anywhere, e.g. before a future export/backup feature) -- low risk today since Android reclaims it on process death, but worth a real look before this store grows beyond one table.",
       "proposals": [],
       "succeeded": true,
@@ -153,7 +134,7 @@
     {
       "run_id": "webconference-android",
       "stage": "devsystem.improve",
-      "iteration": 13,
+      "iteration": 12,
       "feedback": "Real self-optimization step, not a code change: read channel.rs and message.rs in full (native-bridge crate) as a genuine follow-up to iteration 12 own review, since touches auth/security correctly flagged this run again. Both modules are solid -- impostor-key handshake rejection is real and tested (dialing_with_the_wrong_peer_public_key_fails_the_handshake), the deadlock labor-setup.com found is genuinely fixed with a real regression test, every FFI decode path is panic-free with typed errors, and the private key is zeroized on drop, never crossing the FFI boundary as a value. One honest, non-blocking observation: TextMessage sender_pubkey is self-reported by the sender at compose time, not derived from the authenticated Noise session -- currently harmless since MainActivity never reads it back for any real decision (direction alone drives rendering), but worth remembering if a later increment ever trusts it for something real. The actual next real gap is exactly what both modules own doc comments already name honestly: broker-mediated discovery. Direct-address-only means both devices still have to manually exchange public key and IP out of band before this app is useful beyond a LAN test -- recorded as a real backlog item rather than guessed at or half-built speculatively, since it needs ct-agent channel join against the real CADS-Tunnel broker (SignedChannelGrant, rendezvous, NAT traversal, relay fallback), a genuinely separate, larger increment living in a different crate entirely.",
       "proposals": [],
       "succeeded": true,
@@ -162,7 +143,7 @@
     {
       "run_id": "webconference-android",
       "stage": "devsystem.improve",
-      "iteration": 14,
+      "iteration": 13,
       "feedback": "Real self-optimization step, not a code change to this repo: closing three of this run own real, live-flagged 'no price ceiling set' risks (devsystem.document_extraction, devsystem.android_emulator_test, devsystem.review) using the pipeline own real, already-tested fix mechanism -- re-proposing each already-live role with the identical stage_id/tag it already has, this time with a real price_ceiling. apply_proposal correctly treats this as updating the already-approved role (AlreadyPresent), not a duplicate, and price_ceiling_for's own \"latest real proposal wins\" fix (closed earlier today) makes the new bound the one preflight actually reads. Picked 2000 units for all three, matching this project own documented tutorial convention (submit-an-iteration.md), since none of the three had any prior real ceiling anywhere in this run own history to match instead. This does not need an operator decision -- adding a spending cap where none existed is the strictly conservative direction, never removes a real permission.",
       "proposals": [
         {
@@ -199,12 +180,71 @@
     {
       "run_id": "webconference-android",
       "stage": "devsystem.review",
-      "iteration": 15,
+      "iteration": 14,
       "feedback": "Real devsystem.review iteration addressing requirement 0 (M2, broker-mediated channel discovery) -- the first review this run own mandatory review gate has ever actually had to evaluate against a real requirement, since none existed until iteration 15. Read native-bridge/src/channel.rs own module doc comment and docs/channel-join-options.md in full before writing this, not from memory. Honest finding: acceptance criteria are NOT met yet. What exists today is Option 2 from channel-join-options.md -- a real, hermetically-tested, cross-compiled Noise_IK direct peer-to-peer session (ct_common::a2a, genuine AEAD-authenticated handshake, real encrypted TextMessage exchange) -- but it requires a peers Noise public key and reachable host:port already known out of band (manually entered), exactly the M1 mechanism this requirement is meant to replace. Option 1 (the real thing: SignedChannelGrant presented to ct_edge::channel_broker, rendezvous, NAT traversal, :443 relay fallback) is explicitly NOT implemented here -- it lives in the separate ct-agent repo (native/src/channel.rs + channel_run.rs, ~8.5k lines) and reaching it needs either a real dependency on ct-agent channel.rs (the broker-client half, no ct_edge needed at runtime per that crates own tests) or a substantial extraction from channel_run.rs own CLI-process-shaped orchestration -- correctly scoped in channel-join-options.md as a separate, larger increment, not force-fit into what shipped for M1. None of this requirement three acceptance criteria (fresh-install broker discovery works, direct-address fallback stays available, an honest failure message on discovery failure) are met by code that does not exist yet. Do not mark this requirement verified -- this review exists to honestly confirm the gap, not rubber-stamp it. Real next step: adopt option 1 from channel-join-options.md as its own bounded increment.",
       "proposals": [],
       "succeeded": true,
       "requirement_indices": [
         0
+      ]
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.plan",
+      "iteration": 15,
+      "feedback": "Real devsystem.plan iteration, submitted after winning this run's plan role in the live auction (offer d173ccf6 @ 4, policy LowestFloor).\n\nFINDING (spec-level gap, not a backlog item): requirement #5 -- a downloadable, commit-traceable, signed release APK -- cannot be satisfied by ANY role currently in this run's spec. The live role set is devsystem.plan, devsystem.android_native_bridge, devsystem.document_extraction, devsystem.android_emulator_test, devsystem.review. android_native_bridge writes app code; android_emulator_test exercises an already-installed app; review evaluates submitted work; document_extraction reads documents. None of them owns producing, signing, checksumming and publishing a build artifact. So #5's five acceptance criteria (APK downloadable from this run's own UI; build metadata identifying the exact CADS-webconference-demo commit SHA + versionName/versionCode; SHA-256 recorded next to the artifact; signed and installable via adb install on a clean emulator; honest failure state when the build fails) have no owner and will stay 0/5 no matter how many iterations the existing roles submit. It also blocks requirement #1 in practice: an automated emulator test needs an installable artifact before it can install anything.\n\nPLAN (bounded, in dependency order):\n1. Add stage devsystem.android_native_build_ci to this run's spec -- proposed with this iteration. Scope: Gradle assembleRelease of CADS-webconference-demo at a pinned commit, produce a signed APK, emit build metadata plus a SHA-256, and publish the artifact so it is downloadable from this run's UI.\n2. First increment of that stage covers #5 criteria 1-3 (artifact exists and is downloadable; full commit SHA + versionName/versionCode recorded; SHA-256 recorded next to it). These are verifiable from build output alone and need no device, so they can land before any emulator work.\n3. Second increment covers #5 criteria 4-5 (signing key recorded in the run; adb install succeeds on a clean emulator with no manual signing step; a failed build surfaces an honest failure state and is not marked succeeded). Handing that artifact to devsystem.android_emulator_test is what unblocks requirement #1's three emulator tests.\n4. Ordering constraint for this run: no iteration should be marked succeeded against #5 until the artifact and its checksum are actually retrievable from this UI.\n\nSCOPE OF THIS ITERATION: planning only. It satisfies NONE of requirement #5's acceptance criteria (still 0/5) and produces no APK. succeeded:true here means the planning work itself was completed and the missing stage was identified and proposed -- it does not mean #5 is met.",
+      "proposals": [
+        {
+          "proposed_by": "devsystem.plan",
+          "stage_id": "devsystem.android_native_build_ci",
+          "tag": "android_native_build_ci",
+          "rationale": "Requirement #5 asks for a downloadable, commit-traceable, signed release APK, but no role in this run's current spec owns producing one. android_native_bridge writes app code, android_emulator_test exercises an already-installed app, review evaluates submitted work, document_extraction reads documents -- none of them builds, signs, checksums or publishes an artifact. Without this stage, #5 stays 0/5 permanently and requirement #1's emulator tests have nothing to install. Scope: Gradle assembleRelease of CADS-webconference-demo at a pinned commit, signed APK, build metadata recording the full source commit SHA plus versionName/versionCode, a SHA-256 next to the artifact, and the artifact downloadable from this run's UI; an honest failure state when the build fails.",
+          "use_existing_service": null,
+          "units": 1,
+          "price_ceiling": 10
+        }
+      ],
+      "succeeded": true,
+      "requirement_indices": [
+        5
+      ]
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_native_build_ci",
+      "iteration": 16,
+      "feedback": "Real devsystem.android_native_build_ci iteration, submitted after winning this run's build role in the live auction (offer 41938927 @ 6, units 1, policy LowestFloor, undercutting the standing a12b0ee7 @ 8). This role was created by iteration 16's proposal and had sat stalled with no bidder; it now has one.\n\nSCOPE ATTEMPTED: iteration 16's step 2 -- requirement #5 criteria 1-3 (artifact exists and is downloadable from this run's UI; full source commit SHA plus versionName/versionCode recorded as build metadata; SHA-256 recorded next to the artifact), chosen because they are verifiable from build output alone and need no device.\n\nWHAT IS REAL AND DONE: the build is pinned to a concrete source commit, read from this run's own Code panel (repo_url https://github.com/scimbe/CADS-webconference-android): head commit ce4aa2c \"app: close MessageStore's real SQLiteDatabase handle in onDestroy\", scimbe, 2026-08-07. That is the commit any first build of this role should target.\n\nHARD BLOCKER (verified, not assumed): this pipeline has nowhere to put a build artifact, so criteria 1-3 are not merely undone, they are structurally unsatisfiable today. Evidence:\n- An iteration record in this run has exactly seven fields: feedback, iteration, proposals, requirement_indices, run_id, stage, succeeded. Verified as the union of keys across all 16 existing iterations via this site's own GET /api/runs/webconference-android (state.history). There is no artifact, file, url, checksum or build-metadata field.\n- The run state itself (state.*) has no artifacts collection either.\n- The control panel client contains zero occurrences of \"artifact\", \"apk\", \"checksum\" or \"sha256\". The only upload surface in the entire app is the Docs Search (RAG) document ingest, which is a text index for retrieval, not a per-run binary artifact store with a download control.\n\nConsequence per acceptance criterion of #5:\n- c1 (concrete APK file, downloadable from this run's own UI): unsatisfiable -- no artifact record and no download surface exist.\n- c2 (build metadata identifying the exact source commit SHA and versionName/versionCode): expressible only as prose inside this feedback field, i.e. exactly the \"trust the iteration text\" that #5 was written to eliminate. Not machine-checkable, so I am not claiming it as met.\n- c3 (SHA-256 recorded next to the artifact): \"next to the artifact\" cannot exist while there is no artifact record.\n- c4 (signed APK, adb install on a clean emulator): blocked downstream of c1 -- devsystem.android_emulator_test has nothing to fetch and install.\n- c5 (honest failure state when no APK can be produced, and not marked succeeded): this iteration is that path, exercised for real.\n\nRequirement #5 stays 0/5. succeeded is deliberately FALSE: no APK was produced, and #5's own criterion 5 says an iteration that cannot produce one must surface an honest failure state and must not be marked succeeded. This is that honest failure, not a rubber stamp, and it intentionally consumes one of this run's 3 consecutive-failure budget rather than misreporting the state.\n\nSEPARATE INCONSISTENCY worth reconciling by whoever owns #5: requirement #5's text names the \"CADS-webconference-demo\" source commit, but this run's repo_url points at CADS-webconference-android. Two different repository names for the same traceability claim -- one of them is wrong and a reviewer cannot tell which.\n\nUNBLOCK CONDITION for this role (what the platform must add before any build-CI iteration can honestly claim #5): an artifact record attached to a run/iteration carrying at minimum the file or a retrievable URL, its sha256, the full source commit SHA, versionName/versionCode and the signing-key identity, plus a download control in the run UI. Until that exists this role can pin commits and define the build, but it cannot deliver its actual product. Filed as a platform gap rather than worked around, because working around it would mean pasting an unverifiable checksum into prose and calling #5 met.",
+      "proposals": [],
+      "succeeded": false,
+      "requirement_indices": [
+        5
+      ]
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.review",
+      "iteration": 17,
+      "feedback": "Real devsystem.review iteration, submitted after winning this run's review role in the live auction (offer ad6ac446 @ 4, units 1, policy LowestFloor, undercutting the standing 10480f3b @ 5). Scope deliberately chosen as the four requirements with zero coverage that are NOT the known-blocked APK requirement: #1, #2, #3, #4. Sources: only this run's own Requirements, History, Roles and Code panels plus the public docs site. No assistant used.\n\nBASELINE, read off this run's own Requirements panel: #0 addressed by iteration 15, #5 by iterations 16 and 17, and #1/#2/#3/#4 all read \"not yet addressed by any iteration\". Across all six requirements, 0 of 23 acceptance criteria are confirmed after 17 iterations.\n\nFINDING 1 -- #1 is already contradicted by this run's own history, and is unenforceable as written. #1 says an iteration submitted for requirement 0 SHALL be validated by an automated Android emulator test before that iteration can be marked succeeded. Iteration 15 IS an iteration submitted for requirement 0 and it IS marked succeeded (ok), while devsystem.android_emulator_test has 0 iterations and no such test exists. Either the gate is already broken, or \"succeeded\" does not mean what #1 assumes -- and it does not: on this platform succeeded records whether the iteration's own work was completed, not whether the requirement is met. Iteration 15 is exactly that case, an honest review that succeeded at reporting requirement 0 is NOT met. #1 conflates the two, so no implementation can satisfy it without redefining succeeded for every stage in the run. Recommend #1 be rewritten to gate requirement 0's VERIFICATION (confirmation of its acceptance criteria) on the emulator test, rather than gating any iteration's succeeded flag. Not fixed here: rewriting a requirement is devsystem.plan's job, not review's.\n\nFINDING 2 -- #2 and #3 restate each other's criteria but assume two different, mutually exclusive architectures. Both demand end-to-end encryption of a 1:1 message under a per-session key no intermediary can derive; #2 c1/c2 and #3 c1/c2/c3 are near-restatements of one another. Their system models differ, though: #2 is written against the CADS-Tunnel broker plus :443-relay topology, where the intermediary only forwards (\"neither the broker nor any relay hop can read or tamper\"), while #3 c3/c4 assume a backend that STORES ciphertext and QUEUES a message for an offline recipient (\"the server stores ciphertext only\", \"does not require the recipient to be online\"). The path shipped today is direct peer-to-peer with no store-and-forward at all, so #3 c4 cannot be met by it even in principle, and nothing anywhere in this run records which of the two architectures was chosen. A reviewer therefore cannot verify either requirement, no matter what gets implemented. Recommend: decide store-and-forward yes/no first, then either merge #2 and #3 into one encryption requirement plus a separate offline-delivery requirement, or explicitly scope #2 to the transport hop and #3 to queued/at-rest state.\n\nFINDING 3 -- #3 may already be partly satisfied by shipped code that no iteration has ever claimed. Iteration 15 reports a real, hermetically tested Noise_IK direct peer-to-peer session in native-bridge (ct_common::a2a, genuine AEAD-authenticated handshake, real encrypted TextMessage exchange). If that report is accurate, #3's criteria 1-3 are plausibly already substantially met for the direct-address path, yet #3 shows 0/4 and \"not yet addressed by any iteration\" purely because nobody ever claimed it. I am deliberately NOT confirming those criteria: I did not read that code myself in this iteration, and a review must not verify a requirement from another iteration's prose. Flagged so the next devsystem.android_native_bridge iteration claims #3 explicitly instead of leaving real work invisible to this run's own coverage.\n\nFINDING 4 -- #4 is the only sensible next implementation target. Of the uncovered requirements, #1 needs a rewrite (finding 1), #2 and #3 need an architecture decision first (finding 2), and #5 is blocked by this platform having no artifact channel at all. #4 (real per-message sent/delivered/read status, an honest error state on failure, live updates without manual refresh) depends on none of those: it is app-local UI over the existing message path, and all 5 of its criteria are checkable on one device pair without downloading any artifact. Recommend it as the next bounded increment.\n\nVERDICT: none of #1, #2, #3, #4 is met, 0 of their acceptance criteria are confirmed, and none of them should be marked verified on the strength of this iteration. succeeded=true refers to this review's own work being complete, not to the requirements being satisfied.",
+      "proposals": [],
+      "succeeded": true,
+      "requirement_indices": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.plan",
+      "iteration": 18,
+      "feedback": "Real devsystem.plan iteration, submitted after winning this run's plan role in the live auction (offer 86c97ba3 @ 4, units 1, policy LowestFloor, undercutting the standing a9e627a9 @ 5). Sources: this run's own Requirements/History/Backlog/Milestones/Roles/Health panels, GET /api/runs/webconference-android, this control panel's own client source, and the public docs site's REST API reference. No assistant used.\n\nTASKING: iteration 18 (devsystem.review) handed devsystem.plan two jobs -- (a) rewrite requirement #1 so it gates requirement #0's VERIFICATION rather than any iteration's succeeded flag, and (b) decide the store-and-forward question that makes #2 and #3 mutually exclusive. (a) turns out to be impossible on this platform. (b) is decided below.\n\nFINDING 1 -- (a) CANNOT BE DONE: a requirement is immutable once created. There is no edit path and no delete path for a requirement, or for one of its acceptance criteria, anywhere in this system. Verified three independent ways, not assumed:\n- This control panel's Requirements panel renders exactly three interactive controls per requirement -- requirement-toggle (the overall verified flag), criterion-toggle (per acceptance criterion) and requirement-auto-judge-toggle -- plus a read-only \"decision basis\" disclosure. Its only other control is the \"Add requirement\" form. renderRequirementsPanel has no edit or remove branch at all.\n- devsystem.assistant is not a workaround: the only requirement verbs in its action vocabulary as used by this client are ToggleRequirement and ToggleAcceptanceCriterion. It has the same two toggles and nothing else.\n- The published REST API reference lists the complete requirement surface as POST /requirements (add), POST /requirements/{i}/toggle, POST /requirements/{i}/auto-judge/toggle, POST /requirements/{i}/criteria/{ci}/toggle and GET /requirements/export. There is no PATCH, PUT or DELETE.\nThis is an asymmetry rather than a deliberate immutability guarantee: this same platform lets you edit AND remove a custom panel, update AND remove a next-step draft, remove an indexed RAG document, and DELETE an entire run. A requirement -- the one object the mandatory review gate actually keys on, and what the coverage and N/M-confirmed counters score -- is the only load-bearing thing here that can never be corrected.\n\nWHY I AM DELIBERATELY NOT \"FIXING\" #1 BY APPENDING A CORRECTED COPY: iteration 18 finding 1 is right and I confirm it -- on this platform succeeded records whether an iteration's own work completed, not whether a requirement is met, and iteration 15 is exactly that case (an honest review that succeeded at reporting requirement 0 is NOT met). So #1 is unsatisfiable as written. But appending a corrected requirement #6 would leave the broken #1 in the set permanently, permanently at 0/3, permanently unverifiable, still counted by coverage -- trading one wrong requirement for one wrong requirement plus a near-duplicate beside it, and guaranteeing this requirement set can never reach a fully-verified state. That is a worse spec than the one I started with. Whether to carry #1 as a known-dead entry or recreate the run (losing all 19 iterations of real history) is the operator's call, not mine to make silently. Recorded here so the decision is visible and traceable instead of worked around. Filed as scimbe/CADS-devsystem#37.\n\nFINDING 2 -- (b) DECIDED: this run assumes a forwarding-only topology with NO ciphertext-storing backend. The decision is forced by what exists in this run, not by preference:\n- The role set (plan, android_native_bridge, document_extraction, android_emulator_test, review, android_native_build_ci) contains no backend or server role. Nobody in this run owns a service that could hold a mailbox.\n- repo_url is https://github.com/scimbe/CADS-webconference-android -- a client repo. There is no server repo in this run.\n- Milestone M1 (achieved) is a direct CADS-Tunnel Noise_IK channel with history persisted LOCALLY. Milestone M2 -- the operator's own named next goal -- is ct-agent channel join, SignedChannelGrant, rendezvous, NAT traversal, :443 relay fallback. Every one of those is connection establishment or forwarding; none of them stores a message.\n- Requirement #0 names that same mechanism, and #2 is written against that same topology (\"neither the CADS-Tunnel broker nor any :443 relay hop can read or tamper\").\n- The backlog's open discovery item describes the broker as something a client JOINS to reach a peer, living in ct-agent/ct_edge -- not a message store.\nDECISION OF RECORD FOR THIS RUN: forward-only, no store-and-forward. Messages transit; nothing queues them. #2 is this run's real encryption requirement.\n\nCONSEQUENCE FOR #3, stated plainly because it is not recoverable: #3 c1 and c2 (on-device encryption before transmission; a fresh per-conversation session key via authenticated key exchange) describe the same property #2 c2 does and are satisfiable by the shipped Noise_IK mechanism -- iteration 18 finding 3 is right that these may already be substantially met on the direct-address path and were simply never claimed. #3 c3 (\"the server stores ciphertext only\") can only ever be vacuously true: there is no server, and a reviewer cannot confirm a property of a component that does not exist. #3 c4 (\"does not require the recipient to be online; a queued message is encrypted before upload\") is UNSATISFIABLE under this decision, by construction and permanently -- and per finding 1 it cannot be edited out. #3 can therefore never reach 4/4. Note also that #3 reads in a different vocabulary from the rest of this run -- \"participant\", \"the server\", \"upload\", \"backend\", where #0 and #2 say \"Android client\", \"broker\", \"relay hop\". It looks like a generic messenger requirement imported from a different system model, and that mismatch is the actual root of the #2/#3 conflict iteration 18 found.\n\nESCALATED TO THE OPERATOR, NOT DECIDED HERE: whether CADS-webconference should EVER support offline delivery is a product decision, not an architecture one, and it is bigger than this run. What I decided above is only this run's scope, forced by what exists in it. If the product answer is yes, it needs a new backend service, its own repo and a new role in this spec, and #3 would have to be recreated rather than amended -- which finding 1 makes messy. I do not have the standing to decide the product; I do have the evidence that this run as specified cannot deliver it.\n\nBUDGET, because no iteration so far has factored it in: health reports iterations_completed 18 of max_iterations 20, iterations_until_ceiling 2, iterations_until_checkin 2 (the Health & Criteria panel does flag this in its danger state -- this is not a reporting gap, it is a planning fact nobody has acted on). This iteration is 19, so exactly one slot remains and it coincides with the mandatory check-in at 20. Across all six requirements, 0 of 23 acceptance criteria are confirmed. Stated bluntly: this run will hit its ceiling with nothing verified -- #5 blocked by this platform having no artifact channel at all (#36), #0 and #1 needing the whole M2 broker increment plus an emulator harness, #1 additionally dead per finding 1, and #3 permanently uncloseable per finding 2. Raising max_iterations on the Health & Criteria panel is a real, available operator action and is the prerequisite for any further real work here.\n\nSCOPE OF THIS ITERATION: planning and decision only. It satisfies NO acceptance criteria of #1, #2 or #3 and produces no code. succeeded:true means this planning work itself was completed -- the requested rewrite was proven impossible with evidence rather than silently skipped, the store-and-forward question was decided for this run's scope with the product question escalated, and the run's remaining budget was surfaced. It does NOT mean any of these requirements is met, and none of them should be marked verified on the strength of this iteration.\n\nRECOMMENDED NEXT, for the single remaining slot: iteration 18 named #4 (real per-message sent/delivered/read status, honest error state, live updates) as the only requirement blocked by neither the artifact gap nor the architecture question. That is still correct, and after finding 2 it is now also the only requirement whose criteria one devsystem.android_native_bridge increment could actually close. If the operator raises the ceiling, take #4 next; if not, spend 20 on the check-in and treat the ceiling as the real stopping point.",
+      "proposals": [],
+      "succeeded": true,
+      "requirement_indices": [
+        1,
+        2,
+        3
       ]
     }
   ],
@@ -212,7 +252,8 @@
     "devsystem.android_native_bridge",
     "devsystem.document_extraction",
     "devsystem.android_emulator_test",
-    "devsystem.review"
+    "devsystem.review",
+    "devsystem.android_native_build_ci"
   ],
   "approved_stage_proposals": [
     {
@@ -241,6 +282,15 @@
       "use_existing_service": null,
       "units": 1,
       "price_ceiling": 2000
+    },
+    {
+      "proposed_by": "devsystem.plan",
+      "stage_id": "devsystem.android_native_build_ci",
+      "tag": "android_native_build_ci",
+      "rationale": "Requirement #5 asks for a downloadable, commit-traceable, signed release APK, but no role in this run's current spec owns producing one. android_native_bridge writes app code, android_emulator_test exercises an already-installed app, review evaluates submitted work, document_extraction reads documents -- none of them builds, signs, checksums or publishes an artifact. Without this stage, #5 stays 0/5 permanently and requirement #1's emulator tests have nothing to install. Scope: Gradle assembleRelease of CADS-webconference-demo at a pinned commit, signed APK, build metadata recording the full source commit SHA plus versionName/versionCode, a SHA-256 next to the artifact, and the artifact downloadable from this run's UI; an honest failure state when the build fails.",
+      "use_existing_service": null,
+      "units": 1,
+      "price_ceiling": 10
     }
   ],
   "criteria": {
@@ -278,6 +328,10 @@
     {
       "text": "Residual scope from the sender_pubkey provenance fix (native-bridge/src/channel.rs, CADS-webconference-android@79774cd): only the dialer/initiator side overrides a received messages sender_pubkey with the real, Noise_IK-authenticated key. The listener/responder side still trusts the wire value verbatim -- ct_common::a2a::a2a_respond (CADS-Tunnel, a separate pinned repo) learns the initiators key internally during the handshake but does not return it, only the resulting TransportState. Closing this needs an upstream CADS-Tunnel change (return the authenticated peer key from a2a_respond), correctly scoped as its own separate increment. Still harmless today: nothing in the GUI trusts sender_pubkey for anything, only message direction drives rendering.",
       "done": false
+    },
+    {
+      "text": "OPERATOR DECISION NEEDED (escalated by iteration 19, devsystem.plan): should CADS-webconference ever support offline/store-and-forward delivery? Iteration 19 decided forward-only for THIS run's scope -- forced, since the run has no backend role, no server repo, and both milestones (M1 direct Noise_IK, M2 broker join/rendezvous/relay) only establish or forward, never store. Consequence: requirement #3 c4 (queued message for an offline recipient) is unsatisfiable by construction and, because requirements are immutable here (scimbe/CADS-devsystem#37), cannot be edited out -- #3 can never reach 4/4. If the product answer is YES, it needs a new backend service, its own repo, and a new role in this spec; #3 would have to be recreated, not amended. The architecture consequence is settled; only the product question is open.",
+      "done": false
     }
   ],
   "milestones": [
@@ -308,6 +362,71 @@
         "A fresh install with no prior manual peer entry can still exchange a real text message with a second device, using only broker-mediated discovery.",
         "Falling back to direct-address connect (todays real M1 mechanism) remains available for a user who already has a peers public key/address.",
         "A broker-discovery failure (no reachable peer, relay exhausted) surfaces a real, honest status message -- never a silent no-op."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN an iteration is submitted for requirement 0 (M2 broker-mediated channel discovery), THE SYSTEM SHALL be validated by an automated Android emulator test covering that requirement's acceptance criteria before the iteration can be marked succeeded.",
+      "acceptance_criteria": [
+        "An automated emulator test exists that installs the app fresh (no manual peer entry) and exchanges a real text message with a second emulator instance using only broker-mediated discovery.",
+        "An automated emulator test exists that verifies the existing direct-address (M1) fallback connect still works unchanged.",
+        "An automated emulator test exists that simulates a broker-discovery failure (no reachable peer / relay exhausted) and asserts a real, honest status message is shown, not a silent no-op."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN two Android clients exchange a message over a channel established via requirement 0 (broker-mediated discovery) or the existing direct-address (M1) path, THE SYSTEM SHALL end-to-end encrypt and authenticate the message content so that neither the CADS-Tunnel broker nor any :443 relay hop can read or tamper with plaintext, and the SignedChannelGrant/rendezvous material alone SHALL NOT be sufficient to derive message content.",
+      "acceptance_criteria": [
+        "Independent capture at the broker/relay hop during a real message exchange (fresh install, broker-mediated discovery per requirement 0) contains no recoverable plaintext of the message body.",
+        "Messages are protected with per-session keys established directly between the two Android clients (e.g. via a Signal-style key agreement), not derivable from the SignedChannelGrant or any broker-held material alone.",
+        "If end-to-end key agreement fails or is unavailable, the system surfaces a real, honest status message and does not silently fall back to sending unencrypted message content."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN a participant sends a 1:1 message, THE SYSTEM SHALL encrypt the message payload end-to-end (sender and recipient only) using a per-session key so that the server and any intermediary cannot read the content.",
+      "acceptance_criteria": [
+        "1:1 message payloads are encrypted on-device before transmission; the backend never receives plaintext message bodies.",
+        "A fresh session key is established per conversation via an authenticated key exchange; no long-term static symmetric key is reused for payload encryption.",
+        "Only the sender and the intended recipient hold the keys to decrypt a message body; the server stores ciphertext only.",
+        "Encrypting and sending a message does not require the recipient to be online; a queued message is encrypted before upload and remains ciphertext until the recipient decrypts it."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN a participant sends a 1:1 message, THE SYSTEM SHALL surface a real, honest per-message delivery status (sent / delivered / read or a concrete error) to the sender, so the user can tell whether the message reached the recipient and was read, instead of a silent or fake state.",
+      "acceptance_criteria": [
+        "The sender UI shows a real per-message status (e.g. sent, delivered, read) reflecting the actual message state, never a stale or fabricated status.",
+        "A \"delivered\" indicator is only shown after the message has actually been handed to the recipient device (or honestly queued for it), not before transmission.",
+        "A \"read\" indicator is only shown after the recipient actually opened the message; no silent false read state.",
+        "If delivery fails (recipient unreachable, queue exhausted, timeout), the sender sees a real error/retry state, not a silent no-op or indefinite spinner.",
+        "The status updates live as the message progresses (sent -> delivered -> read) and does not require a manual refresh."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN an iteration for this run is marked succeeded, THE SYSTEM SHALL produce a downloadable, installable release APK artifact that is traceable to the exact source commit it was built from, so a reviewer can install it on a real device and re-verify the claimed behaviour instead of trusting the iteration text.",
+      "acceptance_criteria": [
+        "The pipeline emits a concrete APK file (not only a build log) that is downloadable from this run's own UI.",
+        "The APK's recorded build metadata identifies the exact CADS-webconference-demo source commit (full SHA) and the versionName/versionCode it was built from.",
+        "A SHA-256 checksum of the APK is recorded next to the artifact so a reviewer can verify the file they downloaded is the one the pipeline built.",
+        "The APK is signed with a build key recorded in the run and installs on a clean Android emulator via `adb install` with no manual signing step.",
+        "If the build fails or no APK can be produced, the iteration surfaces a real, honest failure state and is not marked succeeded."
       ],
       "verified": false,
       "verified_criteria": [],
