@@ -5503,4 +5503,27 @@ around auto-hide/restore is real and still unaddressed, said plainly on the issu
 silently dropped, matching the standing pattern (`#21`) of leaving a real, named residual gap open
 rather than overclaiming a full close.
 
+**Process note, caught and corrected the same firing:** the commit above's own "(closes #30)" text
+auto-closed the issue via GitHub's keyword handling -- directly contradicting the comment posted in
+the same breath saying it should stay open. Caught on the very next state check, reopened, and
+corrected with a plain comment rather than left standing. A real, small process gap in its own
+right: this session's commit-message convention needs to stay aware that "closes #N" is not just
+documentation, GitHub acts on it literally.
+
+**Main-dev-loop firing, 2026-08-07 (uu) -- issue #30's own residual gap closed for real: real
+feedback on auto-hide/auto-restore.** State check: no new operator input on `#14` or the three `#382`
+checkpoints, CI green, no new issues. Picked up `#30`'s own named residual gap as this firing's
+bounded increment -- the "no toast, no confirmation" half explicitly left open one firing earlier.
+
+Added a real, self-dismissing (6s) plain-text notice, shown on both directions: hiding
+("Hid N panel(s) that no longer fit this window: ...") and restoring ("N panel(s) fit again and came
+back: ..."), naming the real panels involved rather than a generic message. First placement
+(bottom-left) turned out to overlap the assistant avatar and process-prompt dock -- caught via a
+live screenshot before shipping, not assumed correct from the code alone, and moved top-left.
+`CADS-devsystem@cb7ea51`, live-verified against the actual deployment replicating the original
+report's own repro exactly (a window shrink real-hides three panels with the real notice text naming
+them, growing back real-restores them with the real notice). Full 100/100 stress harness stays clean.
+Closed `#30` for real this time -- both real halves of the original report (permanence, silence) are
+now genuinely fixed, not just one.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
