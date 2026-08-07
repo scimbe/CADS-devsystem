@@ -170,19 +170,17 @@ Extends §4's user-support goal with concrete GUI requirements:
    by two lines since the last time this was checked, from this same day's own "nine kinds of data"
    system-prompt fix growing the doc comment above the enum; re-verified via `grep -n "^enum Action"`
    rather than trusted from the last note), a real but narrow, pre-enumerated set. **Still a
-   real, genuinely open gap** (re-confirmed 2026-08-07, not stale like the two siblings here): no
-   *general* "the assistant can edit whatever a human could edit in this panel" capability exists —
-   every new editable field still needs a new hand-written `Action` variant, nineteen of them as of
-   this writing (see the ranked list's item 4 for the specific panels/fields already covered one at
-   a time, and `set_paused`, added 2026-08-07 by re-auditing every human-editable GUI field against
-   this enum, for the newest one). **One real candidate found by that same 2026-08-07 audit,
-   deliberately deferred rather than guessed at**: a human can already delete a whole run (the Runs
-   panel's own delete button, DAU-lens-hardened with a real confirmation --
-   `web/static/index.html:759`), but this is a materially different risk than `pause`/`resume` --
-   destructive and irreversible, the same class `ProposeRemoveCustomPanel` already treats as
-   proposal-gated rather than a direct action. Whether (and how) the assistant should get an
-   equivalent `propose_delete_run` is a real, separate decision, not folded into the same firing that
-   closed the safe `set_paused` case.
+   real, genuinely open gap in the general sense** -- no fully general "the assistant can edit
+   whatever a human could edit in this panel" capability exists, and never will while this stays a
+   pre-enumerated enum by design -- but the two real, specific instances the 2026-08-07 audit found
+   are now BOTH closed, not left open: `set_paused` (direct, since pause/resume is fully reversible
+   and the human's own button gets zero extra confirmation) and `propose_delete_run` (proposal-gated,
+   since deletion is destructive/irreversible -- the same class `ProposeRemoveCustomPanel` already
+   treats that way, closed 2026-08-07,
+   [`CADS-devsystem@f06b2ba`](https://github.com/scimbe/CADS-devsystem/commit/f06b2ba)). Twenty real
+   action types as of this writing (see the ranked list's item 4 for the specific panels/fields
+   already covered one at a time). No further concrete instance is currently known -- the next one
+   will be whatever a future firing's own re-audit finds, same discipline as this one.
 3. **A real overview of every agent used, its tokens, and its cost must exist.** **Corrected,
    2026-08-06**: this entry's own "real gap, confirmed by direct check" framing went stale the same
    way item 1's did — the ranked list below (item 5) already marks this **done**: a real Assistant
@@ -3725,5 +3723,39 @@ build it in this firing: destructive and irreversible is a materially different 
 pause/resume, the same class this project's own `ProposeRemoveCustomPanel` already treats as
 proposal-gated, not a direct action. Recorded above (§7 item 2) as a real, separate decision rather
 than guessed at or silently dropped.
+
+**Goal-driven-loop firing, 2026-08-07 -- closed the deliberately-deferred `propose_delete_run` from
+the previous firing, and found a genuinely older stale-count bug while doing it.** State check: no
+new operator input on any of the three open `#382` checkpoints, no new PRs, issue #14 unchanged, 75/75
+stress harness clean before starting. Deleting a run is exactly as destructive/irreversible as
+removing a custom panel, so it gets the identical propose-then-approve trust model
+`pending_panel_removal_proposals` already established: a new `PendingDeleteRunProposal` (an
+`Option`, not a queue -- only one real run to ever propose deleting), three new endpoints
+(propose/approve/reject), wired into `open_points()` and `pending_reviews`' own count (the exact
+"undercounting" bug class already found and fixed twice for other queues -- closed in the same
+commit that adds the sixth queue this time, not left for a later firing). `Action::ProposeDeleteRun`
+added to the assistant with the same proposal-gate framing as its five siblings.
+
+While updating the system prompt's own action-type count (the established discipline, every time),
+found a genuinely OLDER instance of the same bug, not introduced by this firing: two sentences
+describing category (1)'s own direct-action count had silently stayed at "nine" since
+`ToggleRequirementAutoJudge`/`SetRoleFillMode`/`UpdateCriteria`/`SetPaused` were added as direct
+actions -- found by actually counting the enum's variants rather than trusting the sentence, exactly
+the discipline this bug class has needed every time it's recurred. Corrected to the real thirteen.
+
+GUI: approving a delete-run proposal gets its own real `confirm()` -- the identical DAU-lens gate the
+direct delete button already has, not silently waved through just because it arrived via a proposal
+-- and navigates to the runs list on success instead of the normal `selectRun(id)` refresh, since
+that run no longer exists to re-fetch.
+
+Hermetic `cargo test`/`clippy` clean on both crates (52/52 assistant, 194/194 web, 0 warnings).
+Redeployed both `devsystem-web` and `devsystem_assistant`. Live-verified end to end: asked the
+assistant in plain English to propose deleting a real scratch run -- it correctly proposed, not
+deleted, confirmed via the real persisted proposal; approved via the real endpoint; confirmed the
+run is genuinely gone (`404`). A second scratch run's real Open Points panel screenshot confirms the
+GUI renders it correctly, with the Runs list's own `pending_reviews` badge counting it too. Added a
+matching stress-harness check (`[39]`, 80/80 total) in the same firing, not a later separate one.
+([`CADS-devsystem@f06b2ba`](https://github.com/scimbe/CADS-devsystem/commit/f06b2ba),
+[`CADS-devsystem@599a5c6`](https://github.com/scimbe/CADS-devsystem/commit/599a5c6))
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).
