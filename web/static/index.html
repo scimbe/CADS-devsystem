@@ -2637,7 +2637,7 @@ async function renderArchitecturePanel(id, data) {
           <div class="role-meta">${escapeHtml(p.repo)}</div>
           <div class="lede" style="font-size:.75rem;margin-top:.3rem;white-space:pre-wrap">${escapeHtml(p.body)}</div>
           <div style="margin-top:.4rem;display:flex;gap:.4rem">
-            <button type="button" class="issue-proposal-approve-btn" data-id="${p.id}">Approve &amp; post to GitHub</button>
+            <button type="button" class="issue-proposal-approve-btn" data-id="${p.id}" data-repo="${escapeHtml(p.repo)}">Approve &amp; post to GitHub</button>
             <button type="button" class="secondary issue-proposal-reject-btn" data-id="${p.id}" data-title="${escapeHtml(p.title)}">Reject</button>
           </div>
         </div>`).join('')
@@ -2683,6 +2683,15 @@ async function renderArchitecturePanel(id, data) {
   }
   for (const btn of body.querySelectorAll('.issue-proposal-approve-btn')) {
     btn.onclick = async () => {
+      // Real DAU-lens gap found live 2026-08-07 (#382 goal doc §7): every other
+      // real, hard-to-undo Architecture-panel action (rejecting a stage/issue
+      // proposal, and this project's own destructive panel/delete-run actions
+      // elsewhere) already gets a real confirm() -- this one, which posts a
+      // real, public, externally-visible GitHub issue to an actual repo the
+      // instant it's clicked, had none at all. Unlike approving a stage
+      // proposal (purely additive to this run's own live spec, nothing
+      // external), this reaches outside the pipeline entirely.
+      if (!confirm(`Post this issue to ${btn.dataset.repo}? This creates a real, public GitHub issue immediately -- it isn't just a preview.`)) return;
       try {
         const result = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/issues/proposals/${encodeURIComponent(btn.dataset.id)}/approve`, { method: 'POST' });
         if (result && result.html_url) {
