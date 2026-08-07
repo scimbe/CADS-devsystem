@@ -5721,4 +5721,50 @@ duplicate block removed, ten `iteration` fields renumbered) before shipping.
 idempotency key) remain real, open, structural gaps beyond today's narrower exact-repeat guard --
 named honestly on the issue, left open, not attempted in this same bounded increment.
 
+**Main-dev-loop firing, 2026-08-07 (ddd) -- issue #38's suggestion #1: every `IterationRecord` now
+carries a real identity.** Natural, well-scoped follow-up to (ccc): the duplicate that firing reclaimed
+was only detectable by eye, since nothing on the record could tell two submissions apart or say which
+one was real. Added `id: String` (server-generated, the same `format!("{:016x}",
+rand::random::<u64>())` convention every other real id in this codebase already uses) and
+`submitted_at: u64` (real unix seconds) to `IterationRecord`, both `#[serde(default)]` so every
+pre-existing history entry -- including the ones (ccc) just repaired -- deserializes as the honest
+empty-string/`0` default, not a fabricated retroactive identity. Generated server-side at both real
+production entry points, the HTTP `/iterate` handler and the local (non-`--remote`) `devsystem_iterate`
+CLI, deliberately never accepted from the request body or `record.json` (`IterateRequest` has no such
+fields at all, so a client-supplied value is structurally dropped by serde). `CADS-devsystem@8c8beb6`.
+
+Three real mistakes made and caught before shipping, while fixing the ~27 existing test-only struct
+literals across the pipeline crate to compile via `..Default::default()`: a trailing comma after the
+spread (invalid Rust, `..Default::default()` must be the last item with no comma after it) caught by
+re-reading the edited file; a broad fix-up regex matching purely on trailing field name accidentally
+corrupted the unrelated `ChatExchange` struct's own *definition* (coincidentally ends in an
+identically-named field) into invalid syntax, caught by a genuinely confusing downstream compile error
+and traced back by hand; and two single-line struct literals the regex's newline requirement silently
+skipped, caught by the compiler's own remaining error list after the bulk pass.
+
+New hermetic test
+(`iterate_run_gives_every_real_submission_a_real_unique_server_generated_id`): two real submissions
+get two different real 16-hex-char ids; a client-supplied `id`/`submitted_at` in the request body is
+proven to have zero effect. Full pipeline crate (130 lib tests + all binary suites) and web crate (200
+tests) pass. Live-verified against the actual deployment -- not just trusted the git-SHA check -- that
+a real submission returns a real id and a real current timestamp, and that `webconference-android`'s
+(ccc)-repaired history still loads correctly under the new schema. Full 100/100 stress harness stays
+clean.
+
+`#38`'s suggestion #2 (an accepted idempotency key) remains open -- named on the issue, not attempted
+in this same bounded increment.
+
+**Flagship run activity, same day, not authored by this loop**: while this firing was in progress,
+`webconference-android`'s own live pipeline continued on its own -- iterations 15-18 proposed and
+auctioned a new `devsystem.android_native_build_ci` role (for requirement #5's downloadable/
+commit-traceable APK), found the platform has no artifact/checksum/download surface at all and
+honestly reported failure rather than claim the requirement met, then found requirement #1 can never
+be rewritten because **no requirement can be edited or removed anywhere in the system** -- not the
+GUI, not the assistant's action vocabulary, not the REST API -- and filed that as a real, well-evidenced
+new gap: issue #37. Also decided this run's scope is forward-only (no store-and-forward backend exists
+in its spec), escalating the broader product question to the operator. Captured in
+`CADS-devsystem@107e4d6` since this loop is the one that touches these tracked, live-mounted files.
+Only 1 of 20 `max_iterations` remains on this run -- a real, live decision point (raise the ceiling, or
+let it stop at the mandatory check-in) that only the operator can make.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
