@@ -5353,4 +5353,29 @@ similar live report asking for those yet.
 `#28` is real and related but bigger (an actual in-app help surface, not just two missing links) --
 left open for a future firing, noted on the issue rather than folded into this one.
 
+**Main-dev-loop firing, 2026-08-07 (oo) -- issue #29 (panel launcher filter): honest partial
+outcome, real fixes shipped, full reproduction not achieved.** State check: no new operator input on
+the three `#382` checkpoints, `#14` still no reply, CI green. `#29` (filed right after firing (nn)):
+the launcher's "Type to jump to a panel…" box allegedly never filters at all, identical output for a
+real panel name vs. garbage, and a failed Enter silently no-ops.
+
+Live investigation before any code change, same discipline as firing (ll)'s `#26`: direct testing
+against the real deployed container showed `applyOrbFilter`'s matching logic and the opacity dimming
+were already correct in their *settled* state (non-matches genuinely drop to `opacity:.14`, the match
+gets a highlighted border, Enter opens an unambiguous single match) -- the literal "identical output
+regardless of query" claim didn't reproduce. But investigating further surfaced a real, plausible
+contributor: the filtered-opacity change shared its CSS transition with the bubbles' own
+entrance-stagger animation (up to ~420ms delay + 400ms duration per bubble, ~800ms worst case) --
+filtering within that window after opening would visibly compete with the still-settling entrance
+animation rather than updating crisply, a real mechanism that could produce exactly the symptom
+described for a fast typist. Fixed: filter-driven opacity now has its own fast, non-staggered
+transition. Separately, real regardless of the timing theory: added an actual "N match(es)" /
+`No panels match "..."` status line -- the opacity dimming alone is real feedback but easy to miss at
+a glance across ~20 fanned bubbles, closing the report's "zero feedback while typing" and "silent
+no-op on a failed Enter" complaints outright. `CADS-devsystem@f8fbcab`, live-verified: typed "roles"
+150ms after opening (inside the old worst-case stagger window) -- status text and full opacity both
+resolved correctly; a non-matching query showed the real status text. Full 100/100 stress harness
+stays clean. Left the issue open rather than closing it -- commented with the honest boundary between
+what was fixed and what wasn't independently reproduced, same standard applied to `#26`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
