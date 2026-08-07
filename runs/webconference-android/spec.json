@@ -40,6 +40,14 @@
       "units": 1,
       "tag": "review",
       "selection_policy": null
+    },
+    {
+      "service": {
+        "Custom": "devsystem.android_native_build_ci"
+      },
+      "units": 1,
+      "tag": "android_native_build_ci",
+      "selection_policy": null
     }
   ],
   "operator_pubkey_hex": "7e59d28d596978c27eb5faa4afa4759b7e9fc1948c7172d7ca66f6abc97d92cb",
