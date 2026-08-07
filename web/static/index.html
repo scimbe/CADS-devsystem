@@ -844,6 +844,18 @@ async function refreshTick() {
 function createPanel(id) {
   const d = PANEL_DEFAULTS[id];
   const r = ensurePanelVisible({ ...panelRect(id), id });
+  // Real root cause of issue #21's own persistence, found after the collision
+  // logic itself was already fixed and still not working for every panel:
+  // this function computed a real cascaded position and rendered it, but
+  // never wrote it back into `layout`, the one thing `panelObstacles()` (via
+  // `panelRect()`) actually reads. Every panel placed *after* this one during
+  // the same init pass was checking collision against this panel's stale
+  // default coordinates, not where it was actually cascaded to and rendered
+  // -- so a later panel could "correctly" avoid a position its own obstacle
+  // data said was empty, while still landing on top of this one's real,
+  // already-moved location. Persisting it here is what makes the collision
+  // check's input match the real, visible DOM state.
+  layout[id] = { ...r };
   const win = document.createElement('div');
   win.className = 'win' + (r.minimized ? ' minimized' : '');
   win.id = `win-${id}`;
@@ -1333,11 +1345,73 @@ function ensurePanelVisible(rect) {
   const obstacles = panelObstacles(desktop, rect.id);
   const overlaps = (ax, ay) => obstacles.some(o => ax < o.x + o.w && ax + w > o.x && ay < o.y + o.h && ay + h > o.y);
   if (overlaps(x, y)) {
-    const step = 28;
-    for (let i = 1; i <= 12; i++) {
-      const cx = Math.min(Math.max(0, dw - w), x + step * i);
-      const cy = Math.min(Math.max(0, dh - h), y + step * i);
-      if (!overlaps(cx, cy)) { x = cx; y = cy; break; }
+    // Real bug, GitHub issue #21 (a persona-test finding: panels landing
+    // exactly on top of each other, silent dead clicks): the old diagonal
+    // cascade moved x and y together by a fixed 28px step, each independently
+    // re-clamped to [0, dw-w]/[0, dh-h] every iteration. Once EITHER clamp
+    // saturated -- which a narrow desktop reaches almost immediately, this
+    // app's own default panel coordinates run out past x=1780 -- every later
+    // iteration silently retested the exact same already-failed candidate.
+    // A real 2D grid search over the actual valid range replaces it.
+    const maxX = Math.max(0, dw - w), maxY = Math.max(0, dh - h);
+    const cols = 6, rows = 6;
+    const stepX = cols > 1 ? maxX / (cols - 1) : 0;
+    const stepY = rows > 1 ? maxY / (rows - 1) : 0;
+    let placed = false;
+    for (let j = 0; j <= rows && !placed; j++) {
+      for (let i = 0; i <= cols && !placed; i++) {
+        const cx = Math.min(maxX, Math.round(i * stepX));
+        const cy = Math.min(maxY, Math.round(j * stepY));
+        if (!overlaps(cx, cy)) { x = cx; y = cy; placed = true; }
+      }
+    }
+    // Every grid position genuinely collides -- measured live, not assumed:
+    // this app's own default panel widths (up to 380px each, several open by
+    // default) can genuinely exceed a real desktop's usable width (666px at
+    // a realistic ~1280px browser window, once the assistant side panel
+    // takes its own share) -- a full non-overlapping BODY layout is
+    // mathematically impossible here, not just hard to find. The honestly
+    // achievable goal instead: every panel's own HEADER strip -- title, drag
+    // handle, close/minimize/maximize buttons, the one place a human
+    // actually needs a real click target on -- stays reachable even when
+    // bodies must overlap. Re-run the identical grid search, but checking
+    // collision against each obstacle's own header rectangle (its real
+    // measured height, not a guessed constant) rather than its full body --
+    // a much smaller area, genuinely likely to have free room even on a
+    // desktop too small for full non-overlapping bodies.
+    if (!placed) {
+      const headerH = (() => {
+        const h0 = desktop.querySelector('.win-header');
+        return h0 ? Math.ceil(h0.getBoundingClientRect().height) : 32;
+      })();
+      // A newly-placed panel always gets the highest z-index (bringToFront),
+      // so it's the one direction that matters: does this panel's own FULL
+      // body (not just its header) land on top of an EXISTING obstacle's
+      // header rect? If none of them do, every already-open panel's header
+      // stays exposed above/around the new one, whatever else overlaps.
+      const bodyCoversAnyHeader = (ax, ay) => obstacles.some(o =>
+        ax < o.x + o.w && ax + w > o.x && ay < o.y + headerH && ay + h > o.y);
+      for (let j = 0; j <= rows && !placed; j++) {
+        for (let i = 0; i <= cols && !placed; i++) {
+          const cx = Math.min(maxX, Math.round(i * stepX));
+          const cy = Math.min(maxY, Math.round(j * stepY));
+          if (!bodyCoversAnyHeader(cx, cy)) { x = cx; y = cy; placed = true; }
+        }
+      }
+    }
+    // Even every header-only position collides -- genuinely more panels open
+    // than this desktop can give each one its own header strip. Last resort:
+    // a real, deterministic stagger (never the original, always-colliding
+    // candidate) so at minimum this panel's own header ends up at a
+    // different position than whichever obstacle it was placed on top of.
+    if (!placed) {
+      const headerH2 = (() => {
+        const h0 = desktop.querySelector('.win-header');
+        return h0 ? Math.ceil(h0.getBoundingClientRect().height) : 32;
+      })();
+      const step = obstacles.length * headerH2;
+      x = Math.min(maxX, (x + step) % Math.max(1, maxX + 1));
+      y = Math.min(maxY, step % Math.max(1, maxY + 1));
     }
   }
   return { ...rect, x, y, w, h };
