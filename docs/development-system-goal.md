@@ -6242,4 +6242,32 @@ pipeline lib tests, 205/205 web tests, zero warnings. Live-verified against the 
 with the evaluator's own exact repro: the deadlock is gone, the ceiling still genuinely holds. Stress
 harness gained check `[54]`; full suite now 118/118.
 
+**Main-dev-loop firing, 2026-08-07 (www) -- issue #54: the known-defect risk stopped punishing
+honesty.** State check: `#382`'s three checkpoints and `#14` still unanswered. A fresh
+scimbe-authored issue had landed (`#54`, a real finding on the flagship run itself, then isolated on
+a probe run) -- picked it this firing: `succeeded_iteration_admits_a_defect` had no awareness of
+which stage produced its feedback, and a `devsystem.review` iteration's entire job is to find and
+report defects in *other* work. A real, substantive review on `webconference-android` (iteration 22,
+a genuine crash bug, honestly documented, correctly attributed to the implementing role to fix) got
+flagged identically to an implementer who shipped broken code -- the more honest and thorough a
+review, the more risk the run accrued, backwards from what the mandatory review gate exists to
+encourage. It also directly fought `no_review_for_succeeded_work`: submitting the review correctly
+cleared that risk, then immediately traded it for this false one -- there was no way to file an
+honest review finding without tripping one of the two.
+
+Fixed by excluding `devsystem.review` from this specific check -- a review reports a defect it
+found, not one it shipped, so succeeding at that job isn't evidence of admitting shipped-defective
+work. Every other stage stays exactly as strict as before. `CADS-devsystem@8ededf8`. New tests prove
+both halves: an honest review is not flagged, and an implement-stage iteration that actually ships a
+known defect still is. 154/154 pipeline lib tests, 205/205 web tests, zero warnings. Live-verified
+against the deployed container with the issue's own exact repro, and against the real flagship run:
+iteration 22's review no longer appears in the risk list at all. Stress harness gained check `[55]`;
+full suite now 120/120.
+
+The issue's own second, separate finding -- the phrase list is trivially evaded by rewording ("not
+fixed" vs. "still awaits repair", both real, only one flagged) -- was deliberately NOT fixed this
+pass. Adding one more synonym wouldn't close the underlying evadability, only move the goalpost; the
+issue's own suggested real fix (a structural "open defect" field on the record instead of prose
+matching) is separate, larger work and remains real, open.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
