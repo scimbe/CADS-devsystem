@@ -3850,17 +3850,27 @@ function renderFlowPanel(id, data) {
   const history = [...(data.state.history || [])].reverse().slice(0, 6);
   const h = data.health;
 
+  // Real gap found live 2026-08-07, screenshotted against the actual flagship
+  // run: this panel's whole purpose is a fast "where are we" glance (unlike
+  // the dedicated Milestones/Backlog panels, which show full text on purpose)
+  // -- but milestone descriptions and backlog items render here completely
+  // untruncated, unlike renderProcessPanel's own history entries just below,
+  // which already use truncate() for exactly this reason. A run with a few
+  // genuinely long entries (this project's own real backlog items run to
+  // several hundred characters) turned the queue section into a wall of text,
+  // defeating the fast-glance point entirely. Same 220-char budget
+  // renderProcessPanel's own feedback preview already uses.
   const nextMilestone = milestones.find(m => !m.achieved);
   const targetHtml = milestones.length
     ? milestones.map(m => `
         <div class="flow-node ${m.achieved ? 'flow-done' : (m === nextMilestone ? 'flow-next' : '')}">
           <span class="flow-marker">${m.achieved ? '✓' : (m === nextMilestone ? '◎' : '○')}</span>
-          <span>${escapeHtml(m.description)}</span>
+          <span>${escapeHtml(truncate(m.description, 220))}</span>
         </div>`).join('')
     : '<div class="lede">No milestones set -- nothing to steer toward yet.</div>';
 
   const queueHtml = backlog.length
-    ? backlog.map(b => `<div class="flow-node"><span class="flow-marker">•</span><span>${escapeHtml(b.text)}</span></div>`).join('')
+    ? backlog.map(b => `<div class="flow-node"><span class="flow-marker">•</span><span>${escapeHtml(truncate(b.text, 220))}</span></div>`).join('')
     : '<div class="lede">Backlog is empty.</div>';
 
   const omitted = (data.state.history || []).length - history.length;
