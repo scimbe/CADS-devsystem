@@ -4661,4 +4661,21 @@ Reverted cleanly from a pre-mutation backup file, rebuilt, redeployed the real f
 `[40]`), all real, all precise, continuing this session's own verification-as-a-legitimate-
 increment discipline while the real production-deploy decision (issue `#18`) stays open.
 
+**Goal-driven-loop firing, 2026-08-07 (q) -- a fourth mutation-test round, this time in
+`pipeline/src/preflight.rs` rather than `web/src/main.rs`.** State check: no new operator input on
+any of the four standing decision points, `#13`/`#14`/PRs unchanged.
+
+Picked check `[38]` (`checkin_cadence_effectively_disabled`) -- genuinely different crate from the
+last three rounds' target, and the check's own description names exactly what a literal revert would
+be: "this check never existed." Reverted the function to unconditionally return `None`, confirmed
+both hermetic tests (`flags_checkin_every_zero_as_effectively_disabled`,
+`flags_checkin_every_at_or_past_max_iterations_as_effectively_disabled`) fail with the exact expected
+empty-findings panics, rebuilt and redeployed the mutated binary, confirmed the live harness fails on
+exactly check `[38]`'s own assertion while all 46 sibling checks (97 of 98 assertions) stayed green.
+Reverted cleanly from a pre-mutation backup file, rebuilt, redeployed the real fix, reconfirmed 98/98
+clean. No source change ships -- four mutation-test rounds now this cycle (`[41]`, `[39]`, `[40]`,
+`[38]`), all real, all precise, spanning both crates. Deliberately kept to safe, non-escalating
+verification work again -- both remaining flagship-run backlog items still need cross-repo CADS-
+Tunnel changes, and the real production-deploy decision (issue `#18`) stays open with the operator.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
