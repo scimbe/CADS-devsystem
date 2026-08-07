@@ -286,7 +286,20 @@
   "pending_issue_proposals": [],
   "pending_next_step_drafts": [],
   "pending_delete_run_proposal": null,
-  "requirements": [],
+  "requirements": [
+    {
+      "statement": "WHEN the Android client starts and no manual peer address/public-key has been entered, THE SYSTEM SHALL discover and connect to a peer channel via the real CADS-Tunnel broker (ct-agent channel join, SignedChannelGrant, rendezvous, NAT traversal, :443 relay fallback) instead of requiring out-of-band manual exchange.",
+      "acceptance_criteria": [
+        "A fresh install with no prior manual peer entry can still exchange a real text message with a second device, using only broker-mediated discovery.",
+        "Falling back to direct-address connect (todays real M1 mechanism) remains available for a user who already has a peers public key/address.",
+        "A broker-discovery failure (no reachable peer, relay exhausted) surfaces a real, honest status message -- never a silent no-op."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    }
+  ],
   "assistant_usage": {
     "call_count": 2,
     "input_tokens": 4,
