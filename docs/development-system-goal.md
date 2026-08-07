@@ -4644,4 +4644,21 @@ collateral. Reverted cleanly from a pre-mutation backup file, rebuilt, redeploye
 reconfirmed 98/98 clean. No source change ships -- the value is the proof itself, continuing this
 session's own "verification is a legitimate increment, not just new code" discipline.
 
+**Main-dev-loop firing, 2026-08-07 (p) -- continuing the mutation-test sweep, a real DAU-lens gate
+this time.** State check: no new operator input on any of the four standing decision points,
+`#13`/`#14`/PRs unchanged. Same non-escalating discipline as the last two firings.
+
+Picked check `[40]` (`approve_destroys_panel_title`, the real structured data the Open Points
+panel's own confirm-before-destroying dialog depends on to name what Approve would actually
+destroy). Neutered `open_points()`'s removal-proposal branch to a realistic, historically-shaped
+bug: `approve_destroys_panel_title: None` instead of `Some(p.panel_title.clone())` -- "forgot to
+wire the structured field," the same shape as several other real gaps this session already found
+and fixed. Confirmed the hermetic test fails with the exact expected panic (`Null` vs `"Real
+Panel"`), rebuilt and redeployed the mutated binary, confirmed the live harness fails on exactly
+check `[40]`'s own assertion while all 46 sibling checks (97 of 98 assertions) stayed green.
+Reverted cleanly from a pre-mutation backup file, rebuilt, redeployed the real fix, reconfirmed
+98/98 clean. No source change ships -- three mutation-test rounds in a row now (`[41]`, `[39]`,
+`[40]`), all real, all precise, continuing this session's own verification-as-a-legitimate-
+increment discipline while the real production-deploy decision (issue `#18`) stays open.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
