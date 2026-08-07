@@ -263,6 +263,12 @@
  .role-latest{font-size:.8rem;padding-left:.5rem;border-left:2px solid var(--border)}
  .role-latest.ok{border-left-color:var(--accent2)}
  .role-latest.fail{border-left-color:var(--danger)}
+ /* Real gap, GitHub issue #23: a succeeded:true iteration whose own
+    feedback admits a known defect used to render identically to a clean
+    "ok" here -- the one summary line every user actually looks at. Same
+    warn color this app's own Health stats already use for this exact
+    "technically not failed, but needs your attention" meaning. */
+ .role-latest.warn{border-left-color:var(--accent)}
  .role-count{font-size:.7rem;margin-top:.2rem}
  .role-tools{font-size:.7rem;margin-top:.2rem}
  .role-bids{margin-top:.35rem;display:flex;flex-direction:column;gap:.25rem}
@@ -2925,11 +2931,31 @@ function renderProcessPanel(id, data) {
         failures <b>${h.consecutive_failures}</b> / ${h.criteria.max_consecutive_failures}</span>
     </div>`;
 
+  // Real gap found live by a persona-test evaluator (#382 goal doc §8,
+  // GitHub issue #23): `succeeded_iteration_admits_a_defect` already
+  // detects and flags exactly this pattern -- a succeeded:true iteration
+  // whose own feedback admits the work isn't actually done -- but only as a
+  // passive line in the Risks & Stalled panel, a panel most people never
+  // open. This headline "last: ... (ok)" summary is the one place every
+  // user actually looks, and it showed plain "ok" with zero indication
+  // anything was wrong. Deliberately NOT changing what counts as
+  // succeeded, or blocking submission -- that's a real, separate,
+  // still-open decision (#382) this loop isn't making unilaterally.
+  // Reusing the exact risk evidence the backend already computed (matching
+  // by iteration number, parsed from its own real evidence text) rather
+  // than re-deriving the defect-admission check client-side, so this can
+  // never drift from what the one real, tested check actually flags.
+  const latestDefectRisk = latest && latest.succeeded
+    ? risks.find(r => r.label === 'succeeded iteration admits a known defect'
+        && new RegExp(`\\biteration ${latest.iteration}\\b`).test(r.evidence))
+    : null;
   const latestHtml = latest
-    ? `<div class="role-latest ${latest.succeeded ? 'ok' : 'fail'}">
-         last: <b>${escapeHtml(latest.stage)}</b>, iteration ${latest.iteration} (${latest.succeeded ? 'ok' : 'FAILED'})
+    ? `<div class="role-latest ${latestDefectRisk ? 'warn' : (latest.succeeded ? 'ok' : 'fail')}">
+         last: <b>${escapeHtml(latest.stage)}</b>, iteration ${latest.iteration}
+         (${latest.succeeded ? (latestDefectRisk ? '⚠ ok, but admits a known defect' : 'ok') : 'FAILED'})
          ${latest.proposals && latest.proposals.length ? ` · proposed <b>${escapeHtml(latest.proposals[0].stage_id)}</b>` : ''}
          <div class="lede" style="font-size:.78rem;margin-top:.25rem">${escapeHtml(truncate(latest.feedback, 220))}</div>
+         ${latestDefectRisk ? `<div class="lede" style="font-size:.72rem;margin-top:.3rem;color:var(--accent)">${escapeHtml(truncate(latestDefectRisk.evidence, 220))}</div>` : ''}
        </div>`
     : `<div class="role-latest lede">no iterations yet</div>`;
 
