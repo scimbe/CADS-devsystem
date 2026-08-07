@@ -4747,4 +4747,26 @@ proved the *actual deployed container* has a real SHA baked in rather than silen
 real 40-hex-character SHA, not `"unknown"` or anything malformed. 99/99 assertions clean (48 checks).
 Committed to `CADS-devsystem@6b8c5bd`.
 
+**Goal-driven-loop firing, 2026-08-07 (u) -- extending the git-SHA deploy-verification fix to
+`devsystem_assistant`'s own separate deploy path, closing a real parity gap.** State check: no new
+operator input on any of the four standing decision points, `#13`/`#14`/PRs unchanged.
+
+`deploy-devsystem-web.sh` gained a real git-SHA verification two firings ago; `devsystem_assistant`
+is a genuinely separate, standalone binary with its own real deploy path
+(`deploy-devsystem-assistant.sh`) that had no equivalent -- only that the process forked and
+answered a malformed `/ask` request, never that it was actually running current source. This binary
+isn't baked into a Docker image (no build-time `ARG`/`ENV` to reuse), so the fix shape differs
+slightly: `deploy-devsystem-assistant.sh` now computes the real current `git rev-parse HEAD` and
+passes it as a process env var (`DEVSYSTEM_GIT_SHA`) at process-start time, and a new `GET /version`
+route (extracted into a pure, directly-testable `version_response_body()`, not inlined in the request
+loop) reports it back. The deploy script verifies the running process reports the real, correct SHA
+immediately after startup.
+
+1 new hermetic test (the honestly-testable "unset" case). Full 129-test pipeline suite + 54-test
+`devsystem_assistant` suite green, clippy-clean. Live-verified end to end: a real deploy printed "Git
+SHA verified: running process matches real current source," confirmed directly via `curl` too. 99/99
+stress harness stays clean (unaffected -- exercises `devsystem-web` only, a real, separate residual
+gap worth naming: this new `devsystem_assistant` endpoint has no stress-harness coverage of its own
+yet, unlike `devsystem-web`'s check `[48]`). Committed to `CADS-devsystem@1cdc0f5`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
