@@ -205,6 +205,22 @@
                 border-radius:5px;padding:.05rem .35rem;font-weight:700;margin-left:.3rem}
  .risk-badge{float:right;font-size:.68rem;color:var(--danger);border:1px solid var(--danger);
                 border-radius:5px;padding:.05rem .35rem;font-weight:700}
+ /* Real gap, GitHub issue #27: "N stalled"/"N risk(s)" used to be plain,
+    non-interactive text with no title/aria-label and no hint that clicking
+    could do anything -- the one panel that actually explains either term
+    ("Risks & Stalled") isn't part of the default layout, so a user who won't
+    ask devsystem.assistant had no discoverable way to reach it. These two
+    badges are real <button>s now (a sibling of .run-item, not nested inside
+    it -- a <button> can't legally contain another <button>), float:none
+    since they're a normal flex child of .run-row instead of floated inside
+    the run-item box. */
+ .run-badge-btn{float:none;flex:0 0 auto;align-self:center;cursor:pointer;font-family:var(--mono)}
+ /* Real gap, GitHub issue #27: the Pipeline panel's own "the Roles panel"
+    mention was plain text, not a link, even though it directly names the one
+    panel that answers "where's live bidding status" -- and Roles isn't part
+    of the default layout either. */
+ .inline-panel-link{background:none;border:none;padding:0;margin:0;color:var(--accent2);
+                text-decoration:underline;cursor:pointer;font:inherit}
  .paused-banner{background:rgba(217,138,79,.15);border:1px solid var(--accent);color:var(--accent);
                 border-radius:8px;padding:.5rem .7rem;font-family:var(--mono);font-size:.78rem;
                 font-weight:700;margin-bottom:.6rem}
@@ -2151,12 +2167,22 @@ function renderRunsList(filterText) {
       // whether a proposal also happens to be waiting -- which outranks a
       // health-threshold needs_attention, which outranks a stalled stage, which
       // outranks a mechanical preflight risk finding.
+      //
+      // Real gap, GitHub issue #27: the "stalled"/"risk(s)" badges used to be
+      // rendered as plain text inline in `btn`'s own innerHTML -- no title,
+      // no aria-label, no way to reach the one panel ("Risks & Stalled",
+      // itself not part of the default layout) that actually explains
+      // either term. `badgeButton` below carries that pair instead, and is
+      // appended as a real sibling <button> after `btn` is built (a <button>
+      // can't legally contain another <button> -- same reason `delBtn`
+      // already lives outside `btn`'s own innerHTML).
       let badge = '';
+      let badgeButton = null;
       if (r.paused) badge = `<span class="paused-badge">⏸ ${r.pause_reason ? escapeHtml(r.pause_reason) : 'paused (no reason recorded)'}</span>`;
       else if (r.pending_reviews) badge = `<span class="attention-badge">⚠ ${r.pending_reviews} pending review${r.pending_reviews === 1 ? '' : 's'}</span>`;
       else if (r.needs_attention) badge = `<span class="attention-badge">⚠ needs attention</span>`;
-      else if (r.stalled_stages && r.stalled_stages.length) badge = `<span class="stalled-badge">${r.stalled_stages.length} stalled</span>`;
-      else if (r.risk_count) badge = `<span class="risk-badge">${r.risk_count} risk(s)</span>`;
+      else if (r.stalled_stages && r.stalled_stages.length) badgeButton = { cls: 'stalled-badge', label: `${r.stalled_stages.length} stalled` };
+      else if (r.risk_count) badgeButton = { cls: 'risk-badge', label: `${r.risk_count} risk(s)` };
       const ownerLine = r.owner_email ? ` · created by ${escapeHtml(r.owner_email)}` : ' · no recorded owner';
       btn.innerHTML = `${r.run_id}${badge}<div class="meta">${r.iterations} iteration(s) · ${r.roles} role(s)${ownerLine}</div>`;
       btn.onclick = () => selectRun(r.run_id);
@@ -2189,6 +2215,19 @@ function renderRunsList(filterText) {
       const row = document.createElement('div');
       row.className = 'run-row';
       row.appendChild(btn);
+      if (badgeButton) {
+        const bBtn = document.createElement('button');
+        bBtn.type = 'button';
+        bBtn.className = `run-badge-btn ${badgeButton.cls}`;
+        bBtn.title = `Open Risks & Stalled for "${r.run_id}"`;
+        bBtn.textContent = badgeButton.label;
+        bBtn.onclick = async (e) => {
+          e.stopPropagation();
+          if (currentRun !== r.run_id) await selectRun(r.run_id);
+          showPanel('risks');
+        };
+        row.appendChild(bBtn);
+      }
       row.appendChild(delBtn);
       el.appendChild(row);
   }
@@ -2878,7 +2917,10 @@ async function renderArchitecturePanel(id, data) {
     : '';
 
   body.innerHTML = viewerHtml + specHtml + roleRows + stageProposalsHtml + issueProposalsHtml
-    + `<div class="lede" style="font-size:.72rem;margin-top:.4rem">Live backing status and bidding are on the Roles panel.</div>`;
+    + `<div class="lede" style="font-size:.72rem;margin-top:.4rem">Live backing status and bidding are on the <button type="button" class="inline-panel-link" id="pipeline-open-roles-link">Roles panel</button>.</div>`;
+
+  const openRolesLink = body.querySelector('#pipeline-open-roles-link');
+  if (openRolesLink) openRolesLink.onclick = () => showPanel('roles');
 
   for (const btn of body.querySelectorAll('.panel-proposal-approve-btn')) {
     btn.onclick = async () => {
