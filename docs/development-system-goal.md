@@ -4736,4 +4736,15 @@ directly traceable to an earlier mutation test this session (check `[39]`'s own 
 not a bulk-deletion policy call. 98/98 stress harness stays clean. Committed to
 `CADS-devsystem@e8af000`.
 
+**Main-dev-loop firing, 2026-08-07 (t) -- real stress-harness coverage for last firing's git-SHA
+deploy verification.** State check: no new operator input on any of the four standing decision
+points, `#13`/`#14`/PRs unchanged.
+
+`GET /api/version` shipped last firing with a hermetic "unset reports honestly" test, but nothing
+proved the *actual deployed container* has a real SHA baked in rather than silently falling back to
+`"unknown"` (e.g. if the `ARG`/`ENV` wiring ever broke without failing the build). Added check
+`[48]`: fetches `/api/version` from the real running deployment and confirms `git_sha` matches a
+real 40-hex-character SHA, not `"unknown"` or anything malformed. 99/99 assertions clean (48 checks).
+Committed to `CADS-devsystem@6b8c5bd`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
