@@ -21,8 +21,8 @@ use devsystem_pipeline::preflight::{preflight_annotations, process_annotations};
 use devsystem_pipeline::runner::{
     duplicate_of_last_iteration, load_or_init_run, persist_run, push_chat_exchange, qualifying_review_evidence, render_requirements_markdown, run_iteration, toggle_acceptance_criterion,
     toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, valid_run_id, validate_requirement_indices, BacklogItem, CustomPanel,
-    Milestone, PendingIssueProposal, PendingNextStepDraft, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal, Requirement,
-    RoleFillMode, RunOutcome, RunState,
+    Milestone, PendingDeleteRunProposal, PendingIssueProposal, PendingNextStepDraft, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal,
+    Requirement, RoleFillMode, RunOutcome, RunState,
 };
 use devsystem_pipeline::{apply_proposal, contains_bidi_control_char, validate_feedback, validate_proposals, AbortCriteria, IterationRecord, ProposalOutcome, StageProposal, MAX_ROLE_UNITS};
 use ct_common::channel::{CapacityKind, CapacityOffer, ServiceType};
@@ -243,6 +243,9 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/panels/{panel_id}/propose-edit", post(propose_panel_edit))
         .route("/api/runs/{id}/panels/edit-proposals/{proposal_id}/approve", post(approve_panel_edit))
         .route("/api/runs/{id}/panels/edit-proposals/{proposal_id}/reject", post(reject_panel_edit))
+        .route("/api/runs/{id}/delete-proposal", post(propose_delete_run))
+        .route("/api/runs/{id}/delete-proposal/{proposal_id}/approve", post(approve_delete_run))
+        .route("/api/runs/{id}/delete-proposal/{proposal_id}/reject", post(reject_delete_run))
         .route("/api/runs/{id}/stages/propose", post(propose_stage))
         .route("/api/runs/{id}/stages/proposals/{proposal_id}/approve", post(approve_stage_proposal))
         .route("/api/runs/{id}/stages/proposals/{proposal_id}/reject", post(reject_stage_proposal))
@@ -590,7 +593,12 @@ async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap
                 + run_state.pending_panel_removal_proposals.len()
                 + run_state.pending_panel_edit_proposals.len()
                 + run_state.pending_stage_proposals.len()
-                + run_state.pending_issue_proposals.len();
+                + run_state.pending_issue_proposals.len()
+                // §7.2 gap #2's newest instance (2026-08-07): added to this exact
+                // count in the same commit that introduced the field, not left for a
+                // future firing to rediscover this same undercounting bug class a
+                // sixth queue.
+                + run_state.pending_delete_run_proposal.is_some() as usize;
             let alert = needs_attention(&health, pending_reviews);
             let paused = run_state.paused;
             let pause_reason = run_state.pause_reason.clone();
@@ -724,11 +732,12 @@ async fn get_run(State(state): State<AppState>, AxPath(id): AxPath<String>, head
 /// through every open point one at a time, guided by `devsystem.assistant`,
 /// instead of a human having to notice each one live across five separate
 /// panels) will actually consume. Deliberately a read-only projection over
-/// state that already exists elsewhere (the five real pending-proposal
-/// queues, `paused`/`pause_reason`) -- this invents no new state of its own,
-/// it only orders and summarizes what's already real. Matches
+/// state that already exists elsewhere (the six real pending-proposal
+/// queues -- a fifth grew to six with `pending_delete_run_proposal`,
+/// 2026-08-07 -- plus `paused`/`pause_reason`) -- this invents no new state
+/// of its own, it only orders and summarizes what's already real. Matches
 /// `pending_reviews`'s own established definition of "needs a human
-/// decision" exactly (same five queues, same order) plus the one further
+/// decision" exactly (same six queues, same order) plus the one further
 /// case that already has its own honest "here's why, a human decides" story:
 /// a paused run, e.g. `webconference-android`'s own real M1 checkpoint.
 /// Deliberately does NOT include unverified requirements or stalled stages --
@@ -776,6 +785,12 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
     }
     for p in &run_state.pending_issue_proposals {
         points.push(OpenPoint { kind: "issue_proposal", id: p.id.clone(), summary: format!("file issue on {}: {}", p.repo, p.title), proposed_at: Some(p.proposed_at) });
+    }
+    // §7.2 gap #2's newest instance (2026-08-07): same "real pending-proposal
+    // queue, surfaced here so a human sees it without hunting" treatment as
+    // the five queues above.
+    if let Some(p) = &run_state.pending_delete_run_proposal {
+        points.push(OpenPoint { kind: "delete_run_proposal", id: p.id.clone(), summary: format!("delete this run: {}", p.rationale), proposed_at: Some(p.proposed_at) });
     }
     // Real gap, live-found 2026-08-06: while paused, a next-step draft is
     // shown nested under the paused_checkpoint entry above (see the GUI's own
@@ -857,6 +872,131 @@ async fn delete_run(State(state): State<AppState>, AxPath(id): AxPath<String>, h
     match fs::remove_dir_all(&dir) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to remove run directory: {e}")).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ProposeDeleteRunRequest {
+    rationale: String,
+}
+
+/// `POST /api/runs/{id}/delete-proposal` -- §7.2 gap #2's newest closed
+/// instance (#382 goal doc, 2026-08-07): `devsystem.assistant`'s own
+/// assistant-facing half of the propose-then-approve trust model
+/// `pending_panel_removal_proposals` already established, applied to deleting
+/// a whole run. Records the proposal only -- `delete_run` above (the real,
+/// permanent `fs::remove_dir_all`) never runs until a human explicitly
+/// approves it below. An `Option`, not a queue: a second real proposal
+/// replaces the first rather than accumulating redundant requests to delete
+/// the same one run.
+async fn propose_delete_run(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ProposeDeleteRunRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let rationale = body.rationale.trim().to_string();
+    if rationale.is_empty() {
+        return (StatusCode::BAD_REQUEST, "rationale must not be empty -- a run disappearing for good deserves a real, stated reason").into_response();
+    }
+    // Same real gap `validate_proposals` closes for the embedded-proposal path,
+    // applied here for the identical reason `propose_stage`'s own rationale check is:
+    // a human approving from the open-points queue trusts this text at face value.
+    if contains_bidi_control_char(&rationale) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "rationale contains a Unicode bidi control character (e.g. a right-to-left override) \
+             -- these can make the visually displayed text not match what's actually stored"
+                .to_string(),
+        )
+            .into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let proposal = PendingDeleteRunProposal { id: format!("{:016x}", rand::random::<u64>()), rationale, proposed_at: unix_now() };
+    run_state.pending_delete_run_proposal = Some(proposal.clone());
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(proposal).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/delete-proposal/{proposal_id}/approve` -- the actual
+/// destructive step: real `fs::remove_dir_all`, identical to `delete_run`'s
+/// own. Unlike `approve_panel_removal`, there is no "already removed some
+/// other way, clear the stale proposal anyway" case to handle gracefully --
+/// once this run is gone, there is no longer a `state.json` to persist a
+/// cleared proposal into, so a `204` with no body is the only honest
+/// response (matching `delete_run`'s own).
+async fn approve_delete_run(State(state): State<AppState>, AxPath((id, proposal_id)): AxPath<(String, String)>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    match load_or_init_run(&dir, &id) {
+        Ok((_spec, run_state)) => {
+            if !owner_authorized(&headers, &run_state) {
+                return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+            }
+            let Some(proposal) = &run_state.pending_delete_run_proposal else {
+                return (StatusCode::NOT_FOUND, format!("no pending delete proposal with id {proposal_id:?}")).into_response();
+            };
+            if proposal.id != proposal_id {
+                return (StatusCode::NOT_FOUND, format!("no pending delete proposal with id {proposal_id:?}")).into_response();
+            }
+        }
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    }
+    match fs::remove_dir_all(&dir) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to remove run directory: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/delete-proposal/{proposal_id}/reject` -- the safe
+/// direction: the run was never touched, so this only ever drops the
+/// pending proposal.
+async fn reject_delete_run(State(state): State<AppState>, AxPath((id, proposal_id)): AxPath<(String, String)>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let matches = matches!(&run_state.pending_delete_run_proposal, Some(p) if p.id == proposal_id);
+    if !matches {
+        return (StatusCode::NOT_FOUND, format!("no pending delete proposal with id {proposal_id:?}")).into_response();
+    }
+    run_state.pending_delete_run_proposal = None;
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"rejected": proposal_id})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
     }
 }
 
@@ -8565,6 +8705,102 @@ exit 1"#);
         // And genuinely gone, not just hidden from the list -- GET on the same id 404s.
         let get_response = app.oneshot(Request::builder().uri("/api/runs/throwaway-run").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(get_response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    /// §7.2 gap #2's newest instance (#382 goal doc, 2026-08-07): the
+    /// assistant-facing mirror of `delete_run` above, gated the same way
+    /// custom-panel removal already is -- proposing must NOT touch the real
+    /// run, only approving does.
+    async fn a_delete_run_proposal_only_deletes_the_real_run_once_approved() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "delete-propose-run"}))).await.unwrap();
+
+        let proposed = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/delete-propose-run/delete-proposal", serde_json::json!({"rationale": "superseded by v2"})))
+            .await
+            .unwrap();
+        assert_eq!(proposed.status(), SC::OK);
+        let proposal = body_json(proposed).await;
+        assert_eq!(proposal["rationale"], "superseded by v2");
+        let proposal_id = proposal["id"].as_str().unwrap().to_string();
+
+        // The whole point: proposing deletion must NOT delete it yet.
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/delete-propose-run").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(get.status(), SC::OK, "the run must still exist while the deletion is only proposed");
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["pending_delete_run_proposal"]["id"], proposal_id);
+
+        let approve = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/delete-propose-run/delete-proposal/{proposal_id}/approve")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(approve.status(), SC::NO_CONTENT);
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/delete-propose-run").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(get.status(), SC::NOT_FOUND, "approval must actually delete the real run, not just clear the proposal");
+    }
+
+    #[tokio::test]
+    async fn rejecting_a_delete_run_proposal_leaves_the_real_run_untouched() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "delete-reject-run"}))).await.unwrap();
+        let proposed = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/delete-reject-run/delete-proposal", serde_json::json!({"rationale": "testing rejection"})))
+            .await
+            .unwrap();
+        let proposal_id = body_json(proposed).await["id"].as_str().unwrap().to_string();
+
+        let reject = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/delete-reject-run/delete-proposal/{proposal_id}/reject")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(reject.status(), SC::OK);
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/delete-reject-run").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(get.status(), SC::OK, "a rejected deletion proposal must never have touched the real run");
+        let run = body_json(get).await;
+        assert!(run["state"]["pending_delete_run_proposal"].is_null(), "a rejected proposal must be cleared, not left dangling");
+    }
+
+    #[tokio::test]
+    async fn propose_delete_run_rejects_an_empty_or_bidi_laced_rationale() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "delete-validate-run"}))).await.unwrap();
+
+        let empty = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/delete-validate-run/delete-proposal", serde_json::json!({"rationale": "   "})))
+            .await
+            .unwrap();
+        assert_eq!(empty.status(), SC::BAD_REQUEST);
+
+        let bidi = app
+            .oneshot(json_request("POST", "/api/runs/delete-validate-run/delete-proposal", serde_json::json!({"rationale": "looks fine\u{202E}but isn't"})))
+            .await
+            .unwrap();
+        assert_eq!(bidi.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn approving_an_unknown_delete_run_proposal_id_is_a_real_404() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "delete-unknown-run"}))).await.unwrap();
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/delete-unknown-run/delete-proposal/does-not-exist/approve").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
     }
 
     #[tokio::test]

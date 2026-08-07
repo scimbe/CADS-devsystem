@@ -2825,6 +2825,7 @@ const OPEN_POINT_KIND_LABELS = {
   stage_proposal: 'New pipeline stage proposal',
   issue_proposal: 'GitHub issue proposal',
   next_step_draft: 'Draft next-step option (unresolved)',
+  delete_run_proposal: 'Delete-run proposal',
 };
 const OPEN_POINT_APPROVE_PATHS = {
   panel_proposal: 'panels/proposals',
@@ -2832,6 +2833,7 @@ const OPEN_POINT_APPROVE_PATHS = {
   panel_edit_proposal: 'panels/edit-proposals',
   stage_proposal: 'stages/proposals',
   issue_proposal: 'issues/proposals',
+  delete_run_proposal: 'delete-proposal',
 };
 
 // "Stack mode" slice 3: devsystem.assistant's own real draft next-step
@@ -2921,16 +2923,18 @@ async function renderOpenPointsPanel(id, data) {
   document.getElementById('op-next').onclick = () => { openPointIndex++; renderOpenPointsPanel(id, data); };
 
   const statusEl = document.getElementById('op-status');
-  async function runOpenPointAction(fn) {
+  // afterSuccess defaults to the normal full refresh every other open-point
+  // action needs (approve/reject/resume all change real state other panels
+  // already show). Overridable for the one real exception: approving a
+  // delete-run proposal makes THIS run stop existing, so the normal
+  // selectRun(id) refresh would just 404 -- same real "it's gone, go back to
+  // the list" handling refreshTick's own 404 case already uses.
+  async function runOpenPointAction(fn, afterSuccess = () => selectRun(id)) {
     statusEl.textContent = '';
     statusEl.className = 'status-line';
     try {
       await fn();
-      // Full refresh, not just this panel -- an approve/reject/resume here
-      // changes real state other panels (Pipeline, Custom Panels, Health &
-      // Criteria) already show, same as every other action in this file that
-      // mutates run state.
-      await selectRun(id);
+      await afterSuccess();
     } catch (e) {
       statusEl.textContent = e.message;
       statusEl.className = 'status-line err';
@@ -2963,8 +2967,23 @@ async function renderOpenPointsPanel(id, data) {
     document.getElementById('op-act-resume').onclick = () => runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/resume`, { method: 'POST' }));
   } else if (!isDraft) {
     const base = OPEN_POINT_APPROVE_PATHS[p.kind];
-    document.getElementById('op-act-approve').onclick = () =>
-      runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/${base}/${encodeURIComponent(p.id)}/approve`, { method: 'POST' }));
+    const isDeleteRun = p.kind === 'delete_run_proposal';
+    document.getElementById('op-act-approve').onclick = () => {
+      // Real DAU-lens gate (#382 goal doc §7.2, 2026-08-07): approving every
+      // OTHER open-point kind here is reversible or merely additive (a new
+      // panel, a new stage, a filed issue) -- this one deletes the entire run
+      // for real, permanently, the moment it's clicked. The same real
+      // confirm() the direct delete button in the Runs panel already
+      // requires, not silently waved through just because it arrived via a
+      // proposal this time.
+      if (isDeleteRun && !confirm(`Delete run "${id}" permanently? This removes it and all its real state for good -- there's no undo.`)) return;
+      const approveCall = () => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/${base}/${encodeURIComponent(p.id)}/approve`, { method: 'POST' });
+      if (isDeleteRun) {
+        runOpenPointAction(approveCall, () => { currentRun = null; currentRunData = null; return refreshRunsList(); });
+      } else {
+        runOpenPointAction(approveCall);
+      }
+    };
     document.getElementById('op-act-reject').onclick = () =>
       runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/${base}/${encodeURIComponent(p.id)}/reject`, { method: 'POST' }));
   }

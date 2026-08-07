@@ -185,7 +185,7 @@ fn build_system_prompt(context: &str) -> String {
          you are actually taking action; omit it entirely otherwise -- never emit an \
          empty or placeholder block):\n\
          {ACTIONS_FENCE_OPEN}\n\
-         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"...\"}},{{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"...\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}},{{\"type\":\"propose_next_step\",\"text\":\"...\"}},{{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"...\"}},{{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5}},{{\"type\":\"set_paused\",\"paused\":true}}]\n\
+         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"...\"}},{{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"...\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}},{{\"type\":\"propose_next_step\",\"text\":\"...\"}},{{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"...\"}},{{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5}},{{\"type\":\"set_paused\",\"paused\":true}},{{\"type\":\"propose_delete_run\",\"rationale\":\"...\"}}]\n\
          {ACTIONS_FENCE_CLOSE}\n\
          Indices refer to the real state.milestones/state.backlog/state.requirements \
          arrays already shown to you below -- never guess an index you can't see \
@@ -209,9 +209,9 @@ fn build_system_prompt(context: &str) -> String {
          real work as already complete, tell them to submit it themselves via the New \
          Iteration panel (or their role-filler's normal path) -- never emit an \
          iteration on their behalf, no matter how confident you are. `propose_custom_panel`, \
-         `propose_remove_custom_panel`, `propose_edit_custom_panel`, `propose_stage`, and \
-         `propose_issue` are different \
-         from the other nine: none takes effect by itself. `propose_custom_panel` \
+         `propose_remove_custom_panel`, `propose_edit_custom_panel`, `propose_stage`, \
+         `propose_issue`, and `propose_delete_run` are different \
+         from the other thirteen: none takes effect by itself. `propose_custom_panel` \
          only queues a real proposal (title + a self-contained HTML fragment, no \
          <script src> to anything external, it runs sandboxed with no page/session \
          access) for the operator to review and explicitly approve or reject in the \
@@ -239,9 +239,17 @@ fn build_system_prompt(context: &str) -> String {
          should be a real, specific, actionable bug/gap report grounded in the real \
          state you were given, not a vague complaint. It is NEVER posted to GitHub \
          without the operator's own explicit approval, no matter how confident you \
-         are. Use any of these five only when the operator actually asks for a new \
-         panel/dashboard/stage, an edit to an existing panel, or you've found a \
-         genuine, concrete gap worth a real issue -- not speculatively. `propose_next_step` \
+         are. `propose_delete_run` is the most consequential of these -- it does not \
+         remove a part of the run, it queues deleting the ENTIRE run, permanently, no \
+         undo, and is NEVER applied until the operator explicitly approves it (the \
+         same real `confirm()`-gated deletion their own direct delete button in the \
+         Runs panel already uses); `rationale` must be a real, specific reason, never \
+         a placeholder -- use this ONLY when the operator explicitly asks to delete \
+         this run, never speculatively, never because a run looks stalled or old. Use \
+         any of these six only when the operator actually asks for a new \
+         panel/dashboard/stage, an edit to an existing panel, deleting this run, or \
+         you've found a genuine, concrete gap worth a real issue -- not speculatively. \
+         `propose_next_step` \
          is different again: it queues a real, plain-text draft next-iteration-plan \
          option in the Open Points panel, which the operator can edit or delete \
          directly (no approve/reject gate -- a draft is not itself an action, just \
@@ -255,9 +263,11 @@ fn build_system_prompt(context: &str) -> String {
          silently decide the run's direction yourself. Never emit this action on a run \
          that isn't paused -- there is no checkpoint to plan past yet. In summary, if \
          asked to describe your own real capabilities, state all THREE real categories, \
-         not just the first two: (1) direct actions on the nine milestone/backlog/ \
-         requirement/repo_url/create_run action types, applied immediately; (2) the \
-         five propose_* actions (custom panel add/edit/remove, stage, issue), queued \
+         not just the first two: (1) direct actions on the thirteen milestone/backlog/ \
+         requirement/repo_url/create_run/role-fill-mode/abort-criteria/pause-state \
+         action types, applied immediately; (2) the \
+         six propose_* actions (custom panel add/edit/remove, stage, issue, run \
+         deletion), queued \
          for the operator's explicit approve/reject; (3) propose_next_step, queued as a \
          directly editable/deletable draft with no approve step at all. Never collapse \
          these three into two when summarizing yourself -- category 3 is real and \
@@ -267,7 +277,7 @@ fn build_system_prompt(context: &str) -> String {
          real bidder sees, and a vague/speculative issue wastes a human reviewer's \
          time. If a request is ambiguous, or you're not confident it's safe to act on, \
          say so in prose and ask instead of emitting an action. You have NO other tool \
-         or system access in this version -- only these nineteen action types against \
+         or system access in this version -- only these twenty action types against \
          these nine kinds of data (milestones, backlog items, requirements, repo_url, \
          runs, custom panels, stages, issues, next-step drafts); for anything else \
          (e.g. an actual code change, or \
@@ -433,6 +443,17 @@ enum Action {
     /// honest when relayed through chat, since the decision to pause really
     /// was the operator's, not an automatic system trigger.
     SetPaused { paused: bool },
+    /// The other real finding of the same 2026-08-07 audit (#382 goal doc §7.2,
+    /// gap #2), deliberately NOT given `SetPaused`'s direct-action treatment:
+    /// a human can already delete a whole run (the Runs panel's own delete
+    /// button, gated by a real `confirm()` -- "there's no undo"), but this is
+    /// exactly as destructive and irreversible as removing a custom panel, so
+    /// it gets the identical propose-then-approve trust model
+    /// `ProposeRemoveCustomPanel` already established, not the "safe,
+    /// reversible, applies immediately" model `SetPaused` gets. Does not
+    /// apply immediately -- see `RunState::pending_delete_run_proposal`'s own
+    /// doc comment.
+    ProposeDeleteRun { rationale: String },
 }
 
 fn default_stage_units() -> u64 {
@@ -636,6 +657,12 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
             format!("{base}/api/runs/{run_id}/{}", if *paused { "pause" } else { "resume" }),
             serde_json::json!({}),
             "done",
+        ),
+        Action::ProposeDeleteRun { rationale } => (
+            format!("propose deleting this run (awaiting your approval in the Open Points panel): {rationale}"),
+            format!("{base}/api/runs/{run_id}/delete-proposal"),
+            serde_json::json!({"rationale": rationale}),
+            "proposed",
         ),
     };
     // Real gap #10 (#382 goal doc §8, fourteenth stress-test run, 2026-08-06):
@@ -1070,8 +1097,9 @@ mod tests {
                 && prompt.contains("propose_next_step")
                 && prompt.contains("set_role_fill_mode")
                 && prompt.contains("update_criteria")
-                && prompt.contains("set_paused"),
-            "all nineteen real action types must be documented"
+                && prompt.contains("set_paused")
+                && prompt.contains("propose_delete_run"),
+            "all twenty real action types must be documented"
         );
         assert!(
             prompt.contains("state.paused is true") && prompt.contains("2-3 SEPARATE"),
@@ -1083,10 +1111,14 @@ mod tests {
         );
         assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these nine data kinds");
         assert!(
-            prompt.contains("nineteen action types") && prompt.contains("these nine kinds of data"),
-            "real gap found live 2026-08-06: propose_next_step's own addition (fifteenth action type, ninth kind of data -- next-step drafts) updated the action-type count but left the kinds-of-data count at the stale pre-next-step value of eight, so the live assistant's own self-description contradicted itself (\"Eight kinds of data\" followed by a table that itself summed to nine) -- must state nine, matching the real count. Same class of bug found again live 2026-08-06 (docs-loop firing): ToggleRequirementAutoJudge's own addition (sixteenth action type, still the same nine kinds of data -- no new kind, just a new action on the existing requirements kind) left this count stale at fifteen; the live assistant's own self-report ('15 total action types') was checked and found wrong before this fix, not assumed. SetRoleFillMode (seventeenth action type, still nine kinds of data -- roles aren't a new kind, this session already treats role/auction state as covered by the existing surface) grew the count again in the same firing this comment was written, updated together this time rather than in a later separate fix. UpdateCriteria (eighteenth action type, still nine kinds of data -- abort criteria are per-run metadata, already covered by the existing \"runs\" kind) closes the last of §7's own three previously-deferred gaps; count updated in this same commit, not a later separate fix. SetPaused (nineteenth action type, still nine kinds of data -- a run's paused/pause_reason are per-run metadata, the same \"runs\" kind update_criteria already covers) closes the §7.2 gap #2 audit's newest finding; count updated in this same commit, not a later separate fix"
+            prompt.contains("twenty action types") && prompt.contains("these nine kinds of data"),
+            "real gap found live 2026-08-06: propose_next_step's own addition (fifteenth action type, ninth kind of data -- next-step drafts) updated the action-type count but left the kinds-of-data count at the stale pre-next-step value of eight, so the live assistant's own self-description contradicted itself (\"Eight kinds of data\" followed by a table that itself summed to nine) -- must state nine, matching the real count. Same class of bug found again live 2026-08-06 (docs-loop firing): ToggleRequirementAutoJudge's own addition (sixteenth action type, still the same nine kinds of data -- no new kind, just a new action on the existing requirements kind) left this count stale at fifteen; the live assistant's own self-report ('15 total action types') was checked and found wrong before this fix, not assumed. SetRoleFillMode (seventeenth action type, still nine kinds of data -- roles aren't a new kind, this session already treats role/auction state as covered by the existing surface) grew the count again in the same firing this comment was written, updated together this time rather than in a later separate fix. UpdateCriteria (eighteenth action type, still nine kinds of data -- abort criteria are per-run metadata, already covered by the existing \"runs\" kind) closes the last of §7's own three previously-deferred gaps; count updated in this same commit, not a later separate fix. SetPaused (nineteenth action type, still nine kinds of data -- a run's paused/pause_reason are per-run metadata, the same \"runs\" kind update_criteria already covers) closes the §7.2 gap #2 audit's newest finding; count updated in this same commit, not a later separate fix. ProposeDeleteRun (twentieth action type, still nine kinds of data -- deleting a run is still about the \"runs\" kind, not a new one) closes the SAME audit's other real finding, found in the SAME firing that added SetPaused; count updated together, not split across two commits. This same audit also found (and fixed in this commit) a FIFTH, older instance of this exact bug class that predates this specific test's own history: a separate sentence describing category (1)'s own direct-action count had silently stayed at \"nine\" (the real count when ToggleRequirementAutoJudge/SetRoleFillMode/UpdateCriteria/SetPaused were still direct actions not yet added) instead of the real thirteen -- found by actually counting the enum's own direct-action variants, not trusted from the sentence itself"
         );
         assert!(prompt.contains("none takes effect by itself"), "the panel/panel-removal/panel-edit/stage/issue-proposal approval gate must be explicit, not implied");
+        assert!(
+            prompt.contains("queues deleting the ENTIRE run") && prompt.contains("never speculatively, never because a run looks stalled or old"),
+            "propose_delete_run's own real guardrails (irreversible, needs a real rationale, never speculative) must be explicit, not left for the LLM to infer from the generic proposal-gate language alone"
+        );
         assert!(prompt.contains("BE TERSE") && prompt.contains("mehr tun, weniger reden"), "the operator's own terseness instruction must be explicit, not just implied by 'be concise'");
         assert!(prompt.contains("scimbe/CADS-webconference-demo"), "the issue-proposal repo allowlist must be stated in the prompt, not left for the LLM to guess");
         assert!(prompt.contains("EARS"), "the requirement-statement format expectation must be explicit, not left for the LLM to guess at style");
@@ -1158,8 +1190,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_actions_parses_all_nineteen_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"},{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"alice\"},{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5},{\"type\":\"set_paused\",\"paused\":true}]\n```";
+    fn extract_actions_parses_all_twenty_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"},{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"alice\"},{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5},{\"type\":\"set_paused\",\"paused\":true},{\"type\":\"propose_delete_run\",\"rationale\":\"testing only, real reason\"}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -1198,6 +1230,7 @@ mod tests {
                 Action::SetRoleFillMode { tag: "plan".to_string(), mode: "dedicated".to_string(), label: Some("alice".to_string()) },
                 Action::UpdateCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 5 },
                 Action::SetPaused { paused: true },
+                Action::ProposeDeleteRun { rationale: "testing only, real reason".to_string() },
             ]
         );
     }
@@ -1592,6 +1625,25 @@ mod tests {
         let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
         assert_eq!(method, "POST");
         assert_eq!(url, "/api/runs/my-run/resume");
+    }
+
+    #[test]
+    /// Real gap closed (#382 goal doc §7.2, gap #2's other 2026-08-07 finding):
+    /// see `Action::ProposeDeleteRun`'s own doc comment for why this is
+    /// proposal-gated, not a direct action like `SetPaused` -- deleting a run
+    /// is exactly as destructive/irreversible as removing a custom panel.
+    fn apply_action_posts_the_real_propose_delete_run_request_and_reports_proposed_not_done() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let action = Action::ProposeDeleteRun { rationale: "superseded by webconference-android-v2".to_string() };
+        let result = apply_action(&client, &addr, "my-run", &action);
+        assert!(result.starts_with("proposed:"), "a delete-run proposal must never be reported as \"done\" -- the run isn't actually gone yet: {result}");
+        assert!(result.contains("awaiting your approval"), "the response must say a human still has to act: {result}");
+        let (method, url, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/delete-proposal");
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("body must be valid JSON");
+        assert_eq!(parsed["rationale"], "superseded by webconference-android-v2");
     }
 
     #[test]

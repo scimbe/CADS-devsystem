@@ -450,6 +450,24 @@ pub struct RunState {
     /// (none proposed yet) still load.
     #[serde(default)]
     pub pending_next_step_drafts: Vec<PendingNextStepDraft>,
+    /// §7.2 gap #2's newest closed instance (#382 goal doc, 2026-08-07):
+    /// re-auditing every human-editable field found a human can already
+    /// delete a whole run (the Runs panel's own delete button, gated by a
+    /// real `confirm()` -- "there's no undo"), but the assistant had no path
+    /// at all, direct or gated. Deliberately NOT a direct action -- unlike
+    /// `pause`/`resume` (fully reversible, the human's own button gets zero
+    /// extra confirmation), deleting a run is exactly as destructive and
+    /// irreversible as removing a custom panel, so it gets the identical
+    /// propose-then-approve trust model `pending_panel_removal_proposals`
+    /// already established, not `SetPaused`'s "safe, reversible, applies
+    /// immediately" one. An `Option`, not a `Vec` like the panel-proposal
+    /// queues -- there is only ever one real run to propose deleting, so at
+    /// most one pending proposal is ever meaningful; a second `propose` call
+    /// replaces the first rather than accumulating a queue of redundant
+    /// requests. `#[serde(default)]` so pre-existing `state.json` files
+    /// (none proposed yet) still load.
+    #[serde(default)]
+    pub pending_delete_run_proposal: Option<PendingDeleteRunProposal>,
     /// This run's real, structured requirements -- see [`Requirement`].
     /// `#[serde(default)]` so pre-existing `state.json` files (none defined
     /// yet) still load.
@@ -638,6 +656,17 @@ pub struct PendingPanelEditProposal {
     pub proposed_at: u64,
 }
 
+/// See [`RunState::pending_delete_run_proposal`]'s doc comment. `rationale` is
+/// required (unlike a panel removal, which is self-explanatory) -- a run
+/// disappearing for good deserves a real, stated reason a human can weigh,
+/// not just a bare id.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingDeleteRunProposal {
+    pub id: String,
+    pub rationale: String,
+    pub proposed_at: u64,
+}
+
 impl RunState {
     pub fn new(run_id: impl Into<String>) -> Self {
         RunState {
@@ -661,6 +690,7 @@ impl RunState {
             pending_stage_proposals: Vec::new(),
             pending_issue_proposals: Vec::new(),
             pending_next_step_drafts: Vec::new(),
+            pending_delete_run_proposal: None,
             requirements: Vec::new(),
             assistant_usage: AssistantUsageTotals::default(),
             chat_history: Vec::new(),
