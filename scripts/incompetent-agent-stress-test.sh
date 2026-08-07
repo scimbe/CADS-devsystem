@@ -509,6 +509,25 @@ check "the risk fires and its fix_target is genuinely absent (this risk kind's G
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$cadence_run"
 
 echo
+echo "[39] a delete-run proposal must not delete the real run until approved, and rejecting it must leave the run genuinely untouched (CADS-devsystem@f06b2ba, #382 goal doc §7.2 gap #2)"
+del_run="${RUN}-delete-propose-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$del_run\"}"
+propose_body=$(curl -s -X POST "$BASE/api/runs/$del_run/delete-proposal" -H 'content-type: application/json' -d '{"rationale":"incompetent-agent stress harness probe"}')
+del_proposal_id=$(echo "$propose_body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null)
+status=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/runs/$del_run")
+check "the run still exists while the deletion is only proposed" "200" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$del_run/delete-proposal/$del_proposal_id/reject")
+check "rejecting the proposal succeeds" "200" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/runs/$del_run")
+check "the run is still genuinely untouched after a rejected delete proposal" "200" "$status"
+propose_body=$(curl -s -X POST "$BASE/api/runs/$del_run/delete-proposal" -H 'content-type: application/json' -d '{"rationale":"incompetent-agent stress harness probe, second real proposal"}')
+del_proposal_id=$(echo "$propose_body" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null)
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$del_run/delete-proposal/$del_proposal_id/approve")
+check "approving a real delete proposal succeeds" "204" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/runs/$del_run")
+check "approval actually deletes the real run, not just clears the proposal" "404" "$status"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
