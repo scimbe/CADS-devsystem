@@ -5691,4 +5691,34 @@ Remaining new issues (`#34`-`#40`) are real and mostly bigger/structural (requir
 surfacing, artifact channel, iteration provenance/dedup, requirement edit/remove) -- honestly left for
 future firings, not attempted speculatively in this same bounded increment.
 
+**Main-dev-loop firing, 2026-08-07 (ccc) -- issue #38's real, live data corruption reclaimed in the
+flagship run.** State check: no new operator input on `#14`/`#382`. Picked `#38` -- a real evaluator
+finding of the same-content-twice, one-number-skipped duplicate iteration in `webconference-android`'s
+own stored history, live-confirmed via the deployed API before touching anything
+(`iterations_until_ceiling: 1`, genuinely one slot from the ceiling).
+
+Investigated the current code first rather than assume the report's own root-cause framing still
+held: `iteration` is already server-derived (`history.len() + 1`), and `duplicate_of_last_iteration`
+already rejects an exact repeat of the immediately-preceding entry -- both built earlier this session,
+confirmed by their own code comments to have been built *because of* this exact duplicate. The real
+remaining gap was narrower than the report assumed: the historical data itself was never retroactively
+corrected. Removed the exact duplicate, renumbered the trailing entries to be contiguous (matching
+what a correct submission would have produced), and -- after tracing `checkin_pending()`'s own
+boundary math by hand rather than guessing -- deliberately left `checkin_acknowledged_through`
+untouched (it's a length snapshot, not an identity reference; decrementing it would have spuriously
+flagged a check-in as pending). `CADS-devsystem@ed1423c`, live-verified before/after:
+`iterations_completed` 19→18, `iterations_until_ceiling` 1→2 (the scarce slot reclaimed),
+`checkin_pending` stays `false`. Full 100/100 stress harness stays clean.
+
+A real, separate mistake caught before it shipped: the first repair attempt used a bare `json.dump()`
+with Python's default `ensure_ascii=True`, silently mangling every non-ASCII character in the file
+(the goal doc's own `§` sigils) into `\uXXXX` escapes -- caught by noticing the diff size was
+implausibly large for a one-entry removal, reverted from a real backup before committing, redone with
+`ensure_ascii=False`, confirmed the diff contained only the real semantic change (65 lines: one
+duplicate block removed, ten `iteration` fields renumbered) before shipping.
+
+`#38`'s own suggestions #1 (real `id`/`submitted_at` identity per iteration) and #2 (an accepted
+idempotency key) remain real, open, structural gaps beyond today's narrower exact-repeat guard --
+named honestly on the issue, left open, not attempted in this same bounded increment.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
