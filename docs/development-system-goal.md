@@ -6120,4 +6120,36 @@ cases). Full stress harness now at 108/108.
 `#49`'s own suggestion #3 (record which real account/role actually filled a stage, not just the stage
 name) remains real, open work -- depends on `#40` (no actor field on iteration records yet).
 
+**Main-dev-loop firing, 2026-08-07 (sss) -- issue #51: the New Iteration dropdown now offers all
+seven canonical stages, and the "+ New Project" dialog stopped overclaiming.** State check: `#382`'s
+three checkpoints and `#14` still unanswered. A fresh scimbe-authored issue had landed
+(`#51`, opened re-verifying `#49` from the plain GUI) -- picked it for direct continuity with the
+stage-field work this session had just shipped. The report: a fresh run only ever declares
+`devsystem.plan` (correct, by design -- pre-seeding all seven as auction-backed roles would
+contradict the self-optimizing pipeline), but the "+ New Project" dialog claimed "the generic 7-stage
+pipeline template", and the New Iteration dropdown offered nothing else -- forcing every other real
+stage name to be hand-typed into the free-text box. Live-demonstrated on the deployment: a
+transposed-letter typo (`devsystem.reveiw`) got a real `200` and three panels showing it accepted,
+while the review gate silently never counted it.
+
+Checked the report's own repro against the current deployment before touching anything: that exact
+typo case was already independently closed by `#49`'s own fix earlier this session -- confirmed live
+(`400`, not `200`) before starting. What remained was the deeper cause the issue itself named:
+nothing gave a user a real way to pick a correct stage name in the first place.
+
+`GET /api/runs/{id}` now returns `canonical_stages` -- the real `ALL_STAGES` constant
+`validate_stage` itself already checks, single source of truth, no duplicated list in the client.
+The dropdown groups "this run's live roles" (auction-backed) separately from "other canonical stages"
+(real, valid, not yet declared), so the free-text box goes back to being the genuine escape hatch it
+was meant to be. The dialog copy now states what actually happens instead of an aspiration.
+`CADS-devsystem@8c884c3`. New hermetic test, 204/204 web tests, zero warnings. Live-verified with a
+real headless-browser walkthrough (Playwright, `ct-playwright-runner`): the honest copy renders and
+the dropdown shows all seven stages grouped correctly against the actual deployment, zero page
+errors. Stress harness gained check `[51]`; full suite now 110/110.
+
+The report's own suggestion (a) ("actually seed the seven stages") was deliberately NOT taken --
+that would contradict the self-optimizing design's own stated principle (start minimal, let the run
+inform itself, per #382's own reframing). This fix takes the report's alternative framing instead:
+offer the real names without pretending they're declared roles.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
