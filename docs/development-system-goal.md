@@ -4341,4 +4341,36 @@ findings and nothing else. No operator decision needed for this one -- adding a 
 none existed is the strictly conservative direction, never a removal of a real permission. 90/90
 stress harness stays clean. Committed real run state to `CADS-devsystem@6397286`.
 
+**Goal-driven-loop firing, 2026-08-07 (d) -- a real live-LLM check of a question never directly
+asked before: does the assistant's own risk-awareness actually work, not just its data plumbing.**
+State check: no new operator input on any of the four standing decision points, `#13`/`#14`/CI/PRs
+unchanged.
+
+Traced `devsystem.assistant`'s real context pipeline end to end (`pipeline/src/bin/
+devsystem_assistant.rs`): `fetch_context` pulls the exact same `GET /api/runs/{id}` body the GUI's
+own Risks panel uses, then `condense_context` (`condense_history` + `condense_large_html_fields`)
+only ever touches `/state/history`, `/state/custom_panels`, `/state/pending_panel_proposals` --
+`risks` lives at the response's top level, outside all three pointers, so it reaches the LLM's
+context completely untouched. Confirmed, not assumed, by reading both condense functions in full.
+
+Then actually asked the real, deployed assistant a live question this project has run many
+variations of the underlying mechanism for but never asked this directly: *"What should I be
+worried about with this run right now?"* Real reply, not simulated: it correctly surfaced the "no
+review stage for real, succeeded work" risk by name, and — rather than parroting the coarse
+"touches auth/security" label seven times — synthesized a specific, concrete finding drawn from one
+of those seven flagged iterations (`TextMessage.sender_pubkey` being self-reported rather than
+derived from the authenticated Noise session). Judged this a reasonable design choice, not a gap:
+the Risks panel already shows the raw labels; the assistant adding synthesis on top is worth more
+than an echo. Its one falsifiable numeric claim in the reply ("14/20 iterations done, checkin fires
+in 1") was checked against the run's real `criteria`/`history.len()` and is exactly correct.
+
+Two of the assistant's findings were real and had no durable home anywhere in this run's own
+state -- only living in iteration 13's prose, exactly the "found once, then lost" pattern this
+project's own methodology exists to catch. Added both as real backlog items, per the assistant's
+own offer: the `sender_pubkey` provenance gap, and `MessageStore` never closing its
+`SQLiteDatabase` handle -- the latter independently corroborating the exact same gap this session
+already found and had to revert earlier for disk-space reasons (see the standing gap noted
+elsewhere in this file), now durably tracked instead of only living in a reverted diff. 90/90
+stress harness stays clean; no source code changed, real run state only.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
