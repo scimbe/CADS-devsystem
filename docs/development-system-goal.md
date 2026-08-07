@@ -5864,4 +5864,25 @@ out to already be shipped (2026-08-04, before `#34` was filed) -- confirmed live
 further work was needed there. Suggestion #3 (a compact `N/M requirements` counter in the Runs panel)
 remains real, open, smaller, separate work.
 
+**Main-dev-loop firing, 2026-08-07 (iii) -- issue #44: the Architecture panel now reports a run's real
+ownership state instead of only the abstract rule.** State check: `#382`'s three checkpoints and `#14`
+still unanswered. Picked `#44` -- an exceptionally well-evidenced finding: the panel told every reader
+a run's writes are "scoped to the account that created it," true as a general rule, but measurably
+vacuous -- 0 of 138 runs on the deployment (including `webconference-android`) have a recorded owner.
+
+Investigated the code first rather than assume the report's own hedge ("does not exist or does not
+run"): `owner_authorized()` and the create-run handler both work correctly and are already hermetically
+tested -- the real gap is that every run on this deployment was created through this pipeline's own
+headless CLI/automation, which never carries a signed-in browser's `X-Gate-Email`, so the ownership
+branch has simply never been exercised for real. Also resolved the one question the issue explicitly
+left open (permissive or restrictive when `owner_email` is `None`): permissive -- confirmed by reading
+`owner_authorized()` directly, not guessed at.
+
+Took suggestion #3, the cheapest honest fix, same pattern as `#41`: the note now names the *actual*
+state of the run being viewed (`data.state.owner_email`) instead of only the rule.
+`CADS-devsystem@4c00b00`, live-verified via Playwright against the real deployment that
+`webconference-android`'s panel now honestly states it has no recorded owner. Full 100/100 stress
+harness stays clean. Suggestion #1 (populate at creation) was already shipped before this issue was
+filed. Suggestion #2 (backfill/claim-run for the existing 138 runs) remains real, open, larger work.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
