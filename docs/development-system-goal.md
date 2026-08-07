@@ -6184,4 +6184,36 @@ on a run like `webconference-android` that also shows `needs_attention`) and its
 per-stage success count in the Roles panel, since "1 iteration(s)" today reads identically whether it
 shipped or failed) both remain real, open, un-actioned follow-ups.
 
+**Main-dev-loop firing, 2026-08-07 (uuu) -- issue #52: `id`/`submitted_at` are now an honest
+`Option`, not a value that only looks real.** State check: `#382`'s three checkpoints and `#14` still
+unanswered. A fresh scimbe-authored issue had landed (`#52`, updated just before `#53`) -- picked it
+this firing: `#38`'s original identity fix made `id`/`submitted_at` plain `String`/`u64` with
+`#[serde(default)]`, so every pre-existing record deserialized as `id: ""` / `submitted_at: 0` --
+values that *look* valid, not an explicit absence. Live-confirmed the census before touching
+anything: 18 of the flagship run's 22 real history records (114 of 133 platform-wide at the time the
+issue was filed) carried the sentinel. The consequence named in the report: `id: ""` collides 114
+ways, so `id` could not actually identify a record at all -- `#42`'s own id-keyed cross-reference
+suggestion is silently blocked on this until fixed.
+
+Took the issue's own suggestion #1 (the cheap fix, its own words): both fields are now
+`Option<String>`/`Option<u64>`, matching `owner_email`'s already-established honest-absence
+convention (`#44`/`#45`) -- `None` really means "predates the field," a real, visible `null`, not a
+value indistinguishable from a genuine one. Two custom deserializers normalize the legacy sentinel
+(and, for robustness, an explicit `null`) to `None` on load; every real id/timestamp minted since
+`#38` shipped is completely unaffected. `CADS-devsystem@8afbd93`. Confirmed neither field is read
+anywhere in the served GUI yet (the issue's own finding #3), so this is a pure schema-honesty fix,
+no display change needed this pass.
+
+New tests covering the legacy sentinel, genuinely-absent-field (pre-`#38`) data, a real value's
+round-trip, and `None`'s own serialization as a visible `null`. 150/150 pipeline lib tests, 204/204
+web tests, zero warnings. Live-verified against the actual flagship run: 18 of 22 records now report
+`null` where they used to report `""`/`0`, the other 4 unchanged. Stress harness gained check
+`[53]`; full suite now 115/115.
+
+Suggestion #2 (backfill real derived ids for the 114) was deliberately NOT taken -- the issue's own
+suggestion #1 is the honest, no-invented-data option, and `submitted_at` genuinely cannot be
+recovered regardless. Suggestion #4 (`#42`'s id-keyed cross-references become buildable now that
+`id` is trustworthy) remains real, open, sequenced work -- `id` is honest now, but nothing yet
+*uses* it for cross-referencing.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
