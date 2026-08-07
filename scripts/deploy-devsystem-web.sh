@@ -115,6 +115,24 @@ fi
 
 CURRENT_GIT_SHA="$(cd "$ROOT" && git rev-parse HEAD 2>/dev/null || echo unknown)"
 
+# Real incident, 2026-08-07: this host's own root filesystem was already at
+# 100% (33MB free on 72G) before a real hermetic `cargo test` run even
+# started, and a separate build through this exact script later ran 3-5x its
+# normal duration while the same disk kept draining -- the same disk this
+# host's other live services (this project's own control-plane, several demo
+# tunnels) depend on. Both times the problem was only noticed mid-build,
+# after minutes were already spent and the disk was already worse. A real,
+# cheap precondition instead: refuse to even start the build below 2GB free,
+# with a clear, actionable message -- failing in under a second beats
+# failing (or silently degrading everything else on the host) minutes in.
+MIN_FREE_KB=$((2 * 1024 * 1024))
+FREE_KB="$(df -Pk "$ROOT" | awk 'NR==2 {print $4}')"
+if [ -n "$FREE_KB" ] && [ "$FREE_KB" -lt "$MIN_FREE_KB" ]; then
+  FREE_HUMAN="$(df -Ph "$ROOT" | awk 'NR==2 {print $4}')"
+  echo "Only $FREE_HUMAN free on this host -- refusing to start a real docker build below a 2GB floor (a real incident already tied a slow/failed build here to a fully-drained disk affecting other live services on this host). Free real space first (e.g. \`docker image prune -f\`, \`docker builder prune -f\`) and re-run." >&2
+  exit 1
+fi
+
 echo "Building $IMAGE_TAG from $ROOT/web/Dockerfile ...${NO_CACHE_FLAG:+ (--no-cache)}"
 docker build "${NO_CACHE_FLAG[@]}" --build-arg "GIT_SHA=$CURRENT_GIT_SHA" -f "$ROOT/web/Dockerfile" -t "$IMAGE_TAG" "$ROOT"
 
