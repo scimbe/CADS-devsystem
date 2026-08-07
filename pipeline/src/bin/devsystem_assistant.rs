@@ -951,6 +951,16 @@ fn submit_assistant_offer(api_base: &str, run_id: &str, signing_key: &SigningKey
     }
 }
 
+/// See `serve`'s own `/version` handling for the real gap this closes.
+/// `"unknown"` when `DEVSYSTEM_GIT_SHA` is unset (a local invocation outside
+/// `deploy-devsystem-assistant.sh`, or a binary built before this existed) --
+/// never fabricated. A pure function, not inlined into the request loop, so
+/// it's directly unit-testable without spinning up a real `tiny_http` server.
+fn version_response_body() -> String {
+    let git_sha = std::env::var("DEVSYSTEM_GIT_SHA").unwrap_or_else(|_| "unknown".to_string());
+    serde_json::json!({"git_sha": git_sha}).to_string()
+}
+
 fn serve(listen_addr: &str, api_base: &str) -> ExitCode {
     let server = match tiny_http::Server::http(listen_addr) {
         Ok(s) => s,
@@ -974,6 +984,21 @@ fn serve(listen_addr: &str, api_base: &str) -> ExitCode {
     const OFFER_REFRESH_INTERVAL: Duration = Duration::from_secs(240);
 
     for mut request in server.incoming_requests() {
+        // Real gap found live 2026-08-07 (#382 goal doc §8): devsystem-web's own
+        // deploy script gained a real git-SHA verification after a stale Docker
+        // build-cache silently shipped a binary missing an unrelated feature --
+        // this process is a separate, standalone binary with its own real deploy
+        // path (deploy-devsystem-assistant.sh), which had no equivalent way to
+        // prove the running process actually matches source at all, only that
+        // it forked and answers SOME request. Same shape, same fix: report the
+        // real build SHA the deploy script passes in via DEVSYSTEM_GIT_SHA at
+        // process-start time (this binary isn't baked into a Docker image, so
+        // there's no build-time ARG/ENV to bake in -- the deploy script reads
+        // it itself and passes it straight through as a real env var).
+        if request.url() == "/version" && *request.method() == tiny_http::Method::Get {
+            let _ = request.respond(json_response(200, &version_response_body()));
+            continue;
+        }
         if request.url() != "/ask" || *request.method() != tiny_http::Method::Post {
             let _ = request.respond(json_response(404, r#"{"error":"not found -- POST /ask"}"#));
             continue;
@@ -1048,6 +1073,20 @@ mod tests {
     // --output-format json ...`, run directly against this host -- not a
     // hand-invented fixture (trimmed of fields this parser doesn't read).
     const REAL_CLAUDE_JSON_OUTPUT: &str = r#"{"is_error":false,"duration_api_ms":1749,"num_turns":1,"stop_reason":"end_turn","session_id":"2d85529b","total_cost_usd":0.16173249999999997,"usage":{"input_tokens":2,"cache_creation_input_tokens":15451,"cache_read_input_tokens":14175,"output_tokens":5,"service_tier":"standard"},"result":"Hi","type":"result"}"#;
+
+    #[test]
+    /// Real gap this closes -- see `version_response_body`'s own doc comment.
+    /// Only the honest "unset" default is safe to test hermetically (mutating
+    /// a process-global env var in a multi-threaded test binary would race
+    /// unpredictably with any other test); the real "set" case is exercised
+    /// live by `deploy-devsystem-assistant.sh` itself against the actual
+    /// running process, the same discipline `devsystem-web`'s own equivalent
+    /// test already established.
+    fn version_response_body_reports_unknown_honestly_when_git_sha_is_unset() {
+        let body = version_response_body();
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("must be valid JSON");
+        assert_eq!(parsed["git_sha"], "unknown");
+    }
 
     #[test]
     fn parses_the_real_claude_cli_json_output_shape() {

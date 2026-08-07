@@ -60,9 +60,11 @@ if [ -n "$OLD_PID" ]; then
   sleep 1
 fi
 
+CURRENT_GIT_SHA="$(cd "$ROOT" && git rev-parse HEAD 2>/dev/null || echo unknown)"
+
 echo "Starting devsystem_assistant --serve $LISTEN_ADDR $API_BASE (CWD=$ROOT) ..."
 cd "$ROOT"
-nohup setsid "$BIN_DIR/devsystem_assistant" --serve "$LISTEN_ADDR" "$API_BASE" \
+DEVSYSTEM_GIT_SHA="$CURRENT_GIT_SHA" nohup setsid "$BIN_DIR/devsystem_assistant" --serve "$LISTEN_ADDR" "$API_BASE" \
   > "$LOG_DIR/devsystem_assistant.log" 2>&1 < /dev/null &
 disown
 sleep 2
@@ -83,6 +85,21 @@ if [ "$STATUS" != "400" ]; then
 else
   echo "Real HTTP round trip confirmed (400 for a malformed request, as expected)."
 fi
+
+# Real gap found live 2026-08-07 (#382 goal doc §8): the check above proves
+# the process forked and answers SOME request, not that it's actually
+# running THIS repo's current source -- the exact same class of gap
+# deploy-devsystem-web.sh's own git-SHA verification closed for the other
+# real deploy path. This binary isn't baked into a Docker image (no ARG/ENV
+# to bake in), so the real current SHA is passed straight through as a
+# process env var above instead, and checked here against what the actually
+# running process reports.
+DEPLOYED_GIT_SHA="$(curl -sS --max-time 5 "http://$LISTEN_ADDR/version" 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get("git_sha","unknown"))' 2>/dev/null || echo unknown)"
+if [ "$DEPLOYED_GIT_SHA" != "$CURRENT_GIT_SHA" ]; then
+  echo "GIT SHA MISMATCH: the running process reports build SHA '$DEPLOYED_GIT_SHA', but the real current source is '$CURRENT_GIT_SHA'." >&2
+  exit 1
+fi
+echo "Git SHA verified: running process matches real current source ($CURRENT_GIT_SHA)."
 
 echo ""
 echo "Reminder: this does NOT update the crontab @reboot entry -- if listen-addr/api-base changed, update it too:"
