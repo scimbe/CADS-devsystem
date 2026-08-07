@@ -3668,4 +3668,21 @@ against the real redeployed container: a real scratch run's embedded proposal fo
 genuinely `pr-price-ceiling`. Full stress harness (73/73) clean afterward.
 ([`CADS-devsystem@e4f77e3`](https://github.com/scimbe/CADS-devsystem/commit/e4f77e3))
 
+**Goal-driven-loop firing, 2026-08-07 -- closed the loop on the last two firings' own GUI work with
+real, mechanical regression coverage.** State check: no new operator input on any of the three open
+`#382` checkpoints, no new PRs, issue #14 unchanged, stress harness clean (73/73) before starting.
+Per the harness's own stated purpose (prove a real, already-fixed gap can't silently regress
+unnoticed, not just that it was fixed once) and the stress-test standing mandate this exact prompt
+names -- the two risk-panel "Fix it" actions built the last two firings (`fix_target` on
+`no_price_ceiling`, its deliberate absence on the check-in-cadence risk) had zero mechanical
+coverage: a silent regression in either wouldn't 400/409 anywhere, it would just make the GUI's own
+button quietly stop pre-filling anything.
+
+Extended check `[5]` (already sets up the exact unbounded-role scenario) with a real assertion that
+the finding's `fix_target` genuinely names the real `stage_id`/`tag`. Added new check `[38]`: the
+check-in-cadence risk fires for real AND its `fix_target` is genuinely absent -- proving the field
+is real, targeted data for the one risk kind that needs it, not a generic field silently defaulting
+onto others. 75/75 passing (was 73), live against the real deployed `devsystem-web`.
+([`CADS-devsystem@22c8ad7`](https://github.com/scimbe/CADS-devsystem/commit/22c8ad7))
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
