@@ -1869,11 +1869,22 @@ async function loadRuns() {
   // 100+ entries, it should be the first thing visible right below Runs'
   // own header.
   const el = document.getElementById('body-runs');
+  // Real gap, GitHub issue #22 (a persona-test finding): this list has no
+  // search of its own -- the launcher's own "type to jump to a panel" filter
+  // only matches panel *types*, never the run entries inside this one. A
+  // first-time evaluator with a real, cryptic-named test fixture (this
+  // project's own `stress-*`/`verify-*`/`docs-*` scratch runs) sitting next
+  // to their actual assigned project had no way to find it besides scrolling
+  // and reading all 80+ names by eye. Same real substring-match convention
+  // `applyOrbFilter`/`resolvePanelName` already use elsewhere in this file,
+  // scoped to run_id here instead of panel names.
   el.innerHTML = `
     <button type="button" id="open-new-project-btn" style="margin-bottom:.5rem;width:100%">+ New Project</button>
+    <input id="runs-filter" type="text" placeholder="filter runs…" style="width:100%;margin-bottom:.5rem;box-sizing:border-box" aria-label="Filter the runs list by name">
     <div id="runs" class="runs"><span class="lede">Loading…</span></div>
   `;
   document.getElementById('open-new-project-btn').addEventListener('click', openNewProjectDialog);
+  document.getElementById('runs-filter').addEventListener('input', (e) => renderRunsList(e.target.value));
   await refreshRunsList();
 }
 
@@ -2092,16 +2103,41 @@ function openShortcutsDialog() {
   }
 }
 
+// The one real fetch -- cached so the filter input can re-render instantly
+// on every keystroke without refetching the whole list each time.
+let lastFetchedRuns = null;
+
 async function refreshRunsList() {
   const el = document.getElementById('runs');
   try {
-    const runs = await fetchJSON(`${API}/runs`);
-    if (!runs.length) {
-      el.innerHTML = '<span class="lede">No runs yet -- create one below.</span>';
-      return;
-    }
-    el.innerHTML = '';
-    for (const r of runs) {
+    lastFetchedRuns = await fetchJSON(`${API}/runs`);
+  } catch (e) {
+    el.innerHTML = `<span class="status-line err">${e.message}</span>`;
+    return;
+  }
+  renderRunsList(document.getElementById('runs-filter')?.value || '');
+  // First load, nothing picked yet: load the first run automatically so the
+  // dashboard isn't a wall of "select a run" placeholders on open.
+  if (!currentRun && lastFetchedRuns.length) {
+    await selectRun(lastFetchedRuns[0].run_id);
+  }
+}
+
+function renderRunsList(filterText) {
+  const el = document.getElementById('runs');
+  const runs = lastFetchedRuns || [];
+  if (!runs.length) {
+    el.innerHTML = '<span class="lede">No runs yet -- create one below.</span>';
+    return;
+  }
+  const q = (filterText || '').trim().toLowerCase();
+  const filtered = q ? runs.filter(r => r.run_id.toLowerCase().includes(q)) : runs;
+  if (!filtered.length) {
+    el.innerHTML = `<span class="lede">No runs match "${escapeHtml(filterText)}".</span>`;
+    return;
+  }
+  el.innerHTML = '';
+  for (const r of filtered) {
       const btn = document.createElement('button');
       btn.className = 'run-item' + (r.run_id === currentRun ? ' active' : '');
       // Most urgent signal wins, one badge at a glance rather than a pile-up:
@@ -2155,14 +2191,6 @@ async function refreshRunsList() {
       row.appendChild(btn);
       row.appendChild(delBtn);
       el.appendChild(row);
-    }
-    // First load, nothing picked yet: load the first run automatically so the
-    // dashboard isn't a wall of "select a run" placeholders on open.
-    if (!currentRun && runs.length) {
-      await selectRun(runs[0].run_id);
-    }
-  } catch (e) {
-    el.innerHTML = `<span class="status-line err">${e.message}</span>`;
   }
 }
 
