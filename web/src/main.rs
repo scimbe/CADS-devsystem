@@ -6,6 +6,7 @@
 //! actually exist on disk and lets a human create new ones -- `webconference-android`
 //! is just the first one, not a hardcoded case anywhere in this file.
 
+mod artifacts;
 mod rag;
 mod vector_store;
 
@@ -270,6 +271,9 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/rag/documents", post(add_rag_document))
         .route("/api/runs/{id}/rag/upload-file", post(upload_rag_file))
         .route("/api/runs/{id}/rag/documents/{doc_id}/remove", post(remove_rag_document))
+        .route("/api/runs/{id}/artifacts", post(upload_artifact))
+        .route("/api/runs/{id}/artifacts/{artifact_id}/download", get(download_artifact))
+        .route("/api/runs/{id}/artifacts/{artifact_id}/remove", post(remove_artifact))
         .route("/api/runs/{id}/panels", post(add_custom_panel))
         .route("/api/runs/{id}/panels/{panel_id}/remove", post(remove_custom_panel))
         .route("/api/runs/{id}/panels/{panel_id}/update", post(update_custom_panel))
@@ -2480,6 +2484,38 @@ fn persist_rag_index(state: &AppState, id: &str, index: &rag::RagIndex) -> Resul
     fs::write(rag_index_path(state, id), s).map_err(|e| e.to_string())
 }
 
+/// See `artifacts` module doc comment. Same real per-run-JSON-file shape
+/// `rag_index_path` already establishes, deliberately a separate file from
+/// both `state.json` and `rag_index.json` -- artifacts are real binary files
+/// with their own real bytes on disk (`artifact_storage_dir` below), a
+/// genuinely different storage shape from either.
+fn artifact_index_path(state: &AppState, id: &str) -> PathBuf {
+    run_dir(state, id).join("artifacts.json")
+}
+
+fn load_artifact_index(state: &AppState, id: &str) -> artifacts::ArtifactIndex {
+    fs::read_to_string(artifact_index_path(state, id)).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+fn persist_artifact_index(state: &AppState, id: &str, index: &artifacts::ArtifactIndex) -> Result<(), String> {
+    let s = serde_json::to_string_pretty(index).map_err(|e| e.to_string())?;
+    fs::write(artifact_index_path(state, id), s).map_err(|e| e.to_string())
+}
+
+/// Real bytes live in their own subdirectory, one real file per artifact,
+/// named by the artifact's own server-generated id so a client-supplied
+/// filename (arbitrary, real role-filler-controlled text) can never collide
+/// with or overwrite another artifact's file or escape this directory --
+/// the actual `filename` is stored only as metadata, used for
+/// `Content-Disposition` on download, never as a path component.
+fn artifact_storage_dir(state: &AppState, id: &str) -> PathBuf {
+    run_dir(state, id).join("artifacts")
+}
+
+fn artifact_file_path(state: &AppState, id: &str, artifact_id: &str) -> PathBuf {
+    artifact_storage_dir(state, id).join(artifact_id)
+}
+
 /// Real embedding of `texts` via whichever of two real, independent paths is
 /// configured -- mirrors `upload_rag_file`'s own two-path fallback for document
 /// extraction (issue #7's own operator-directed architecture correction,
@@ -2941,6 +2977,210 @@ async fn remove_rag_document(
     match persist_rag_index(&state, &id, &index) {
         Ok(()) => Json(serde_json::json!({"removed": doc_id})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the index: {e}")).into_response(),
+    }
+}
+
+/// Real, generous-but-bounded cap for a real build artifact (an APK, unlike a
+/// RAG document's text, is a real compiled binary -- [`MAX_RAG_UPLOAD_BYTES`]'s
+/// 10MB is sized for a scanned PDF, not this). 150MB comfortably covers a real
+/// debug or release Android APK while still being a real, finite bound on this
+/// host's own documented tight disk headroom, not an unbounded upload.
+const MAX_ARTIFACT_BYTES: usize = 150_000_000;
+
+/// A real, small defensive cap on how many artifacts one run keeps -- unlike
+/// [`MAX_LIST_ITEMS`] (500, sized for lightweight text items like backlog
+/// entries), a real binary artifact can be tens of megabytes each, so the same
+/// generous cap here would be a real, material disk-exhaustion risk on this
+/// host's own documented constrained headroom. A run genuinely only needs its
+/// most recent few real builds to review, not an unbounded history of every
+/// one ever produced.
+const MAX_ARTIFACTS_PER_RUN: usize = 10;
+
+/// `POST /api/runs/{id}/artifacts` -- issue #36 (#382 goal doc): a real,
+/// downloadable build artifact, closing the gap that made
+/// `webconference-android` requirement #5 structurally unsatisfiable (an
+/// iteration's `feedback` is free text; nothing before this could carry a real
+/// file, a real checksum, or a real download control). `multipart/form-data`:
+/// a `file` field (the real artifact bytes) plus optional text fields
+/// (`source_commit`, `version_name`, `version_code`, `signing_identity`) and a
+/// required `producing_iteration` (a real iteration number, cross-checked
+/// against this run's own `state.history` below -- accepting an unverified
+/// number here would just move the "trust the text" problem requirement #5
+/// was written to eliminate one field over) and `producing_stage`.
+///
+/// `sha256` is never accepted from the client -- computed here, from the real
+/// uploaded bytes, the same "server computes/stamps, client never dictates"
+/// discipline `submitted_by`/`created_by`/`confirmed_by` already established.
+async fn upload_artifact(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap, mut multipart: axum::extract::Multipart) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let run_state = match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, s)) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let mut filename = String::new();
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut source_commit: Option<String> = None;
+    let mut version_name: Option<String> = None;
+    let mut version_code: Option<String> = None;
+    let mut signing_identity: Option<String> = None;
+    let mut producing_iteration: Option<u32> = None;
+    let mut producing_stage: Option<String> = None;
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => return (StatusCode::BAD_REQUEST, format!("malformed multipart upload: {e}")).into_response(),
+        };
+        match field.name() {
+            Some("file") => {
+                filename = field.file_name().unwrap_or("artifact").to_string();
+                bytes = match field.bytes().await {
+                    Ok(b) => b.to_vec(),
+                    Err(e) => return (StatusCode::BAD_REQUEST, format!("could not read the uploaded file: {e}")).into_response(),
+                };
+            }
+            Some("source_commit") => source_commit = field.text().await.ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            Some("version_name") => version_name = field.text().await.ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            Some("version_code") => version_code = field.text().await.ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            Some("signing_identity") => signing_identity = field.text().await.ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            Some("producing_iteration") => producing_iteration = field.text().await.ok().and_then(|s| s.trim().parse::<u32>().ok()),
+            Some("producing_stage") => producing_stage = field.text().await.ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            _ => {}
+        }
+    }
+    if bytes.is_empty() {
+        return (StatusCode::BAD_REQUEST, "no file field found in the upload (expected a multipart field named 'file')").into_response();
+    }
+    if bytes.len() > MAX_ARTIFACT_BYTES {
+        return (StatusCode::BAD_REQUEST, format!("upload must be under {MAX_ARTIFACT_BYTES} bytes")).into_response();
+    }
+    let Some(producing_iteration) = producing_iteration else {
+        return (StatusCode::BAD_REQUEST, "producing_iteration is required -- a real iteration number this artifact was produced by").into_response();
+    };
+    let Some(producing_stage) = producing_stage else {
+        return (StatusCode::BAD_REQUEST, "producing_stage is required".to_string()).into_response();
+    };
+    if !run_state.history.iter().any(|h| h.iteration == producing_iteration) {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("producing_iteration {producing_iteration} does not name any real iteration in this run's own history -- traceability requires a real, existing iteration, not an arbitrary number"),
+        )
+            .into_response();
+    }
+    let mut index = load_artifact_index(&state, &id);
+    if index.artifacts.len() >= MAX_ARTIFACTS_PER_RUN {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("this run is at its defensive cap of {MAX_ARTIFACTS_PER_RUN} artifacts -- remove an older one first"),
+        )
+            .into_response();
+    }
+    use sha2::Digest;
+    let sha256 = format!("{:x}", sha2::Sha256::digest(&bytes));
+    let size_bytes = bytes.len() as u64;
+    let artifact_id = format!("{:016x}", rand::random::<u64>());
+    let storage_dir = artifact_storage_dir(&state, &id);
+    if let Err(e) = fs::create_dir_all(&storage_dir) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("could not create artifact storage directory: {e}")).into_response();
+    }
+    if let Err(e) = fs::write(artifact_file_path(&state, &id, &artifact_id), &bytes) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("could not write the real artifact file: {e}")).into_response();
+    }
+    let uploaded_by = headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+    let artifact = artifacts::Artifact {
+        id: artifact_id,
+        filename,
+        sha256,
+        size_bytes,
+        source_commit,
+        version_name,
+        version_code,
+        signing_identity,
+        producing_iteration,
+        producing_stage,
+        uploaded_at: unix_now(),
+        uploaded_by,
+    };
+    index.artifacts.push(artifact.clone());
+    match persist_artifact_index(&state, &id, &index) {
+        Ok(()) => Json(serde_json::to_value(&artifact).expect("Artifact always serializes")).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the artifact index: {e}")).into_response(),
+    }
+}
+
+/// `GET /api/runs/{id}/artifacts/{artifact_id}/download` -- the real download
+/// control requirement #5's own criterion 1 asks for ("a concrete APK file...
+/// downloadable from this run's own UI"). Owner-gated like every other real
+/// per-run read that isn't the top-level listing (matching
+/// `export_requirements`'s own precedent).
+async fn download_artifact(State(state): State<AppState>, AxPath((id, artifact_id)): AxPath<(String, String)>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let run_state = match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, s)) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let index = load_artifact_index(&state, &id);
+    let Some(artifact) = index.artifacts.iter().find(|a| a.id == artifact_id) else {
+        return (StatusCode::NOT_FOUND, format!("no artifact with id {artifact_id:?}")).into_response();
+    };
+    match fs::read(artifact_file_path(&state, &id, &artifact_id)) {
+        Ok(bytes) => (
+            [
+                (axum::http::header::CONTENT_TYPE, "application/octet-stream".to_string()),
+                (axum::http::header::CONTENT_DISPOSITION, format!("attachment; filename=\"{}\"", artifact.filename.replace('"', "'"))),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("real artifact metadata exists but the file itself could not be read: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/artifacts/{artifact_id}/remove` -- real, permanent
+/// delete of both the metadata and the real file on disk, same "real and
+/// permanent, no undo" convention `remove_rag_document` already established.
+async fn remove_artifact(State(state): State<AppState>, AxPath((id, artifact_id)): AxPath<(String, String)>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let run_state = match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, s)) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let mut index = load_artifact_index(&state, &id);
+    let before = index.artifacts.len();
+    index.artifacts.retain(|a| a.id != artifact_id);
+    if index.artifacts.len() == before {
+        return (StatusCode::NOT_FOUND, format!("no artifact with id {artifact_id:?}")).into_response();
+    }
+    let _ = fs::remove_file(artifact_file_path(&state, &id, &artifact_id));
+    match persist_artifact_index(&state, &id, &index) {
+        Ok(()) => Json(serde_json::json!({"removed": artifact_id})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the artifact index: {e}")).into_response(),
     }
 }
 
@@ -9702,6 +9942,27 @@ exit 1"#);
             .unwrap()
     }
 
+    /// Same real multipart shape as `multipart_file_request`, plus arbitrary
+    /// extra text fields -- needed for real artifact uploads, which carry
+    /// `producing_iteration`/`producing_stage`/etc. alongside the file.
+    fn multipart_artifact_request(uri: &str, filename: &str, content: &[u8], fields: &[(&str, &str)]) -> Request<Body> {
+        let boundary = "----artifacttestboundary";
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes());
+        body.extend_from_slice(content);
+        body.extend_from_slice(b"\r\n");
+        for (name, value) in fields {
+            body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+            .body(Body::from(body))
+            .unwrap()
+    }
+
     async fn spawn_mock_unstructured_server(status: SC, response_body: serde_json::Value) -> String {
         let mock_app = Router::new().route(
             "/general/v0/general",
@@ -9959,6 +10220,258 @@ exit 1"#);
         request.headers_mut().insert("x-gate-email", "someone-else@example.com".parse().unwrap());
         let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), SC::FORBIDDEN);
+    }
+
+    /// Real end-to-end proof for issue #36: a real file uploaded as an
+    /// artifact, a real server-computed SHA-256 (verified independently in
+    /// this test, not just trusted from the response), and a real download
+    /// that returns the exact same bytes back out.
+    #[tokio::test]
+    async fn upload_artifact_computes_a_real_sha256_and_round_trips_byte_identical_on_download() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "artifact-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/artifact-run/iterate",
+                serde_json::json!({"stage": "devsystem.plan", "feedback": "produced a real build", "succeeded": true}),
+            ))
+            .await
+            .unwrap();
+
+        let apk_bytes: &[u8] = b"a real, fake-but-deterministic APK payload for this test";
+        let response = app
+            .clone()
+            .oneshot(multipart_artifact_request(
+                "/api/runs/artifact-run/artifacts",
+                "app-release.apk",
+                apk_bytes,
+                &[
+                    ("source_commit", "deadbeefcafe1234567890abcdef1234567890ab"),
+                    ("version_name", "1.0.0"),
+                    ("version_code", "3"),
+                    ("signing_identity", "release-key-2026"),
+                    ("producing_iteration", "1"),
+                    ("producing_stage", "devsystem.android_native_build_ci"),
+                ],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+
+        use sha2::Digest;
+        let real_sha256 = format!("{:x}", sha2::Sha256::digest(apk_bytes));
+        assert_eq!(body["sha256"], real_sha256, "the response must carry the real, server-computed hash of the actual uploaded bytes");
+        assert_eq!(body["size_bytes"], apk_bytes.len());
+        assert_eq!(body["filename"], "app-release.apk");
+        assert_eq!(body["source_commit"], "deadbeefcafe1234567890abcdef1234567890ab");
+        assert_eq!(body["version_name"], "1.0.0");
+        assert_eq!(body["producing_iteration"], 1);
+        let artifact_id = body["id"].as_str().expect("real server-generated id").to_string();
+
+        let response = app
+            .oneshot(Request::builder().uri(format!("/api/runs/artifact-run/artifacts/{artifact_id}/download")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        assert!(response.headers().get(axum::http::header::CONTENT_DISPOSITION).unwrap().to_str().unwrap().contains("app-release.apk"));
+        let downloaded = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(downloaded.as_ref(), apk_bytes, "the downloaded bytes must be byte-identical to what was actually uploaded");
+    }
+
+    #[tokio::test]
+    async fn upload_artifact_rejects_a_producing_iteration_that_does_not_exist() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "artifact-oob-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(multipart_artifact_request(
+                "/api/runs/artifact-oob-run/artifacts",
+                "app.apk",
+                b"bytes",
+                &[("producing_iteration", "99"), ("producing_stage", "devsystem.android_native_build_ci")],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+        let body = String::from_utf8(axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+        assert!(body.contains("99"), "the error must name the real, nonexistent iteration number claimed: {body}");
+    }
+
+    #[tokio::test]
+    async fn upload_artifact_requires_producing_iteration_and_stage() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "artifact-missing-fields-run"}))).await.unwrap();
+
+        let response = app.oneshot(multipart_artifact_request("/api/runs/artifact-missing-fields-run/artifacts", "app.apk", b"bytes", &[])).await.unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    /// A client cannot dictate its own `sha256` -- there is no such field read
+    /// from the request at all; the response always carries the real,
+    /// server-computed hash of the actual bytes, proven here by sending a
+    /// deliberately wrong one and confirming it's simply ignored.
+    #[tokio::test]
+    async fn upload_artifact_ignores_a_client_supplied_sha256_and_always_uses_the_real_one() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "artifact-forged-hash-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/artifact-forged-hash-run/iterate", serde_json::json!({"stage": "devsystem.plan", "feedback": "built it", "succeeded": true})))
+            .await
+            .unwrap();
+
+        let real_bytes: &[u8] = b"real artifact bytes";
+        let response = app
+            .oneshot(multipart_artifact_request(
+                "/api/runs/artifact-forged-hash-run/artifacts",
+                "app.apk",
+                real_bytes,
+                &[("sha256", "0000000000000000000000000000000000000000000000000000000000000000"), ("producing_iteration", "1"), ("producing_stage", "devsystem.plan")],
+            ))
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        use sha2::Digest;
+        assert_eq!(body["sha256"], format!("{:x}", sha2::Sha256::digest(real_bytes)), "a forged sha256 field must be completely ignored -- only the real, server-computed hash is ever recorded");
+    }
+
+    #[tokio::test]
+    async fn removing_an_artifact_deletes_both_the_metadata_and_the_real_file() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "artifact-remove-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/artifact-remove-run/iterate", serde_json::json!({"stage": "devsystem.plan", "feedback": "built it", "succeeded": true})))
+            .await
+            .unwrap();
+        let created = body_json(
+            app.clone()
+                .oneshot(multipart_artifact_request(
+                    "/api/runs/artifact-remove-run/artifacts",
+                    "app.apk",
+                    b"bytes",
+                    &[("producing_iteration", "1"), ("producing_stage", "devsystem.plan")],
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        let artifact_id = created["id"].as_str().unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/artifact-remove-run/artifacts/{artifact_id}/remove")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let response = app
+            .oneshot(Request::builder().uri(format!("/api/runs/artifact-remove-run/artifacts/{artifact_id}/download")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND, "a removed artifact's metadata must be genuinely gone, not just hidden");
+    }
+
+    #[tokio::test]
+    async fn artifact_endpoints_are_owner_scoped_like_every_other_real_mutation() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "owner@example.com", Some(serde_json::json!({"run_id": "artifact-owned-run"}))))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(gate_request(
+                "POST",
+                "/api/runs/artifact-owned-run/iterate",
+                "owner@example.com",
+                Some(serde_json::json!({"stage": "devsystem.plan", "feedback": "built it", "succeeded": true})),
+            ))
+            .await
+            .unwrap();
+
+        let mut upload_req = multipart_artifact_request(
+            "/api/runs/artifact-owned-run/artifacts",
+            "app.apk",
+            b"bytes",
+            &[("producing_iteration", "1"), ("producing_stage", "devsystem.plan")],
+        );
+        upload_req.headers_mut().insert("x-gate-email", "someone-else@example.com".parse().unwrap());
+        assert_eq!(app.clone().oneshot(upload_req).await.unwrap().status(), SC::FORBIDDEN);
+
+        // A real artifact from the actual owner, to prove download/remove are gated too, not just upload.
+        let mut real_upload = multipart_artifact_request(
+            "/api/runs/artifact-owned-run/artifacts",
+            "app.apk",
+            b"bytes",
+            &[("producing_iteration", "1"), ("producing_stage", "devsystem.plan")],
+        );
+        real_upload.headers_mut().insert("x-gate-email", "owner@example.com".parse().unwrap());
+        let created = body_json(app.clone().oneshot(real_upload).await.unwrap()).await;
+        let artifact_id = created["id"].as_str().unwrap();
+
+        let mut download_req = Request::builder().uri(format!("/api/runs/artifact-owned-run/artifacts/{artifact_id}/download")).body(Body::empty()).unwrap();
+        download_req.headers_mut().insert("x-gate-email", "someone-else@example.com".parse().unwrap());
+        assert_eq!(app.clone().oneshot(download_req).await.unwrap().status(), SC::FORBIDDEN);
+
+        let mut remove_req = Request::builder().method("POST").uri(format!("/api/runs/artifact-owned-run/artifacts/{artifact_id}/remove")).body(Body::empty()).unwrap();
+        remove_req.headers_mut().insert("x-gate-email", "someone-else@example.com".parse().unwrap());
+        assert_eq!(app.oneshot(remove_req).await.unwrap().status(), SC::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn a_run_cannot_exceed_its_real_defensive_artifact_cap() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "artifact-cap-run"}))).await.unwrap();
+        // Raise the real mandatory check-in cadence above 10 first -- the
+        // default checkin_every: 5 would otherwise pause the run partway
+        // through this loop's own 10 real iterations, which is a separate
+        // real gate this test isn't about.
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/artifact-cap-run/criteria", serde_json::json!({"max_iterations": 50, "max_consecutive_failures": 10, "checkin_every": 20})))
+            .await
+            .unwrap();
+        for i in 1..=10 {
+            let response = app
+                .clone()
+                .oneshot(json_request(
+                    "POST",
+                    "/api/runs/artifact-cap-run/iterate",
+                    serde_json::json!({"stage": "devsystem.plan", "feedback": format!("real build number {i}"), "succeeded": true}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::OK, "real iteration {i} must succeed to set up this test's own real history");
+        }
+        for i in 1..=10 {
+            let response = app
+                .clone()
+                .oneshot(multipart_artifact_request(
+                    "/api/runs/artifact-cap-run/artifacts",
+                    &format!("app-{i}.apk"),
+                    format!("bytes-{i}").as_bytes(),
+                    &[("producing_iteration", &i.to_string()), ("producing_stage", "devsystem.plan")],
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), SC::OK, "artifact {i} of the real 10-item cap must be accepted");
+        }
+        let response = app
+            .oneshot(multipart_artifact_request(
+                "/api/runs/artifact-cap-run/artifacts",
+                "one-too-many.apk",
+                b"overflow",
+                &[("producing_iteration", "1"), ("producing_stage", "devsystem.plan")],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "the 11th artifact must be rejected -- this run is already at its real defensive cap");
     }
 
     #[tokio::test]

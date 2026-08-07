@@ -60,6 +60,13 @@ sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio",
 # sqlx integration for pgvector's `vector` column type -- real typed
 # encode/decode, not hand-rolled SQL string formatting of a Vec<f32>.
 pgvector = { version = "0.4", features = ["sqlx"] }
+# Real per-run build artifacts (issue #36): a real SHA-256 of the actual
+# uploaded bytes, computed server-side -- never trusted from a client-supplied
+# value, the same discipline every other real provenance field in this crate
+# already follows. Already resolved transitively in this workspace's lock file
+# (ed25519-dalek/reqwest's own dependency tree); pinned here as a direct dep
+# since this crate now calls it directly, not just through another crate's API.
+sha2 = "0.10"
 
 [dev-dependencies]
 # Drives the real `api_router()` in-process via `ServiceExt::oneshot` -- no network
