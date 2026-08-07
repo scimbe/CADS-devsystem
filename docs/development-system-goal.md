@@ -3857,4 +3857,26 @@ auto-pause -- confirmed, not assumed, since a paused run's own `/iterate` gate r
 ([`CADS-devsystem@98308db`](https://github.com/scimbe/CADS-devsystem/commit/98308db)); stress harness
 (81/81) unaffected, a pure data-file change.
 
+**Goal-driven-loop firing, 2026-08-07 -- another previously-flagged unknown, this one already closed
+in code, just never marked so here.** State check: no new operator input on any of the three open
+`#382` checkpoints, no new PRs, issue #14 unchanged, CI transiently queued again (external, per every
+prior firing's own confirmation) -- 81/81 stress harness clean before starting.
+
+The "newly discovered, deliberately deferred" note near this document's own `run_local` path-parity
+work claimed `devsystem_iterate`'s local CLI path was still missing the byte-identical-resubmission
+idempotency guard `iterate_run` (devsystem-web) already has. Checked the actual current source rather
+than trusting that note: `duplicate_of_last_iteration` is already called in `run_local`
+(`pipeline/src/bin/devsystem_iterate.rs`), shared from `runner.rs` and already unit-tested there --
+landed by [`CADS-devsystem@3afdbd2`](https://github.com/scimbe/CADS-devsystem/commit/3afdbd2), a
+commit that came AFTER the note above but was never linked back to close it. Not a new code gap; a
+stale record of an old one.
+
+Didn't just trust the source read -- hermetically built `devsystem_iterate` (`cargo build --release`,
+Docker, the same volume-cached pattern used for every other pipeline binary this session) and ran the
+real reproduction the original finding used: a genuine first iteration via the local CLI (`exit 0`,
+real `iteration_outcome=Continue`), then the byte-identical resubmission (`exit 1`, the real "refusing
+to record it as a distinct, new iteration" message) -- confirmed live against the actual binary, not
+assumed from the unit test alone. Scratch run cleaned up afterward. Corrected the record here rather
+than re-flagging the same stale note a third time.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
