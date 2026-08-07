@@ -19,7 +19,9 @@
         }
       ],
       "succeeded": true,
-      "requirement_indices": []
+      "requirement_indices": [],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -28,7 +30,9 @@
       "feedback": "Real live report-back (issue #12), now unblocked by the same gate fix as #7 (CADS-Tunnel PR #390, M2M bearer token). Android build service handoff to labor-setup.com is done: PR scimbe/CADS-webconference-android#9 merged (2026-08-05T09:25:32Z) -- native-bridge/build-service/{Dockerfile,README.md,verify.sh}, pinned to the exact CI toolchain (NDK r27d, cargo-ndk 4.1.2), purely additive (no native-bridge/ Rust changes), verified byte-identical Kotlin bindings + exact symbol match (nm -D --defined-only) against committed artifacts. Confirmed locally before this report: a real `./gradlew assembleDebug` produces a genuine 9.9MB app-debug.apk (applicationId org.bunsenbrenner.webconference) with libnative_bridge.so linked for arm64-v8a and x86_64 alongside libjnidispatch.so -- the native crypto bridge is really compiled in, not stubbed. Honest caveat, not being papered over: this is versionName 0.1.0-scaffold, and no on-device/emulator run with a documented UX walkthrough (screenshots of the actual messaging app in use) has been done yet -- no Android emulator/adb tooling is available on this host today. That real gap stays open and separate from this report; not claiming it done.",
       "proposals": [],
       "succeeded": true,
-      "requirement_indices": []
+      "requirement_indices": [],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -47,7 +51,9 @@
         }
       ],
       "succeeded": true,
-      "requirement_indices": []
+      "requirement_indices": [],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -56,7 +62,9 @@
       "feedback": "Real gap found and closed: MainActivity only ever called bridgeVersion()/generateNoisePublicKeyHex() -- the real dialChannelDirect/bindChannelListener/sendText/recvText UniFFI bindings existed but nothing in the app called them (found by labor-setup.com while scoping the emulator walkthrough, issue #13). Built a real minimal connect/send/receive chat UI: generate a channel identity on launch, listen or dial a peer (public key/address exchanged out of band -- direct-address only, no broker yet), then send/receive real TextMessages, rendered as a live thread. Also found and fixed: AndroidManifest.xml had no INTERNET permission (never needed before -- the scaffold's only prior FFI calls were pure/local). Hermetically verified: testDebugUnitTest (3 new tests) and assembleDebug both pass, real 11.2MB app-debug.apk built. CI green on both jobs.",
       "proposals": [],
       "succeeded": true,
-      "requirement_indices": []
+      "requirement_indices": [],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -65,7 +73,9 @@
       "feedback": "Closed the code half of the run's own backlog item ('Lokale Nachrichten-Persistenz auf Android (Room) + minimale Chat-UI') -- the chat-UI half landed last iteration. Real, stated substitution: plain SQLiteOpenHelper instead of Room (avoids a new KSP/kapt annotation-processor plugin pinned to this exact Kotlin/AGP toolchain -- a real new failure surface not needed for one table and two queries). MessageStore persists every sent/received TextMessage (CONFLICT_REPLACE on msg_id, so a retried real-time receive overwrites rather than crashes) and reloads real history on launch, off the main thread. Honest, NOT claiming the backlog item's own stated goal ('Ziel: zwei Geraete tauschen Text ueber einen Channel') is done -- that's real device-to-device proof, which is exactly what issue #13's emulator walkthrough is for, still pending. 4 new hermetic tests against Robolectric's real SQLite (ordering, msg_id dedup, empty store, persistence surviving a reopened store). 10/10 unit tests green, real 11.3MB app-debug.apk built, both hermetically verified.",
       "proposals": [],
       "succeeded": true,
-      "requirement_indices": []
+      "requirement_indices": [],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -74,7 +84,9 @@
       "feedback": "Real bug reported by labor-setup.com (issue #13) while running the real emulator walkthrough: sending a message deadlocked forever. Root-caused precisely by them against the actual code (native-bridge/src/channel.rs) -- recv_text held the shared transport Mutex across its indefinite network wait (going through ct_common::a2a::a2a_recv's bundled implementation), so a concurrent send_text (needed by MainActivity's real receiveLoop() calling recv_text in a loop) could never acquire it. Fixed: recv_text now inlines a2a_recv's two real steps with the transport lock scoped to only the fast decrypt, not the wait. New hermetic test reproduces the exact real deadlock ordering and proves it's fixed (would hang forever on the old code). Rebuilt jniLibs/Kotlin bindings via CI's fresh-build artifact (local cargo-ndk OOM-killed on this host again, documented known limitation) so the fix is actually in the shipped .so, not just source. CADS-webconference-android#10 merged to main, both CI jobs green. Labor-setup.com's infra is otherwise fully proven (real KVM emulators, real Noise_IK connection both directions) -- the real two-device message-exchange verification is next on their side, not yet confirmed.",
       "proposals": [],
       "succeeded": true,
-      "requirement_indices": []
+      "requirement_indices": [],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -83,7 +95,9 @@
       "feedback": "Self-correction + real increment this cycle. Found and reverted a real standing-instruction violation from an earlier iteration: CADS-devsystem PR #15 (devsystem_document_extraction_handler) had built a competing role-filler for devsystem.document_extraction and submitted a live auction bid under a self-generated identity, while issue #14 is explicitly open with labor-setup.com. Closed PR #15 unmerged, let the unrenewed bid lapse (confirmed no cron/timer was actually keeping it alive despite an earlier comment claiming otherwise), posted an honest correction on issue #14. Also synced CADS-devsystem's local runs/webconference-android/ checkout (spec.json + state.json, iterations 1-6) which had drifted from the live server. Real bounded app increment: found receiveLoop's and onSendClicked's ChannelException catch blocks left session set and both connect controls permanently disabled after any real disconnect -- app became unusable until force-restarted. Fixed via a real resetForNewConnection() called from both catch blocks; new Robolectric test drives that actual production method (native FFI can't load under Robolectric, so the catch block itself can't be triggered end-to-end there). 4/4 app unit tests + assembleDebug green, real Docker build against the cached Android SDK. CADS-webconference-android@fe4c4be.",
       "proposals": [],
       "succeeded": true,
-      "requirement_indices": []
+      "requirement_indices": [],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -102,7 +116,9 @@
         }
       ],
       "succeeded": true,
-      "requirement_indices": []
+      "requirement_indices": [],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -111,7 +127,9 @@
       "feedback": "Real bounded increment: found and fixed a real gap in MainActivity.onConnectClicked -- tapping Connect with the peer public key or address field blank went straight to a real native dialChannelDirect() FFI call, surfacing whatever error message the Rust side happened to produce for malformed input. Now validated locally first, before any native call and before the identity-readiness check, with a clear, actionable message (a real DAU-lens fix, goal doc #382). New Robolectric test proves the native call path is genuinely never reached for this case (the connect button staying enabled is the real evidence, not just a matching error string). 12/12 app unit tests + assembleDebug green, real Docker build against the cached Android SDK. CADS-webconference-android@32be6bf.",
       "proposals": [],
       "succeeded": true,
-      "requirement_indices": []
+      "requirement_indices": [],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -120,7 +138,9 @@
       "feedback": "Real bounded increment: found and fixed a real gap in MainActivity.onSendClicked -- tapping Send with an empty or whitespace-only message silently did nothing (no feedback), and .isEmpty() alone never caught whitespace-only input, so a single-space message would actually have been sent as real content. Now caught explicitly before the session-readiness guard, with a real status message and focus kept on the input for retry. This genuinely closes the exact requirement written during the incompetent-agent stress test scratch work on CADS-devsystem (stress-incompetent-agent test run): the app now actually behaves per that requirement, not just an aspirational spec sitting in a test run. New Robolectric test proves no message renders on a no-op tap, focus is retained, and whitespace-only input is caught the same way as truly-empty input. 6/6 app unit tests + assembleDebug green, real Docker build against the cached Android SDK. CADS-webconference-android@78b4f84.",
       "proposals": [],
       "succeeded": true,
-      "requirement_indices": []
+      "requirement_indices": [],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -129,7 +149,9 @@
       "feedback": "Reviewed the real M1 delivery in MainActivity.kt and MessageStore.kt against this run own declared milestone. Connect/send/receive flow is correct: onConnectClicked and onSendClicked both validate real user input (blank peer fields, blank/whitespace-only message body) before any native FFI call, matching the DAU-lens fixes already shipped. Session-loss recovery via resetForNewConnection genuinely clears the dead session and re-enables both connect controls, so a peer disconnect no longer permanently wedges the app. Persistence is real: MessageStore uses CONFLICT_REPLACE on msg_id, correctly deduplicating an at-least-once redelivered message instead of crashing, and loadAll orders by timestamp ascending, matching the threads own append order. One real, non-blocking observation for a future iteration: MessageStore never explicitly closes its SQLiteDatabase handle (no close() call anywhere, e.g. before a future export/backup feature) -- low risk today since Android reclaims it on process death, but worth a real look before this store grows beyond one table.",
       "proposals": [],
       "succeeded": true,
-      "requirement_indices": []
+      "requirement_indices": [],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -138,7 +160,9 @@
       "feedback": "Real self-optimization step, not a code change: read channel.rs and message.rs in full (native-bridge crate) as a genuine follow-up to iteration 12 own review, since touches auth/security correctly flagged this run again. Both modules are solid -- impostor-key handshake rejection is real and tested (dialing_with_the_wrong_peer_public_key_fails_the_handshake), the deadlock labor-setup.com found is genuinely fixed with a real regression test, every FFI decode path is panic-free with typed errors, and the private key is zeroized on drop, never crossing the FFI boundary as a value. One honest, non-blocking observation: TextMessage sender_pubkey is self-reported by the sender at compose time, not derived from the authenticated Noise session -- currently harmless since MainActivity never reads it back for any real decision (direction alone drives rendering), but worth remembering if a later increment ever trusts it for something real. The actual next real gap is exactly what both modules own doc comments already name honestly: broker-mediated discovery. Direct-address-only means both devices still have to manually exchange public key and IP out of band before this app is useful beyond a LAN test -- recorded as a real backlog item rather than guessed at or half-built speculatively, since it needs ct-agent channel join against the real CADS-Tunnel broker (SignedChannelGrant, rendezvous, NAT traversal, relay fallback), a genuinely separate, larger increment living in a different crate entirely.",
       "proposals": [],
       "succeeded": true,
-      "requirement_indices": []
+      "requirement_indices": [],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -175,7 +199,9 @@
         }
       ],
       "succeeded": true,
-      "requirement_indices": []
+      "requirement_indices": [],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -186,7 +212,9 @@
       "succeeded": true,
       "requirement_indices": [
         0
-      ]
+      ],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -207,7 +235,9 @@
       "succeeded": true,
       "requirement_indices": [
         5
-      ]
+      ],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -218,7 +248,9 @@
       "succeeded": false,
       "requirement_indices": [
         5
-      ]
+      ],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -232,7 +264,9 @@
         2,
         3,
         4
-      ]
+      ],
+      "id": "",
+      "submitted_at": 0
     },
     {
       "run_id": "webconference-android",
@@ -245,7 +279,9 @@
         1,
         2,
         3
-      ]
+      ],
+      "id": "",
+      "submitted_at": 0
     }
   ],
   "added_stages": [
@@ -427,6 +463,34 @@
         "A SHA-256 checksum of the APK is recorded next to the artifact so a reviewer can verify the file they downloaded is the one the pipeline built.",
         "The APK is signed with a build key recorded in the run and installs on a clean Android emulator via `adb install` with no manual signing step.",
         "If the build fails or no APK can be produced, the iteration surfaces a real, honest failure state and is not marked succeeded."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN a participant selects an image, video or document to send in a 1:1 chat, THE SYSTEM SHALL upload, transmit and render a real preview/thumbnail of the media to both sender and recipient, with honest progress and error states, so media sharing works reliably and comparably to WhatsApp/Signal instead of silently dropping or failing to render attachments.",
+      "acceptance_criteria": [
+        "The sender can pick an image/video/document from the device and the chat shows a visible upload/progress indicator while the media is being transmitted.",
+        "The recipient sees a rendered preview/thumbnail of the received media inline in the conversation, not just a raw file name or empty bubble.",
+        "If media upload or transmission fails (too large, unsupported format, network error), the sender sees a real error/retry state, not a silent no-op or indefinite spinner.",
+        "The media is delivered over the same encrypted channel as text messages and is only marked sent/delivered after the recipient device actually received it.",
+        "Media metadata (dimensions, duration for video, size) is surfaced so the user can judge what was shared."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN a user wants to start a new 1:1 conversation, THE SYSTEM SHALL offer contact discovery from the device address book (with explicit permission) plus manual entry by phone-number/username, so the user can find and start a conversation with a real contact within seconds comparably to WhatsApp/Signal, instead of having to type opaque identifiers or guess.",
+      "acceptance_criteria": [
+        "The user can grant address-book permission on first use and the app lists existing contacts who are reachable on the conference system, with names and avatars, sorted/searchable.",
+        "The user can start a new 1:1 chat directly from a discovered contact with a single tap, without copying identifiers.",
+        "The user can also manually add a contact by phone number or username and the system verifies the contact is reachable before opening a chat.",
+        "If address-book access is denied or empty, the app shows an honest empty state with a path to grant permission or add contacts manually, not a silent blank screen.",
+        "Contact discovery does not leak the full address book to other participants; only reachable contacts are surfaced to the local user."
       ],
       "verified": false,
       "verified_criteria": [],
