@@ -5393,4 +5393,24 @@ bidding work") already have real answers for. All three linked URLs live-verifie
 live-verified against the actual deployment. `CADS-devsystem@faebe55`, full 100/100 stress harness
 stays clean. Left `#28` open -- this is a real, live improvement, not the full fix the issue asks for.
 
+**Main-dev-loop firing, 2026-08-07 (qq) -- mutation-tested check `[4]`'s SHALL word-boundary
+regression guard, the next real check off the `[4]`-`[35]` backlog.** State check: no new issues, no
+new operator input on `#14` or the three `#382` checkpoints, `#18`'s code fix still correctly waiting
+on the operator's own deploy go-ahead, CI green.
+
+Same discipline as checks `[3]`/`[43]`-`[45]`: backed up `web/src/main.rs`, mutated
+`has_shall_as_a_real_word` from its real word-boundary split back to a literal pre-fix
+`.contains("shall")` substring match, marked with `// MUTATION-TEST PROBE`, left the sibling
+acceptance-criteria-length check untouched. Hermetic `cargo test` confirmed the exact regression
+test (`add_requirement_rejects_shall_only_as_a_substring_of_an_unrelated_word`) fails as expected
+(`200` where `400` was expected, "Do a shallow implementation..." wrongly accepted). Rebuilt and
+redeployed the mutated binary locally, ran the full 100-assertion harness: `99 passed, 1 failed` --
+precisely check `[4]`'s "shallow" assertion failed, its sibling "near-empty acceptance criterion"
+assertion and every other check stayed green. Reverted from the real backup (`diff` against
+`git show HEAD:web/src/main.rs` confirmed byte-identical), rebuilt, redeployed, reconfirmed
+`100 passed, 0 failed`.
+
+`[4]` moves from "written but never proven" to real, mutation-verified proof it has teeth --
+`[5]`-`[35]` remain the honestly-named backlog.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
