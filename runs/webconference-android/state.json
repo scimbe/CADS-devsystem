@@ -140,6 +140,15 @@
       "proposals": [],
       "succeeded": true,
       "requirement_indices": []
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.review",
+      "iteration": 12,
+      "feedback": "Reviewed the real M1 delivery in MainActivity.kt and MessageStore.kt against this run own declared milestone. Connect/send/receive flow is correct: onConnectClicked and onSendClicked both validate real user input (blank peer fields, blank/whitespace-only message body) before any native FFI call, matching the DAU-lens fixes already shipped. Session-loss recovery via resetForNewConnection genuinely clears the dead session and re-enables both connect controls, so a peer disconnect no longer permanently wedges the app. Persistence is real: MessageStore uses CONFLICT_REPLACE on msg_id, correctly deduplicating an at-least-once redelivered message instead of crashing, and loadAll orders by timestamp ascending, matching the threads own append order. One real, non-blocking observation for a future iteration: MessageStore never explicitly closes its SQLiteDatabase handle (no close() call anywhere, e.g. before a future export/backup feature) -- low risk today since Android reclaims it on process death, but worth a real look before this store grows beyond one table.",
+      "proposals": [],
+      "succeeded": true,
+      "requirement_indices": []
     }
   ],
   "added_stages": [
@@ -186,6 +195,7 @@
   "pending_stage_proposals": [],
   "pending_issue_proposals": [],
   "pending_next_step_drafts": [],
+  "pending_delete_run_proposal": null,
   "requirements": [],
   "assistant_usage": {
     "call_count": 1,
