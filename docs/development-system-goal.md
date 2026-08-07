@@ -4873,4 +4873,29 @@ stayed green. Reverted cleanly from a pre-mutation backup, rebuilt, redeployed t
 `devsystem_assistant` binary) remains the one still-unverified check, a natural next target. No
 source change ships -- verification remains a real, legitimate increment on its own.
 
+**Goal-driven-loop firing, 2026-08-07 (aa) -- mutation-testing check `[49]`, closing out this
+window's mutation-test batch.** State check: no new operator input on any of the four standing
+decision points (`#14`, `#18`, all three `#382` checkpoints unchanged).
+
+Applied the identical probe already used for `[48]` to `devsystem_assistant`'s own
+`version_response_body()`: hardcoded `"unknown"`, ignoring `DEVSYSTEM_GIT_SHA` entirely. Rebuilt and
+redeployed via the real `deploy-devsystem-assistant.sh` -- its own post-deploy verification caught
+the mismatch independently and exited non-zero, the identical second-layer confirmation `[48]`'s own
+round found, now true for both binaries' deploy scripts. The mutated process was still left running
+(as designed) for the harness to check directly. Ran the full live harness: exactly check `[49]`
+failed (`expected yes, got no ('unknown')`), all 99 sibling assertions stayed green. Reverted
+cleanly from a pre-mutation backup, rebuilt, redeployed the real fix (`Git SHA verified: ...
+(d847027)`), reconfirmed 100/100.
+
+**Counted honestly before writing this, rather than assumed**: this window's mutation-test rounds
+now cover checks `[1]`, `[2]`, `[36]`-`[49]` (16 of the harness's 49 checks) -- every check either
+added this window or singled out as foundational-but-never-verified. That is **not** "every check in
+the harness," and this entry originally overclaimed it was before being corrected on a second look
+at the actual list (grepped `check `[N]`` mentions against the harness's own full `[0]`-`[49]` range)
+-- worth naming plainly per this project's own standard for catching mistakes in the investigation
+itself, not just the code. Checks `[3]`-`[35]` (33 checks, the harness's original early-session
+core) remain a real, honestly-named, not-yet-mutation-tested backlog -- a natural target for a future
+firing, at whatever pace keeps each round a genuine, individually-verified proof rather than a
+rubber-stamped sweep.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
