@@ -5575,4 +5575,23 @@ half of the firing, deliberately -- per this project's own governing principle, 
 unattended-iteration path's safety bounds and shipping it anyway would be exactly the kind of
 missing-gate failure that principle exists to prevent.
 
+**Main-dev-loop firing, 2026-08-07 (xx) -- mutation-tested check `[6]`'s run-ownership gate, the
+next real check off the `[6]`-`[35]` backlog.** Second half of this batch, after `#31`'s design
+comment above -- back to a real, bounded, code-level increment.
+
+Backed up `web/src/main.rs`, mutated `owner_authorized()`'s `Some(owner) => owner == caller` arm down
+to a literal `Some(_owner) => true` (the pre-fix "any signed-in caller may act on any run" bug),
+marked with `// MUTATION-TEST PROBE`. Hermetic `cargo test` confirmed the exact regression test
+(`a_different_account_cannot_delete_someone_elses_run`) fails as expected (`204` where `403` was
+expected -- the run genuinely got deleted by an unauthorized caller). Rebuilt and redeployed the
+mutated binary locally, ran the full 100-assertion harness: `99 passed, 1 failed` -- precisely check
+`[6]`'s own assertion failed, every other `owner_authorized`-gated endpoint elsewhere in the harness
+(RAG uploads, panel edits, next-steps drafts, and others) stayed green, real proof this one function
+backs all of them without a single-check blind spot. Reverted from the real backup (`diff` against
+`git show HEAD:web/src/main.rs` confirmed byte-identical), rebuilt, redeployed, reconfirmed
+`100 passed, 0 failed`.
+
+`[6]` moves from "written but never proven" to real, mutation-verified proof it has teeth --
+`[7]`-`[35]` remain the honestly-named backlog.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
