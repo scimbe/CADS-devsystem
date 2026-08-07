@@ -547,6 +547,9 @@
  .orb-overlay.open .orb-filter{opacity:1;transform:translateY(0)}
  .orb-filter:focus{outline:none;border-color:var(--accent2)}
  .orb-filter::placeholder{color:var(--muted)}
+ .orb-filter-status{position:absolute;left:93px;bottom:2px;font-size:.68rem;color:var(--muted);
+   font-family:var(--mono);opacity:0;transition:opacity .3s ease .1s}
+ .orb-overlay.open .orb-filter-status.visible{opacity:1}
  /* Matches .orb-overlay.open .orb-bubble's own specificity (two ancestor
     classes + the element) rather than reaching for !important -- the same
     CSS-specificity care this codebase already learned the hard way once
@@ -554,6 +557,17 @@
     rule earlier this session). */
  .orb-overlay.open .orb-bubble.orb-filtered-out{opacity:.14;pointer-events:none}
  .orb-bubble.orb-filtered-match .orb-puck{border-color:var(--accent2)}
+ /* Real gap, GitHub issue #29: filtered-state opacity used to share the
+    base .orb-bubble rule's entrance-stagger transition (up to a 420ms
+    per-bubble delay, plus a 400ms duration -- up to ~800ms before the last
+    bubble's own entrance settles). Typing a filter query within that window
+    made the dimming compete with the still-running entrance animation
+    instead of reacting crisply -- a real, plausible contributor to a report
+    that filtering felt like it wasn't doing anything. Filter-driven opacity
+    changes get their own fast, non-staggered transition now; the entrance
+    animation's own transform timing is untouched. */
+ .orb-bubble.orb-filtered-out,.orb-bubble.orb-filtered-match{
+   transition:opacity .12s ease,transform .6s cubic-bezier(.22,1.42,.36,1) var(--orb-delay,0s)}
 </style>
 </head>
 <body>
@@ -580,6 +594,7 @@
 <div id="orb-overlay" class="orb-overlay">
  <a id="orb-product-link" class="orb-product-link" href="#" target="_blank" rel="noopener" hidden></a>
  <input id="orb-filter" class="orb-filter" type="text" placeholder="Type to jump to a panel…" autocomplete="off" spellcheck="false">
+ <div id="orb-filter-status" class="orb-filter-status" role="status" aria-live="polite" aria-atomic="true"></div>
  <div id="orb-bubbles" class="orb-bubbles"></div>
 </div>
 <div id="main-row">
@@ -1713,6 +1728,24 @@ function applyOrbFilter(query) {
     btn.classList.toggle('orb-filtered-out', !isMatch);
     btn.classList.toggle('orb-filtered-match', isMatch && q.length > 0);
     if (isMatch) matches.push(btn);
+  }
+  // Real gap, GitHub issue #29: dimming non-matching bubbles is real, live
+  // feedback (confirmed by direct testing), but it's a subtle visual signal
+  // easy to miss at a glance, especially against ~20 bubbles fanned across
+  // the whole corner. A plain text line states the real match count in
+  // words too -- not a second guess at what matched, just narrating the
+  // same `matches` this function already computed.
+  const status = document.getElementById('orb-filter-status');
+  if (status) {
+    if (!q) {
+      status.textContent = '';
+      status.classList.remove('visible');
+    } else {
+      status.textContent = matches.length
+        ? `${matches.length} match${matches.length === 1 ? '' : 'es'}${matches.length === 1 ? ' -- press Enter to open' : ''}`
+        : `No panels match "${query.trim()}"`;
+      status.classList.add('visible');
+    }
   }
   return matches;
 }
