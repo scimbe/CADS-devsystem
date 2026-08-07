@@ -57,8 +57,8 @@ fn run_local(run_id: &str, record_path: &str) -> std::process::ExitCode {
     // it. This is the local, non-`--remote` counterpart of that same real
     // gap; see `IterationRecord::id`'s own doc comment (pipeline crate) for
     // the full story.
-    record.id = format!("{:016x}", rand::random::<u64>());
-    record.submitted_at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    record.id = Some(format!("{:016x}", rand::random::<u64>()));
+    record.submitted_at = Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
 
     // Real gap found live 2026-08-06 (#382 goal doc §8), same "two real entry points,
     // one bug class" shape as the three checks below: `iterate_run`'s own `if

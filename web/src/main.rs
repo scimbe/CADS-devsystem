@@ -1298,8 +1298,8 @@ async fn iterate_run(
         succeeded: body.succeeded,
         proposals: body.proposals,
         requirement_indices: body.requirement_indices,
-        id: format!("{:016x}", rand::random::<u64>()),
-        submitted_at: unix_now(),
+        id: Some(format!("{:016x}", rand::random::<u64>())),
+        submitted_at: Some(unix_now()),
     };
 
     let memory_path = dir.join("memory.jsonl");

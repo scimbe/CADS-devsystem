@@ -413,19 +413,49 @@ pub struct IterationRecord {
     /// `format!("{:016x}", rand::random::<u64>())` convention every other real id
     /// in this codebase already uses (`PendingDeleteRunProposal`, `RagDocument`,
     /// `PendingPanelProposal`, ...) -- deliberately never accepted from a client,
-    /// so a role-filler/CLI cannot forge or collide it. `#[serde(default)]` so
-    /// every pre-existing history entry (none had an id) still deserializes as the
-    /// honest empty string -- not a fabricated retroactive identity for data that
-    /// was never actually given one.
-    #[serde(default)]
-    pub id: String,
-    /// Real submission timestamp (same gap as `id` above), unix seconds,
-    /// server-set the same way `unix_now()` already stamps every other real
-    /// `*_at` field in this codebase. `#[serde(default)]` so pre-existing history
-    /// (no real timestamp was ever recorded) deserializes as the honest `0`, not
-    /// a fabricated retroactive time.
-    #[serde(default)]
-    pub submitted_at: u64,
+    /// so a role-filler/CLI cannot forge or collide it.
+    ///
+    /// Real evaluator finding, issue #52: `#38`'s original landing made this a
+    /// bare `String` with `#[serde(default)]`, so every pre-existing history entry
+    /// deserialized as `""` -- a valid-*looking* value, not an explicit absence. A
+    /// census against the live deployment found 114 of 133 records platform-wide
+    /// (18 of `webconference-android`'s own 21) carrying that sentinel, making
+    /// `id` unable to actually identify a record: all 114 collide on the same
+    /// empty string, and nothing could tell "not recorded" from "recorded as
+    /// empty." Now `Option<String>`, matching `owner_email`'s own established
+    /// honest-absence convention -- `None` really means "this record predates
+    /// the id field," serialized as a real, visible `null`, not a value a naive
+    /// consumer could mistake for identity. `deserialize_id_or_empty_as_none`
+    /// normalizes the legacy `""` sentinel (and, for robustness, an explicit
+    /// `null`) to `None` on load -- every real id minted since stays exactly as
+    /// real; nothing is fabricated for the 114 that never had one.
+    #[serde(default, deserialize_with = "deserialize_id_or_empty_as_none")]
+    pub id: Option<String>,
+    /// Real submission timestamp (same gap as `id` above, and the same issue #52
+    /// finding: `0` is Unix epoch, a well-formed-*looking* 1970-01-01 timestamp,
+    /// not an honest "unknown" -- any consumer that formatted it would render a
+    /// confident, wrong date). Now `Option<u64>`; `deserialize_zero_as_none`
+    /// normalizes the legacy `0` sentinel (and an explicit `null`) to `None` on
+    /// load. Unix seconds when present, server-set the same way `unix_now()`
+    /// already stamps every other real `*_at` field in this codebase.
+    #[serde(default, deserialize_with = "deserialize_zero_as_none")]
+    pub submitted_at: Option<u64>,
+}
+
+fn deserialize_id_or_empty_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<String> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(opt.filter(|s| !s.is_empty()))
+}
+
+fn deserialize_zero_as_none<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<u64> = serde::Deserialize::deserialize(deserializer)?;
+    Ok(opt.filter(|&t| t != 0))
 }
 
 /// True when this iteration must pause for a human check-in before continuing --
@@ -813,6 +843,58 @@ mod tests {
         let spec = full_spec("stage-run", None);
         assert!(validate_stage("devsystem.review", &spec, &[]).is_ok(), "the real, exact declared stage must still work");
         assert!(validate_stage("  DEVSYSTEM.REVIEW  ", &spec, &[]).is_err(), "case/whitespace near-misses must be rejected, not silently accepted then silently ignored by the review gate");
+    }
+
+    #[test]
+    /// Real evaluator finding, issue #52: a census against the live deployment found
+    /// 114 of 133 real iteration records still carrying the legacy `id: ""` /
+    /// `submitted_at: 0` sentinel from before these fields became `Option`. Every one
+    /// of those records must still load, and must load as a real, honest `None` -- not
+    /// `Some("")` / `Some(0)`, which would look like a valid-but-empty identity rather
+    /// than an explicit absence.
+    fn legacy_empty_id_and_zero_submitted_at_deserialize_as_none() {
+        let json = r#"{"run_id":"r","stage":"devsystem.plan","iteration":1,"feedback":"f",
+            "proposals":[],"succeeded":true,"requirement_indices":[],"id":"","submitted_at":0}"#;
+        let record: IterationRecord = serde_json::from_str(json).expect("legacy record must still load");
+        assert_eq!(record.id, None, "the legacy empty-string sentinel must normalize to a real, honest None");
+        assert_eq!(record.submitted_at, None, "the legacy zero (Unix epoch) sentinel must normalize to a real, honest None");
+    }
+
+    #[test]
+    /// A record with genuinely no `id`/`submitted_at` keys at all (pre-#38 data, before
+    /// the fields existed) must also load as `None` -- the `#[serde(default)]` path,
+    /// distinct from but equally as important as the empty-string/zero sentinel path
+    /// above.
+    fn a_record_with_no_id_field_at_all_also_deserializes_as_none() {
+        let json = r#"{"run_id":"r","stage":"devsystem.plan","iteration":1,"feedback":"f",
+            "proposals":[],"succeeded":true,"requirement_indices":[]}"#;
+        let record: IterationRecord = serde_json::from_str(json).expect("pre-#38 record must still load");
+        assert_eq!(record.id, None);
+        assert_eq!(record.submitted_at, None);
+    }
+
+    #[test]
+    fn a_real_id_and_submitted_at_round_trip_unchanged() {
+        let json = r#"{"run_id":"r","stage":"devsystem.plan","iteration":1,"feedback":"f",
+            "proposals":[],"succeeded":true,"requirement_indices":[],"id":"abc123","submitted_at":1786000000}"#;
+        let record: IterationRecord = serde_json::from_str(json).expect("real record must load");
+        assert_eq!(record.id, Some("abc123".to_string()), "a real, non-empty id must never be treated as absent");
+        assert_eq!(record.submitted_at, Some(1786000000), "a real, non-zero timestamp must never be treated as absent");
+
+        let serialized = serde_json::to_value(&record).unwrap();
+        assert_eq!(serialized["id"], "abc123");
+        assert_eq!(serialized["submitted_at"], 1786000000);
+    }
+
+    #[test]
+    fn a_none_id_and_submitted_at_serialize_as_a_real_visible_null_not_an_omitted_field() {
+        let record = IterationRecord { run_id: "r".into(), stage: "devsystem.plan".into(), iteration: 1, feedback: "f".into(), succeeded: true, ..Default::default() };
+        assert_eq!(record.id, None);
+        assert_eq!(record.submitted_at, None);
+        let serialized = serde_json::to_value(&record).unwrap();
+        assert!(serialized.get("id").is_some(), "the field must still be present in the JSON, not omitted");
+        assert!(serialized["id"].is_null(), "and its value must be a real, visible null a consumer can branch on");
+        assert!(serialized["submitted_at"].is_null());
     }
 
     #[test]

@@ -764,10 +764,21 @@ check "a real, later success does clear stalled" "False" "$stalled_after_success
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$stalled_run"
 
 echo
+echo "[53] a real iteration's own id/submitted_at must be an honest, real value on the record it was just written on -- never the legacy sentinel (empty string / Unix epoch) a pre-issue-52 consumer could mistake for a genuine value (#382 goal doc §8, 2026-08-07)"
+id_run="id-honesty-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$id_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$id_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.plan","feedback":"real plan work","succeeded":true}'
+fresh_id=$(curl -s "$BASE/api/runs/$id_run" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"]["history"][0].get("id") or "MISSING")' 2>/dev/null)
+check "a freshly-submitted iteration gets a real, non-empty id, never the legacy empty-string sentinel" "16-char-hex" "$([ ${#fresh_id} -eq 16 ] && echo '16-char-hex' || echo "$fresh_id")"
+fresh_submitted_at=$(curl -s "$BASE/api/runs/$id_run" | python3 -c 'import json,sys; v=json.load(sys.stdin)["state"]["history"][0].get("submitted_at"); print("real" if v and v > 1_700_000_000 else v)' 2>/dev/null)
+check "a freshly-submitted iteration gets a real, current submitted_at, never the legacy Unix-epoch-zero sentinel" "real" "$fresh_submitted_at"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$id_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the fifty-two gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the fifty-three gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
