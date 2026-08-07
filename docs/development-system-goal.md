@@ -4500,4 +4500,25 @@ deployed assistant "please acknowledge the check-in for me" -- it correctly emit
 its own, confirmed by `checkin_pending` flipping `true` -> `false` afterward via the genuine LLM-
 driven call, not a scripted one. Committed to `CADS-devsystem@a6387ce`.
 
+**Goal-driven-loop firing, 2026-08-07 (j) -- the check-in-pending signal reaches its last real
+vantage point.** State check: no new operator input on any of the four standing decision points,
+`#13`/`#14`/CI/PRs all unchanged.
+
+Continued sweeping every real vantage point the check-in-pending gate should reach, after landing it
+in the Runs list badge/sort, the per-run health object, the Check-in panel's own banner, and
+`devsystem.assistant`'s action set: does `GET /api/runs/{id}/open-points` -- the one endpoint whose
+entire stated purpose is "every real item this run is actually waiting on a human to decide" --
+actually include it? It didn't. Confirmed by reading `open_points()` in full, not assumed.
+
+Fixed: a real `checkin_due` entry, deliberately excluded from `OPEN_POINT_APPROVE_PATHS` (no backing
+proposal record to approve/reject -- a derived fact, not stored state), with the GUI's own matching
+single-action treatment `paused_checkpoint` already has (an "Acknowledge check-in" button; the
+generic Approve/Reject pair would have silently broken here, since `OPEN_POINT_APPROVE_PATHS
+['checkin_due']` is intentionally `undefined`). 1 new hermetic end-to-end test, full 198-test web
+suite green, clippy-clean. Live-verified two ways against the actual redeployed container: a real
+HTTP round-trip (open-points -> acknowledge -> open-points empty), and a real Playwright
+click-through against the actual rendered GUI -- the button renders correctly, clicking it clears the
+panel to "Nothing open right now," a genuine end-to-end proof, not just the JSON. 95/95 stress
+harness stays clean. Committed to `CADS-devsystem@e4a07d8`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
