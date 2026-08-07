@@ -4816,4 +4816,36 @@ block, correctly stayed green throughout). Reverted cleanly from a pre-mutation 
 redeployed the real fix, reconfirmed 100/100. No source change ships -- verification remains a real,
 legitimate increment on its own.
 
+**Goal-driven-loop firing, 2026-08-07 (y) -- DAU-lens GUI fix: Flow panel's own milestone/backlog
+text was untruncated, live-screenshotted and fixed.** State check: no new operator input on any of
+the four standing decision points, `#13`/`#14` unchanged. Deliberately switched away from another
+mutation-testing round (having just closed checks `[1]` and `[2]`) back to fresh live investigation,
+per this window's own established discipline of varying technique rather than grinding one method to
+diminishing returns.
+
+Read `renderFlowPanel` in `web/static/index.html`: it rendered milestone descriptions and backlog
+item text via plain `escapeHtml(...)`, with no truncation -- unlike `renderProcessPanel`'s own
+history entries just below it, which already reuse the existing `truncate(s, n)` helper for exactly
+this reason. Confirmed this was a real, visible problem, not just a theoretical code-reading
+concern: screenshotted the actual Flow panel (Playwright, `ct-playwright-runner`) against the real
+flagship `webconference-android` run -- this project's own real backlog items run to several hundred
+characters, and the untruncated text turned the "queue" section into an unreadable wall of text,
+pushing the "what happened" section fully off-screen. The panel's whole purpose is a fast "where are
+we" glance (unlike the dedicated Milestones/Backlog panels, which correctly show full text on
+purpose), so this directly defeated it.
+
+Fixed by wrapping `m.description` and `b.text` in `truncate(..., 220)`, matching
+`renderProcessPanel`'s own existing 220-character budget for its feedback preview. Redeployed via
+`scripts/deploy-devsystem-web.sh` (git-SHA verification passed). Re-ran the same Playwright script
+against the redeployed container -- second screenshot confirmed the fix: every real Target/Queue
+entry now fits, cleanly truncated with an ellipsis, and "what happened" is visible again. Pure
+client-side change; ran the full stress harness as a final regression check -- 100/100, unaffected as
+expected. Committed to `CADS-devsystem@4428c6b`, pushed to `main`.
+
+Note for the operator, restated every firing this window and still unanswered: issue `#18`'s
+self-service access-request fix is built, tested, and merged to `CADS-Tunnel@main`, but has
+deliberately **not** been deployed to the live production control-plane (`bunsenbrenner.org`) --
+held back pending the operator's explicit go-ahead, asked directly mid-window when the operator
+asked whether it was built. No reply has arrived yet.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
