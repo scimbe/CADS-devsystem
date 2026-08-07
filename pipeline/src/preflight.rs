@@ -458,6 +458,14 @@ fn no_review_for_succeeded_work(state: &RunState) -> Option<RiskAnnotation> {
 /// exactly as unbounded as one with no ceiling at all. `unwrap_or(0) == 0`
 /// below treats both the same, honestly.
 ///
+/// **Update, 2026-08-07**: the "never enforced anywhere" premise above is now only
+/// partially true, not fully -- `set_role_fill_mode`'s real direct-accept path
+/// (`web/src/main.rs`) now genuinely rejects accepting a bid priced over a role's
+/// own real `price_ceiling` (via [`crate::runner::price_ceiling_for`], the same
+/// lookup this check uses). Auction-cleared bids still aren't checked against it
+/// anywhere -- this risk still correctly fires for those, and `evidence` below
+/// says so honestly rather than claiming the whole gap is closed.
+///
 /// `p.stage_id` in the evidence string below is `inline_code_escape`d for the
 /// same reason as `security_keyword_hit`'s own doc comment above -- this is the
 /// exact evidence line whose raw, unescaped `stage_id` first proved the markdown-
@@ -502,14 +510,7 @@ fn no_price_ceiling(state: &RunState) -> Vec<RiskAnnotation> {
     let unbounded: Vec<_> = state
         .added_stages
         .iter()
-        .filter_map(|stage_id| {
-            state
-                .approved_stage_proposals
-                .iter()
-                .rev()
-                .find(|p| &p.stage_id == stage_id)
-                .or_else(|| state.history.iter().rev().flat_map(|h| h.proposals.iter().rev()).find(|p| &p.stage_id == stage_id))
-        })
+        .filter_map(|stage_id| crate::runner::latest_proposal_for_stage(state, stage_id))
         .filter(|p| p.use_existing_service.is_none() && p.price_ceiling.unwrap_or(0) == 0)
         .collect();
     unbounded
@@ -517,7 +518,7 @@ fn no_price_ceiling(state: &RunState) -> Vec<RiskAnnotation> {
         .map(|p| RiskAnnotation {
             label: "no price ceiling set".into(),
             evidence: format!(
-                "role {} is live in this run's own spec, was proposed needing a new service (no use_existing_service) with no real price_ceiling ({}), and nothing since has bounded what filling it could cost -- price_ceiling is never actually enforced against a real bid's price, so 0 is exactly as unbounded as unset",
+                "role {} is live in this run's own spec, was proposed needing a new service (no use_existing_service) with no real price_ceiling ({}), and nothing since has bounded what filling it could cost -- a real, positive price_ceiling IS now enforced against a directly-accepted bid (`set_role_fill_mode`, 2026-08-07), but auction-cleared bids still aren't checked against it anywhere, so 0 is still exactly as unbounded as unset for those",
                 inline_code_escape(&p.stage_id),
                 p.price_ceiling.map(|v| v.to_string()).unwrap_or_else(|| "none set".to_string())
             ),

@@ -546,10 +546,29 @@ check "approve_destroys_panel_title names the real panel for a removal proposal 
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$panel_run"
 
 echo
+echo "[41] a role's own real price_ceiling must actually be enforced against a directly-accepted bid -- price_ceiling used to be stored and shown, never compared against anything, anywhere (#382 goal doc §7.2/§8, 2026-08-07)"
+ceiling_run="${RUN}-price-ceiling-enforce-check"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$ceiling_run\"}"
+ceiling_prop=$(curl -s -X POST "$BASE/api/runs/$ceiling_run/stages/propose" -H 'content-type: application/json' \
+  -d '{"stage_id":"devsystem.bounded_role","tag":"bounded","rationale":"incompetent-agent stress harness probe","units":1,"price_ceiling":50}')
+ceiling_prop_id=$(echo "$ceiling_prop" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null)
+curl -s -o /dev/null -X POST "$BASE/api/runs/$ceiling_run/stages/proposals/$ceiling_prop_id/approve"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$ceiling_run/roles/bounded/fill-mode" \
+  -H 'content-type: application/json' -d '{"mode":"dedicated","label":"Compass-1","accepted_bid":{"holder_label":"abc123","price":999}}')
+check "a bid priced over the role's own real price_ceiling is rejected" "400" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$ceiling_run/roles/bounded/fill-mode" \
+  -H 'content-type: application/json' -d '{"mode":"dedicated","label":"Compass-1","accepted_bid":{"holder_label":"abc123","price":50}}')
+check "a bid priced exactly at the real ceiling is allowed" "200" "$status"
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$ceiling_run/roles/plan/fill-mode" \
+  -H 'content-type: application/json' -d '{"mode":"dedicated","label":"Compass-1","accepted_bid":{"holder_label":"abc123","price":999999}}')
+check "a role with no real price_ceiling set is not blocked -- nothing real to enforce yet" "200" "$status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$ceiling_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the forty gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the forty-one gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."

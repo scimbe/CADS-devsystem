@@ -1005,6 +1005,38 @@ pub fn duplicate_of_last_iteration(
     }
 }
 
+/// The most recent real [`crate::StageProposal`] that shaped a `stage_id`, if any --
+/// checking `approved_stage_proposals` first (complete going forward, both real
+/// approval paths write to it now), falling back to `history.proposals` only for a
+/// `stage_id` with no entry there at all (pre-existing data from before that field
+/// existed). A later, real re-proposal for the same `stage_id` supersedes an
+/// earlier one, matching `preflight::no_price_ceiling`'s own established "last
+/// match wins" fix (#382 goal doc §8, twenty-seventh stress-test run). Shared here
+/// (2026-08-07) so that risk check and the real direct-accept price-ceiling
+/// enforcement below (`set_role_fill_mode`, `web/src/main.rs`) read the identical
+/// real ceiling -- one bug class if they ever drifted apart, not two.
+pub fn latest_proposal_for_stage<'a>(state: &'a RunState, stage_id: &str) -> Option<&'a crate::StageProposal> {
+    state
+        .approved_stage_proposals
+        .iter()
+        .rev()
+        .find(|p| p.stage_id == stage_id)
+        .or_else(|| state.history.iter().rev().flat_map(|h| h.proposals.iter().rev()).find(|p| p.stage_id == stage_id))
+}
+
+/// The real, currently-enforceable price ceiling for a `stage_id`, if any -- `None`
+/// covers both "never proposed with a `price_ceiling`" and "proposed with
+/// `price_ceiling: Some(0)`", matching `preflight::no_price_ceiling`'s own explicit
+/// reasoning that a real `0` is exactly as unbounded as unset (nothing to actually
+/// enforce either way). Used by the real direct-accept enforcement gate
+/// (`set_role_fill_mode`, 2026-08-07): a role with a genuine, positive ceiling now
+/// actually bounds what a directly-accepted bid can cost, closing the honest gap
+/// `no_price_ceiling`'s own doc comment named -- price_ceiling was stored and shown,
+/// never compared against anything, anywhere, until this.
+pub fn price_ceiling_for(state: &RunState, stage_id: &str) -> Option<u64> {
+    latest_proposal_for_stage(state, stage_id).and_then(|p| p.price_ceiling).filter(|&c| c > 0)
+}
+
 /// What the runner decided after folding in one [`IterationRecord`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunOutcome {
@@ -1752,6 +1784,34 @@ mod tests {
             None,
             "only the run's own immediately-preceding entry counts -- an earlier, now-superseded entry with the same content must not be flagged"
         );
+    }
+
+    #[test]
+    fn price_ceiling_for_finds_the_real_last_proposal_and_treats_zero_as_unbounded() {
+        let mut state = RunState::new("run-ceiling");
+        assert_eq!(price_ceiling_for(&state, "devsystem.new_role"), None, "never proposed at all -- nothing to enforce");
+
+        state.approved_stage_proposals.push(crate::StageProposal {
+            proposed_by: STAGE_IMPLEMENT.into(),
+            stage_id: "devsystem.new_role".into(),
+            tag: "new_role".into(),
+            rationale: "test".into(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: Some(0),
+        });
+        assert_eq!(price_ceiling_for(&state, "devsystem.new_role"), None, "a real 0 is exactly as unbounded as unset, honestly");
+
+        state.approved_stage_proposals.push(crate::StageProposal {
+            proposed_by: STAGE_IMPLEMENT.into(),
+            stage_id: "devsystem.new_role".into(),
+            tag: "new_role".into(),
+            rationale: "a real re-proposal, this time bounded".into(),
+            use_existing_service: None,
+            units: 1,
+            price_ceiling: Some(50),
+        });
+        assert_eq!(price_ceiling_for(&state, "devsystem.new_role"), Some(50), "the LATER, real proposal wins over the earlier unbounded one");
     }
 
     #[test]

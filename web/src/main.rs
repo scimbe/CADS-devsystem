@@ -2092,6 +2092,35 @@ async fn set_role_fill_mode(
     if !spec.roles.iter().any(|r| r.tag == tag) {
         return (StatusCode::BAD_REQUEST, format!("no role tagged {tag:?} in this run's live spec")).into_response();
     }
+    // Real gap found live (#382 goal doc §7.2/§8, 2026-08-07): `no_price_ceiling`
+    // (preflight.rs) has always flagged a role as unbounded, but nothing anywhere
+    // actually enforced a real ceiling once it WAS set -- confirmed by reading
+    // every real call site before this fix, exactly as that risk's own doc comment
+    // says. This is the one real, local, non-financial-guessing place to close
+    // part of that gap: accepting a bid directly (skipping the auction) is a real,
+    // one-click decision a human or the assistant makes right here, so this is
+    // where a genuine ceiling should actually bind. Auction-cleared bids still
+    // aren't checked anywhere -- not claimed solved, see the updated risk evidence.
+    if let SetRoleFillModeRequest::Dedicated { accepted_bid: Some(bid), .. } = &body {
+        let stage_id = spec.roles.iter().find(|r| r.tag == tag).and_then(|r| match &r.service {
+            ServiceType::Custom(s) => Some(s.clone()),
+            _ => None,
+        });
+        if let Some(stage_id) = stage_id {
+            if let Some(ceiling) = devsystem_pipeline::runner::price_ceiling_for(&run_state, &stage_id) {
+                if bid.price > ceiling {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        format!(
+                            "this role's own real price_ceiling is {ceiling} -- accepting this bid at {} would exceed it; accept a lower bid, or raise the ceiling first by re-proposing this stage with a higher price_ceiling",
+                            bid.price
+                        ),
+                    )
+                        .into_response();
+                }
+            }
+        }
+    }
     let mode = match body {
         SetRoleFillModeRequest::Auction => RoleFillMode::Auction,
         SetRoleFillModeRequest::Dedicated { label, accepted_bid } => RoleFillMode::Dedicated {
@@ -5272,6 +5301,70 @@ mod tests {
         let body = body_json(response).await;
         assert_eq!(body["fill_mode"]["accepted_bid"]["holder_label"], "abc123");
         assert_eq!(body["fill_mode"]["accepted_bid"]["price"], 8);
+    }
+
+    #[tokio::test]
+    /// Real gap found live 2026-08-07 (#382 goal doc §7.2/§8): `price_ceiling` was
+    /// stored and shown, never actually compared against a real bid's price
+    /// anywhere -- this is the fix for the one real, local, direct-accept path.
+    async fn accepting_a_bid_over_the_roles_own_real_price_ceiling_is_rejected() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "ceiling-enforce-run"}))).await.unwrap();
+        let propose_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/ceiling-enforce-run/stages/propose",
+                serde_json::json!({"stage_id": "devsystem.bounded_role", "tag": "bounded", "rationale": "a real reason", "units": 1, "price_ceiling": 50}),
+            ))
+            .await
+            .unwrap();
+        let proposal = body_json(propose_response).await;
+        let proposal_id = proposal["id"].as_str().unwrap();
+        let approve_response = app
+            .clone()
+            .oneshot(json_request("POST", &format!("/api/runs/ceiling-enforce-run/stages/proposals/{proposal_id}/approve"), serde_json::json!({})))
+            .await
+            .unwrap();
+        assert_eq!(approve_response.status(), SC::OK);
+
+        // Over the real ceiling -- rejected, not silently accepted.
+        let over_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/ceiling-enforce-run/roles/bounded/fill-mode",
+                serde_json::json!({"mode": "dedicated", "label": "Compass-1", "accepted_bid": {"holder_label": "abc123", "price": 51}}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(over_response.status(), SC::BAD_REQUEST, "a bid priced over the role's own real price_ceiling must be rejected");
+
+        // At the real ceiling, exactly -- allowed.
+        let at_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/ceiling-enforce-run/roles/bounded/fill-mode",
+                serde_json::json!({"mode": "dedicated", "label": "Compass-1", "accepted_bid": {"holder_label": "abc123", "price": 50}}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(at_response.status(), SC::OK, "a bid priced exactly at the real ceiling must be allowed");
+
+        // A role with no real ceiling (the default spec's own "plan" role, never proposed
+        // via a real StageProposal) -- any price is still allowed, matching the honest
+        // "0/unset both mean nothing to enforce" semantics.
+        let unbounded_response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/ceiling-enforce-run/roles/plan/fill-mode",
+                serde_json::json!({"mode": "dedicated", "label": "Compass-1", "accepted_bid": {"holder_label": "abc123", "price": 999_999}}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(unbounded_response.status(), SC::OK, "a role with no real price_ceiling must not be blocked -- there's nothing real to enforce yet");
     }
 
     #[tokio::test]

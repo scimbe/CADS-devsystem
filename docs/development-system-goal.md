@@ -3919,4 +3919,52 @@ No further stale "deferred" notes found after this sweep. Hermetic verification 
 the same live-code-reading discipline as the source check itself (no code changed, so no build/test
 was needed) -- a docs-only correction, honestly scoped as such.
 
+**Main-dev-loop firing, 2026-08-07 -- a real, honest first piece of `price_ceiling` enforcement, not
+just a stale-note correction.** State check: issue #13 confirmed closed, issue #14 unchanged (no new
+labor-setup.com activity), no scimbe-authored open PRs on `CADS-devsystem` (only Dependabot bot PRs,
+out of scope by this loop's own "only scimbe-authored" rule).
+
+Live-checked `webconference-android`'s own real state: `no review stage for real, succeeded work` was
+a genuine, live risk despite M1 already shipping -- `devsystem.review` was declared but had never had
+a real iteration. Fixed honestly, not with a rubber stamp (the mandatory gate's own
+`a_rubber_stamp_review_iteration_still_flags_as_missing_real_review_evidence` test exists precisely
+to catch that shortcut): read the actual delivered `MainActivity.kt`/`MessageStore.kt`, confirmed the
+connect/send/receive/reconnect flow and message persistence are genuinely correct, and named one
+real, non-blocking observation (`MessageStore` never explicitly closes its `SQLiteDatabase` handle).
+Submitted as real iteration 12 against the live deployment; live-verified the risk genuinely cleared
+afterward (`CADS-devsystem@ec7b62b`).
+
+That left three `no price ceiling set` risks on the same run. Their own evidence text says plainly:
+`price_ceiling is never actually enforced against a real bid's price` -- already known and honestly
+documented (runs 25-28 above), not a new discovery. Setting a real dollar figure on
+`devsystem.document_extraction` (labor-setup.com's own real role) is a genuine financial/business
+decision, not something to guess autonomously -- correctly out of scope for this loop. But *whether a
+set ceiling means anything at all* is a real, local, non-financial gate this repo actually owns:
+grepped every real call site that accepts a bid (`submit_offer`, `quick_submit_offer`,
+`set_role_fill_mode`'s direct-accept path) and confirmed the doc comment's claim first-hand -- none of
+them ever compared a bid's price against anything.
+
+Closed the one real, local, one-click acceptance path: `set_role_fill_mode`'s direct-accept now
+rejects a bid priced over the role's own real `price_ceiling` with a real `400`, naming both numbers
+and how to proceed. Shared the exact lookup `no_price_ceiling` (preflight.rs) already used (`
+runner::latest_proposal_for_stage`/`runner::price_ceiling_for`, extracted so both call sites read the
+identical real ceiling -- one bug class if they ever drifted apart) rather than reimplementing it.
+Updated `no_price_ceiling`'s own evidence text and doc comment to state the real, honest scope: this
+one path is now enforced, auction-cleared bids still aren't, not claimed solved wholesale.
+
+Hermetic `cargo test`/`clippy` clean on both crates (121/121 pipeline, 196/196 web, 0 warnings) -- new
+tests cover `price_ceiling_for` treating a real `0` as unbounded (matching its own established
+semantics) and the LATER of two re-proposals winning, plus the real HTTP gate itself (over/at/no-
+ceiling). Redeployed; live-verified end to end against the real container: proposed and approved a
+real bounded role (`price_ceiling: 50`), a `999`-priced direct-accept got a real `400` naming both
+numbers, a `50`-priced one (exactly at the ceiling) got a real `200`, and a role with no real ceiling
+still accepted any price -- nothing broken for the common, unbounded case. Added stress-harness check
+`[41]` (84/84 total, was 81) covering all three cases via a direct HTTP round trip.
+
+Auction-cleared bids (the more common path in practice) still aren't checked against `price_ceiling`
+anywhere -- honestly still open, not claimed solved. That would mean touching `convene_with_policy`'s
+own real acceptance point, which lives in CADS-Tunnel's `ct_common::pipeline`, a materially larger,
+cross-repo increment than this one -- left for a dedicated future firing, named here rather than
+silently dropped.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
