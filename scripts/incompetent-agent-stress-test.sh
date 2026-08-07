@@ -841,10 +841,26 @@ check "approve folds into a real, succeeded devsystem.review iteration" "True" "
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$pc_run"
 
 echo
+echo "[58] a confirmed acceptance criterion must carry real provenance (who, when) instead of a bare boolean -- the platform's own highest-stakes verdict signal, until this fix, could not be attributed to anyone. A real gate-verified actor is stamped, never a client-claimed one; un-confirming clears the whole record; a header-less toggle honestly records no actor rather than fabricating one. requirement created_by is a genuinely separate signal from proposed_by (human-vs-LLM-authored), stamped from the same real session (issue #55, #382 goal doc §8, 2026-08-07)"
+prov_run="criterion-provenance-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$prov_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$prov_run/requirements" -H 'content-type: application/json' -H 'x-gate-email: real-human@example.com' \
+  -d '{"statement":"WHEN a criterion checkbox is ticked, THE SYSTEM SHALL record who confirmed it and on what evidence.","acceptance_criteria":["a real checkable criterion"],"created_by":"client-forged@example.com"}'
+real_creator=$(curl -s "$BASE/api/runs/$prov_run" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"]["requirements"][0].get("created_by"))' 2>/dev/null)
+check "the real gate-verified account is stamped as created_by, never a client-forged value in the body" "real-human@example.com" "$real_creator"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$prov_run/requirements/0/criteria/0/toggle" -H 'x-gate-email: reviewer@example.com'
+confirmed_by=$(curl -s "$BASE/api/runs/$prov_run" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"]["requirements"][0]["verified_criteria"][0]["confirmed_by"])' 2>/dev/null)
+check "a real, gate-verified confirming account is recorded, not a bare true" "reviewer@example.com" "$confirmed_by"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$prov_run/requirements/0/criteria/0/toggle"
+cleared=$(curl -s "$BASE/api/runs/$prov_run" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"]["requirements"][0]["verified_criteria"][0])' 2>/dev/null)
+check "un-confirming clears the whole real record back to null" "None" "$cleared"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$prov_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the fifty-seven gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the fifty-eight gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."

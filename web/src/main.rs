@@ -1911,6 +1911,12 @@ async fn add_requirement(
         return (StatusCode::BAD_REQUEST, format!("requirements is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
     }
     let proposed_by = body.proposed_by.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    // Real evaluator finding, issue #55: the same real, gate-verified identity
+    // `/api/me`/`owner_email`/`submitted_by` already use -- genuinely separate from
+    // `proposed_by` just above (that field answers human-vs-LLM-authored, never which
+    // real account). `None` for a header-less call, same honesty convention as every
+    // other real actor field in this codebase.
+    let created_by = headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
     run_state.requirements.push(Requirement {
         statement,
         acceptance_criteria,
@@ -1918,6 +1924,7 @@ async fn add_requirement(
         verified_criteria: Vec::new(),
         auto_judge: false,
         proposed_by,
+        created_by,
     });
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
@@ -2069,7 +2076,12 @@ async fn toggle_acceptance_criterion_handler(
     if !owner_authorized(&headers, &run_state) {
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
     }
-    if let Err(e) = toggle_acceptance_criterion(&mut run_state, req_index, criterion_index) {
+    // Real evaluator finding, issue #55: the platform's own highest-stakes verdict
+    // signal -- a *confirmed* criterion, not just a filed report -- used to carry no
+    // provenance at all. Same real, gate-verified identity every other real actor
+    // field in this codebase uses; honestly None for a header-less caller.
+    let confirmed_by = headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+    if let Err(e) = toggle_acceptance_criterion(&mut run_state, req_index, criterion_index, confirmed_by, unix_now()) {
         return (StatusCode::NOT_FOUND, e).into_response();
     }
     match persist_run(&dir, &spec, &run_state) {
@@ -6028,20 +6040,21 @@ mod tests {
             .await
             .unwrap();
 
-        let response = app
-            .clone()
-            .oneshot(Request::builder().method("POST").uri("/api/runs/criteria-run/requirements/0/criteria/1/toggle").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let mut request = Request::builder().method("POST").uri("/api/runs/criteria-run/requirements/0/criteria/1/toggle").body(Body::empty()).unwrap();
+        request.headers_mut().insert("x-gate-email", "scimbe@gmail.com".parse().unwrap());
+        let response = app.clone().oneshot(request).await.unwrap();
         assert_eq!(response.status(), SC::OK);
         let body = body_json(response).await;
-        assert_eq!(body["requirements"][0]["verified_criteria"], serde_json::json!([false, true]), "must grow with real false padding, not just record index 1 alone");
+        assert!(body["requirements"][0]["verified_criteria"][0].is_null(), "must grow with a real, honest null, not just record index 1 alone");
+        assert_eq!(body["requirements"][0]["verified_criteria"][1]["confirmed_by"], "scimbe@gmail.com", "real evaluator finding, issue #55: the real gate-verified account must be recorded, not a bare true");
+        assert!(body["requirements"][0]["verified_criteria"][1]["confirmed_at"].as_u64().unwrap() > 1_700_000_000, "a real, current timestamp must be recorded");
         assert_eq!(body["requirements"][0]["verified"], false, "toggling one criterion must never silently flip the independent whole-requirement flag");
 
         // Independently confirms it actually persisted, not just the response.
         let response = app.oneshot(Request::builder().uri("/api/runs/criteria-run").body(Body::empty()).unwrap()).await.unwrap();
         let body = body_json(response).await;
-        assert_eq!(body["state"]["requirements"][0]["verified_criteria"], serde_json::json!([false, true]));
+        assert!(body["state"]["requirements"][0]["verified_criteria"][0].is_null());
+        assert_eq!(body["state"]["requirements"][0]["verified_criteria"][1]["confirmed_by"], "scimbe@gmail.com");
     }
 
     #[tokio::test]
@@ -6070,6 +6083,97 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::NOT_FOUND, "an out-of-range requirement index must also 404, not panic");
+    }
+
+    #[tokio::test]
+    /// Real evaluator finding, issue #55: a criterion toggle with no gate header at
+    /// all (the local CLI/M2M path) must honestly record no actor, not fabricate one
+    /// -- but the confirmation itself, and its real timestamp, still land.
+    async fn toggling_a_criterion_with_no_gate_header_honestly_records_no_actor() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "criteria-no-session-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/criteria-no-session-run/requirements",
+                serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["only one criterion"]}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/criteria-no-session-run/requirements/0/criteria/0/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert!(body["requirements"][0]["verified_criteria"][0]["confirmed_by"].is_null(), "no gate header means an honest null actor, never a fabricated one");
+        assert!(body["requirements"][0]["verified_criteria"][0]["confirmed_at"].as_u64().unwrap() > 1_700_000_000, "the real confirmation timestamp must still land even with no actor");
+    }
+
+    #[tokio::test]
+    /// Un-toggling (confirmed -> unconfirmed) must clear the whole real record, not
+    /// leave a stale confirmed_by/confirmed_at around claiming a confirmation that no
+    /// longer holds.
+    async fn untoggling_a_confirmed_criterion_clears_its_real_record() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "criteria-untoggle-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/criteria-untoggle-run/requirements",
+                serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["only one criterion"]}),
+            ))
+            .await
+            .unwrap();
+
+        let mut confirm_req = Request::builder().method("POST").uri("/api/runs/criteria-untoggle-run/requirements/0/criteria/0/toggle").body(Body::empty()).unwrap();
+        confirm_req.headers_mut().insert("x-gate-email", "scimbe@gmail.com".parse().unwrap());
+        app.clone().oneshot(confirm_req).await.unwrap();
+
+        let unconfirm_req = Request::builder().method("POST").uri("/api/runs/criteria-untoggle-run/requirements/0/criteria/0/toggle").body(Body::empty()).unwrap();
+        let response = app.oneshot(unconfirm_req).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert!(body["requirements"][0]["verified_criteria"][0].is_null(), "un-confirming must clear the whole record back to a real, honest null");
+    }
+
+    #[tokio::test]
+    /// Real evaluator finding, issue #55: `created_by` is a genuinely separate
+    /// signal from `proposed_by` (which answers human-vs-LLM-authored, not which
+    /// real account). Stamped from the same real, gate-verified session
+    /// owner_email/submitted_by already use; a client-claimed value in the body
+    /// is never trusted.
+    async fn add_requirement_stamps_the_real_gate_verified_creator_never_a_client_claimed_one() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-creator-run"}))).await.unwrap();
+
+        let mut request = json_request(
+            "POST",
+            "/api/runs/req-creator-run/requirements",
+            serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["a real checkable criterion"], "created_by": "client-forged@example.com"}),
+        );
+        request.headers_mut().insert("x-gate-email", "real-human@example.com".parse().unwrap());
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["requirements"][0]["created_by"], "real-human@example.com", "the real gate header identity must be stamped, never a client-claimed value in the body");
+
+        // No gate header at all -- honestly None, matching owner_email/submitted_by's
+        // own established convention.
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-creator-run/requirements",
+                serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["another real checkable criterion"]}),
+            ))
+            .await
+            .unwrap();
+        let body = body_json(response).await;
+        assert!(body["requirements"][1]["created_by"].is_null(), "no gate header means an honest null creator, never a fabricated one");
     }
 
     #[tokio::test]

@@ -3828,6 +3828,18 @@ function renderRequirementsPanel(id, data) {
   // absent) for any requirement that predates this field or simply hasn't
   // had a criterion checked yet -- render every position as unchecked by
   // default rather than assuming the arrays are the same length.
+  //
+  // Real evaluator finding, issue #55: a confirmed criterion is now a real
+  // record (who, when), not a bare boolean -- surfaced here so a reviewer can
+  // actually tell a real, attributed confirmation apart from legacy data
+  // where who/when is honestly unknown, the platform's own highest-stakes
+  // verdict signal until this fix carried zero provenance anywhere.
+  const criterionProvenance = (v) => {
+    if (!v) return '';
+    if (v.confirmed_by && v.confirmed_at) return ` — confirmed by ${escapeHtml(v.confirmed_by)}, ${new Date(v.confirmed_at * 1000).toLocaleString()}`;
+    if (v.confirmed_at) return ` — confirmed ${new Date(v.confirmed_at * 1000).toLocaleString()} (no account on the session)`;
+    return ' — confirmed (predates provenance tracking; who/when unknown)';
+  };
   const items = requirements.length
     ? requirements.map((r, i) => {
         const verifiedCriteria = r.verified_criteria || [];
@@ -3841,12 +3853,13 @@ function renderRequirementsPanel(id, data) {
               ? `<span title="Proposed by ${escapeHtml(r.proposed_by)} -- an LLM's first draft, not yet written/reviewed by a human" style="margin-left:.4rem;font-size:.65rem;color:var(--accent);border:1px solid var(--accent);border-radius:3px;padding:0 .3rem;white-space:nowrap">LLM-proposed</span>`
               : ''}
           </label>
+          <div style="margin:.2rem 0 0 1.6rem;font-size:.68rem" class="lede">${r.created_by ? `created by ${escapeHtml(r.created_by)}` : 'created by: not recorded (local CLI, M2M, or predates this field)'}</div>
           <div style="margin:.3rem 0 0 1.6rem;font-size:.7rem" class="lede">acceptance criteria (${checkedCount}/${r.acceptance_criteria.length} confirmed):</div>
           <div style="margin:.2rem 0 0 1.6rem;display:flex;flex-direction:column;gap:.15rem">
             ${r.acceptance_criteria.map((c, ci) => `
               <label class="backlog-item${verifiedCriteria[ci] ? ' done' : ''}" style="font-size:.75rem">
                 <input type="checkbox" class="criterion-toggle" data-req-index="${i}" data-criterion-index="${ci}" ${verifiedCriteria[ci] ? 'checked' : ''}>
-                <span>${escapeHtml(c)}</span>
+                <span>${escapeHtml(c)}<span class="lede" style="font-size:.65rem">${criterionProvenance(verifiedCriteria[ci])}</span></span>
               </label>`).join('')}
           </div>
           <div class="lede" style="font-size:.7rem;margin-top:.3rem">${addressedBy[i].length ? `addressed by iteration(s) ${addressedBy[i].map(h => h.iteration).join(', ')}` : 'not yet addressed by any iteration'}</div>

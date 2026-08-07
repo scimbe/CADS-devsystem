@@ -185,6 +185,7 @@ mod tests {
             verified_criteria: Vec::new(),
             auto_judge: false,
             proposed_by: None,
+            created_by: None,
         }];
         let mut rec = record(vec![]);
         rec.requirement_indices = vec![0];

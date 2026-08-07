@@ -391,6 +391,7 @@ mod tests {
             verified_criteria: Vec::new(),
             auto_judge: false,
             proposed_by: None,
+            created_by: None,
         });
         state.history.push(IterationRecord {
             run_id: "run-req-checkin".into(),
@@ -429,6 +430,7 @@ mod tests {
             verified_criteria: Vec::new(),
             auto_judge: false,
             proposed_by: None,
+            created_by: None,
         });
         state.requirements.push(Requirement {
             statement: "never touched requirement".into(),
@@ -437,6 +439,7 @@ mod tests {
             verified_criteria: Vec::new(),
             auto_judge: false,
             proposed_by: None,
+            created_by: None,
         });
         // Iteration 1 addresses requirement 0. Iteration 2 (the triggering
         // iteration, what "this iteration" means below) addresses neither --

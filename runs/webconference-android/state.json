@@ -20,8 +20,9 @@
       ],
       "succeeded": true,
       "requirement_indices": [],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -31,8 +32,9 @@
       "proposals": [],
       "succeeded": true,
       "requirement_indices": [],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -52,8 +54,9 @@
       ],
       "succeeded": true,
       "requirement_indices": [],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -63,8 +66,9 @@
       "proposals": [],
       "succeeded": true,
       "requirement_indices": [],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -74,8 +78,9 @@
       "proposals": [],
       "succeeded": true,
       "requirement_indices": [],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -85,8 +90,9 @@
       "proposals": [],
       "succeeded": true,
       "requirement_indices": [],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -96,8 +102,9 @@
       "proposals": [],
       "succeeded": true,
       "requirement_indices": [],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -117,8 +124,9 @@
       ],
       "succeeded": true,
       "requirement_indices": [],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -128,8 +136,9 @@
       "proposals": [],
       "succeeded": true,
       "requirement_indices": [],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -139,8 +148,9 @@
       "proposals": [],
       "succeeded": true,
       "requirement_indices": [],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -150,8 +160,9 @@
       "proposals": [],
       "succeeded": true,
       "requirement_indices": [],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -161,8 +172,9 @@
       "proposals": [],
       "succeeded": true,
       "requirement_indices": [],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -200,8 +212,9 @@
       ],
       "succeeded": true,
       "requirement_indices": [],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -213,8 +226,9 @@
       "requirement_indices": [
         0
       ],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -236,8 +250,9 @@
       "requirement_indices": [
         5
       ],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -249,8 +264,9 @@
       "requirement_indices": [
         5
       ],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -265,8 +281,9 @@
         3,
         4
       ],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -280,8 +297,9 @@
         2,
         3
       ],
-      "id": "",
-      "submitted_at": 0
+      "id": null,
+      "submitted_at": null,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -292,7 +310,8 @@
       "succeeded": false,
       "requirement_indices": [],
       "id": "0352308d94a39d06",
-      "submitted_at": 1786117768
+      "submitted_at": 1786117768,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -303,7 +322,8 @@
       "succeeded": false,
       "requirement_indices": [],
       "id": "c365f2357781dfef",
-      "submitted_at": 1786117878
+      "submitted_at": 1786117878,
+      "submitted_by": null
     },
     {
       "run_id": "webconference-android",
@@ -316,7 +336,70 @@
         4
       ],
       "id": "400048772a1a6413",
-      "submitted_at": 1786118297
+      "submitted_at": 1786118297,
+      "submitted_by": null
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.review",
+      "iteration": 22,
+      "feedback": "devsystem.review of native-bridge/src/channel.rs at commit 7e325e6 (real code read of the checked-out repo; this is a review finding, not a fix -- no new commit).\n\nREAL DEFECT FOUND -- a reachable panic across the FFI boundary in hex_decode_32():\n\n    if s.len() != 64 { return Err(InvalidPeerKey) }\n    ... u8::from_str_radix(&s[2 * i..2 * i + 2], 16) ...\n\nstr::len() is a BYTE count, but the loop then slices that same &str by byte range. A 64-BYTE peer key containing a multi-byte UTF-8 character makes a slice endpoint land mid-character, and Rust's str range-indexing panics on a non-char-boundary index. Minimal repro: \"EURO SIGN\" (U+20AC, 3 bytes) followed by 61 ASCII characters is exactly 64 bytes, so it passes the length check; then &s[0..2] cuts into that 3-byte character (which occupies bytes 0..3) -> panic, \"byte index 2 is not a char boundary\".\n\nReachable from real user input, not only from a test. MainActivity.onConnectClicked() (line 217) reads peerPublicKeyInput's raw text, .trim()s it, checks only isEmpty(), and passes it straight into dialChannelDirect(), whose very first step is hex_decode_32(). A key pasted with a smart quote, an em dash or an emoji attached is enough to reach it.\n\nThe consequence is an app crash, not a handled error. native-bridge sets no panic=\"abort\", so UniFFI's catch_unwind converts the panic into InternalException(\"Rust panic\") (generated bindings, native_bridge.kt line 297). onConnectClicked catches only ChannelException and LinkageError, so InternalException escapes the lifecycleScope.launch coroutine uncaught and takes the app down.\n\nThis contradicts the module's own stated contract. message.rs's header states that decoding attacker-controlled or truncated bytes \"must never panic across FFI\"; channel.rs documents hex_decode_32 as \"a real FFI input-validation boundary\". The test written to guarantee exactly that -- dial_rejects_a_malformed_peer_key_without_panicking -- only passes \"not-hex\", 7 ASCII bytes, which the length check rejects before the slicing loop ever executes. The panic path is therefore entirely uncovered by the existing suite.\n\nBounded fix, contained in one function: reject non-ASCII input before slicing (or decode from s.as_bytes() chunks instead of str byte ranges), plus a regression test using a 64-byte non-ASCII key.\n\nMinor, same function, reported for completeness: u8::from_str_radix accepts a leading '+', so the pair \"+f\" parses as 0x0f -- input that is not strictly hexadecimal is accepted. No security impact today, because dial_channel_direct re-encodes the decoded bytes canonically before they ever reach sender_pubkey.\n\nSeparately confirmed this cycle, corroborating the existing backlog entry rather than adding to it: M2 (broker-mediated discovery) still has no bounded slice available inside this repository. docs/channel-join-options.md's own survey and channel.rs's module header both place SignedChannelGrant admission, rendezvous, NAT traversal and the :443 relay fallback in ct-agent's native/src/channel_run.rs (~7.5k lines, shaped around ct-agent's own CLI process model) and in ct_edge. Extracting a mobile-callable core is real upstream work in a separate repository, not an increment that can honestly be scoped here.\n\nNot fixed in this iteration: no Rust toolchain is available in this reviewer's environment, so the fix is left to the devsystem.android_native_bridge role rather than shipped unverified. Pinned as a backlog item so it survives past this iteration's prose.",
+      "proposals": [],
+      "succeeded": true,
+      "requirement_indices": [],
+      "id": "ec23a12c64ea291d",
+      "submitted_at": 1786122655,
+      "submitted_by": null
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_native_build_ci",
+      "iteration": 23,
+      "feedback": "Drive a real, installable release APK artifact out of the pipeline for the current source commit. The Artifact-Channel-Gap (Kat-A #36) still blocks APK delivery: every prior build_ci iteration produced code but no downloadable .apk surface. This iteration MUST produce a downloadable, signed APK artifact traceable to the exact source commit, with a SHA-256 checksum recorded beside it, installable via 'adb install' on a clean emulator. If the build cannot produce an APK, surface an honest failure state -- do not mark succeeded without an artifact.",
+      "proposals": [],
+      "succeeded": false,
+      "requirement_indices": [],
+      "id": "13bad45554bac5ae",
+      "submitted_at": 1786123857,
+      "submitted_by": null
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_native_bridge",
+      "iteration": 24,
+      "feedback": "Real app defect (found at iter 22 devsystem.review): hex_decode_32 panics on multi-byte UTF-8 peer-key input. Reachable path: onConnectClicked -> dialChannelDirect slices the peer-key string at fixed byte offsets (char_boundary unaware), so any non-ASCII character in the key produces a panic instead of a handled error. Required behavior: validate peer-key input BEFORE decoding; reject invalid / UTF-8-truncated / non-hex input with an honest, localized error message and never crash the connect flow. Acceptance: (1) a peer key containing multi-byte UTF-8 characters shows a clear 'invalid key' error and does not panic; (2) a valid hex key still connects; (3) a truncated-byte key is rejected, not crashed.",
+      "proposals": [],
+      "succeeded": false,
+      "requirement_indices": [],
+      "id": "671ea4bf4304bfa8",
+      "submitted_at": 1786123960,
+      "submitted_by": null
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.android_native_build_ci",
+      "iteration": 25,
+      "feedback": "Architekt iteration (attempt 2, no devsystem.assistant, text-only). Drive devsystem.android_native_build_ci to produce a real, installable .apk artifact this tick. After ~22 iterations and 14+ requirements, 0 acceptance criteria are verified and requirement #5 (downloadable, commit-traceable, checksummed APK) remains unsatisfiable because GitHub issue #36 (artifact channel) is still OPEN. Real app defect observed in devsystem.review: hex_decode_32 panics on a multi-byte UTF-8 peer key in onConnectClicked->dialChannelDirect because the byte slice is char-boundary-unaware; request robust UTF-8 input validation (length == codepoint count, not byte count) before the decode, and a unit test with a non-ASCII peer key. Proposal: the build-ci role shall (1) assemble a release APK with a stable versionCode/versionName, (2) emit a download URL + sha256 checksum as the artifact surface for this iteration, (3) run `./gradlew assembleRelease connectedCheck` and report pass/fail. This is the only path to unblock #5 and any emulator test on the app side.",
+      "proposals": [],
+      "succeeded": false,
+      "requirement_indices": [],
+      "id": "6ed3f5ce8f805063",
+      "submitted_at": 1786124562,
+      "submitted_by": null
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.review",
+      "iteration": 26,
+      "feedback": "devsystem.review of requirement #5 (downloadable, commit-traceable, checksummed APK), scored against real repository and CI evidence rather than against iteration prose. No code changed this iteration -- this is a review finding.\n\nWHAT I ACTUALLY DID: read CADS-webconference-android at HEAD 7e325e6a800cb8b91a9b08e9c8c0d4fcff695839 -- .github/workflows/android-ci.yml and app/build.gradle.kts in full -- and queried this repo's real GitHub Actions run and artifact listing.\n\nCORE FINDING, which contradicts iterations 16, 23 and 25: an installable APK for the current commit ALREADY EXISTS. CI run 31194393561 on 7e325e6a80 concluded \"success\" and uploaded artifact \"app-debug\" (app-debug.apk, 7150469 bytes, expired:false, retained to 2026-11-05), produced by the workflow's \"Build debug APK\" (./gradlew assembleDebug) and \"Upload debug APK\" steps. The premise those three iterations were built on -- \"no APK can be produced, issue #36 blocks it\" -- is factually wrong. They consumed this run's entire max_consecutive_failures budget (3/3) and paused the run for nothing.\n\nSCORING requirement #5's five acceptance criteria against that evidence:\n1. Concrete APK downloadable from this run's own UI -- PARTIAL. The APK is real and downloadable from GitHub Actions, but not from this run's UI. This one criterion is the only genuine devsystem-demo platform gap (issue #36, still open).\n2. Build metadata identifying the exact source commit plus versionName/versionCode -- PARTIAL. The artifact is bound to head_sha 7e325e6a800cb8b91a9b08e9c8c0d4fcff695839 by the CI run, but versionCode=1 / versionName=\"0.1.0-scaffold\" from app/build.gradle.kts are never recorded next to the artifact.\n3. SHA-256 checksum recorded next to the artifact -- NOT MET. android-ci.yml contains no sha256sum step.\n4. Signed with a build key recorded in the run, installs via adb install with no manual signing step -- NOT MET as worded. app/build.gradle.kts's release{} block declares only isMinifyEnabled=false and has no signingConfig, so assembleRelease would emit an unsigned APK. Only assembleDebug runs; it is signed with the auto-generated debug keystore, which does adb install cleanly but is not a release key recorded in this run.\n5. Honest failure state when the build fails, not marked succeeded -- MET. The job fails and uploads no APK; observed directly on commit 23852c0d22, whose CI run concluded \"failure\".\n\nCONCLUSION: 4 of requirement #5's 5 acceptance criteria are fixable entirely inside CADS-webconference-android -- add a release signingConfig, a sha256sum step, and a build-metadata file carrying the full commit SHA, versionName and versionCode to android-ci.yml. Only criterion 1's \"from this run's own UI\" needs the platform artifact channel of issue #36. Recorded as a backlog item on this run. Recommendation for the next devsystem.android_native_build_ci iteration: do that in-repo work instead of re-asserting the false \"no APK possible\" premise a fourth time.",
+      "proposals": [],
+      "succeeded": true,
+      "requirement_indices": [
+        5
+      ],
+      "id": "1684d8c51ba71747",
+      "submitted_at": 1786125106,
+      "submitted_by": "scimbe+persona-architekt@gmail.com"
     }
   ],
   "added_stages": [
@@ -406,6 +489,14 @@
     },
     {
       "text": "STATUS-BLINDSPOT (measured 2026-08-07, bastler persona): 3 of this run's 5 added stages have never produced a single succeeded iteration -- devsystem.document_extraction (1 iter, 0 ok), devsystem.android_emulator_test (1 iter, 0 ok), devsystem.android_native_build_ci (1 iter, 0 ok). The run nevertheless reports stalled_stages: [] and shows no stalled badge, because the stalled signal keys on \"an iteration record exists\" rather than \"a succeeded iteration exists\" -- one succeeded:false iteration clears it permanently and it never re-arms (reproduced from scratch on run bastler-stalled-latch-probe; filed as scimbe/CADS-devsystem#53). Two of the three were silenced by iterations whose own text opens with \"drive the stalled <stage> stage\" and is recorded succeeded:false. Consequence for THIS run: the three dead stages are exactly the infra-blocked ones tracked as CADS-devsystem#12 / #13 / #14, they are why requirement #5 (downloadable, commit-traceable, checksummed APK) is still unsatisfiable (#36), and no panel currently tells an operator they are dead -- the Roles panel's \"N iteration(s) total for this role\" renders \"1 iteration(s)\" identically whether that iteration shipped or failed. Not new work, a correction to this run's own health picture.",
+      "done": false
+    },
+    {
+      "text": "CRASH (found 2026-08-07 by coder persona, devsystem.review iteration 22, native-bridge/src/channel.rs @ 7e325e6): hex_decode_32() panics on a 64-BYTE peer key containing a multi-byte UTF-8 character. The guard checks s.len() (a BYTE count) but the loop then slices the &str by byte range, &s[2*i..2*i+2], and Rust str range-indexing panics on a non-char-boundary index. Repro: U+20AC (3 bytes) + 61 ASCII = exactly 64 bytes, passes the length check, &s[0..2] cuts into the 3-byte character -> panic. Reachable from real user input: MainActivity.onConnectClicked() line 217 trims peerPublicKeyInput, checks only isEmpty(), and passes it straight to dialChannelDirect(), whose first step is hex_decode_32() -- a key pasted with a smart quote/em dash/emoji is enough. Result is an app crash, not a handled error: no panic=\"abort\", so UniFFI's catch_unwind raises InternalException(\"Rust panic\") (native_bridge.kt:297), and onConnectClicked catches only ChannelException and LinkageError, so it escapes the lifecycleScope.launch coroutine uncaught. Contradicts the module's own stated contract (message.rs: decoding untrusted bytes \"must never panic across FFI\"; channel.rs calls hex_decode_32 \"a real FFI input-validation boundary\"), and the test meant to guarantee it, dial_rejects_a_malformed_peer_key_without_panicking, only passes \"not-hex\" (7 ASCII bytes) which the length check rejects before the slicing loop runs -- the panic path is uncovered. Bounded fix inside one function: reject non-ASCII before slicing (or decode from s.as_bytes() chunks), plus a regression test with a 64-byte non-ASCII key. Minor, same function: u8::from_str_radix accepts a leading '+' (\"+f\" -> 0x0f), so non-strict-hex input is accepted; no security impact today since dial_channel_direct re-encodes canonically. Owner: devsystem.android_native_bridge (reviewer had no Rust toolchain, so deliberately not shipped unverified).",
+      "done": false
+    },
+    {
+      "text": "APK ARTIFACT ALREADY EXISTS -- verified 2026-08-07 (architekt persona, evidence-based): green CI run 31194393561 on commit 7e325e6a800cb8b91a9b08e9c8c0d4fcff695839 uploaded artifact \"app-debug\" (app-debug.apk, 7150469 bytes, not expired, retained to 2026-11-05). Iterations 16/23/25 all failed on the premise \"no APK can be produced, #36 blocks it\" -- that premise is factually wrong and cost this run 3 of its 3 consecutive-failure budget. Requirement #5's real remaining gap is IN THIS REPO, not in the platform: (a) app/build.gradle.kts release{} has NO signingConfig, so assembleRelease yields an unsigned APK; CI only runs assembleDebug (debug-keystore signed, does adb install cleanly). (b) .github/workflows/android-ci.yml has no sha256sum step, so no checksum is recorded next to the artifact. (c) versionCode=1 / versionName=\"0.1.0-scaffold\" are never recorded alongside the artifact. Only acceptance criterion 1's \"downloadable from THIS RUN's own UI\" is a genuine platform gap (GitHub issue #36, still open). Next real step, entirely in-repo: add a release signingConfig, a sha256sum step, and a build-metadata file (full commit SHA + versionName + versionCode) to android-ci.yml -- that moves requirement #5 from 0/5 to 4/5 with no platform change required.",
       "done": false
     }
   ],
@@ -504,7 +595,13 @@
         "If the build fails or no APK can be produced, the iteration surfaces a real, honest failure state and is not marked succeeded."
       ],
       "verified": false,
-      "verified_criteria": [],
+      "verified_criteria": [
+        false,
+        false,
+        false,
+        false,
+        true
+      ],
       "auto_judge": false,
       "proposed_by": null
     },
@@ -591,15 +688,99 @@
       "verified_criteria": [],
       "auto_judge": false,
       "proposed_by": null
+    },
+    {
+      "statement": "WHEN a user wants to stop receiving messages or notifications from a specific contact without deleting the existing conversation, THE SYSTEM SHALL let the user block or mute that contact so that no further messages, calls or typing indicators from a blocked contact are delivered or shown to the user, and a muted contact's messages arrive silently without triggering a notification, comparable to WhatsApp/Signal block/mute behaviour.",
+      "acceptance_criteria": [
+        "The user can block a contact from the conversation view or contact list, and the action takes effect immediately for any new incoming messages from that contact.",
+        "While a contact is blocked, the blocked contact's messages are NOT delivered or shown to the user; the blocked contact does not receive a delivered/read receipt for any message they send afterwards.",
+        "The user can mute a contact for a chosen duration (e.g. 8h / 1 week / always); while muted, messages still arrive but produce no notification sound or vibration, and the conversation shows a clear muted indicator.",
+        "The user can unblock or unmute a contact at any time; normal message delivery, receipts and notifications resume immediately, and previously undelivered blocked messages do not retroactively appear.",
+        "The block/mute list is persisted across app restarts and is reviewable in a privacy/blocked-contacts settings view where each entry can be removed individually."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN a user needs to find a past message, attachment or link in one of their conversations but does not remember which conversation or day it was in, THE SYSTEM SHALL provide full-text message search across all of the user's conversations that returns matching messages with sender, conversation, timestamp and a tap-to-scroll-to action, comparable to WhatsApp/Signal in-app message search.",
+      "acceptance_criteria": [
+        "The user can open a search field from the conversation list (and per-conversation) and enter free-text query; matching messages appear in a results list within 1 second for a 10k-message local corpus.",
+        "Each result shows the matching snippet, sender name, conversation name and timestamp; tapping a result scrolls the corresponding conversation to that message and highlights the match.",
+        "Search covers message text AND attachment captions/visible file names; a query for a sent photo's file name or a shared URL returns the message carrying that attachment/link.",
+        "Search is performed locally on the decrypted message store only (no plaintext leaves the device, no server-side indexing of message bodies), preserving the E2E-encryption guarantee of #3/#4.",
+        "When there are no results the UI shows an explicit empty state, and search respects the block/mute list (#12) by not surfacing messages from blocked contacts in global search unless the user explicitly searches within that conversation."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN a 1:1 message sent by the user has been displayed to the recipient (chat foreground, message visible), THE SYSTEM SHALL surface an honest read receipt to the sender (e.g. dual check / \"read\" indicator) so the sender can distinguish delivered-but-unread from actually-read, comparably to WhatsApp/Signal, instead of silently leaving the status ambiguous.",
+      "acceptance_criteria": [
+        "A message marked as read by the recipient updates to a visible read-state indicator on the sender side (e.g. blue dual-check or explicit \"read\" label) within a few seconds of the recipient viewing it.",
+        "A message that is delivered but not yet opened stays in a delivered-only state visibly distinct from read, so the sender is not misled.",
+        "A recipient who has disabled read receipts (privacy setting) causes the sender to see the message remain in the delivered state, with no crash or inconsistency.",
+        "Read-receipt updates do not leak the recipient's presence/online-status beyond what the recipient explicitly permitted.",
+        "If the read-receipt update cannot be delivered (network failure, recipient offline), the sender sees no false \"read\" state -- only a real read transitions to read."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN a channel to a peer has been established via the broker-mediated discovery of requirement 0, THE SYSTEM SHALL give each participant a user-verifiable identity-key fingerprint (safety number) for that peer, comparable out-of-band without the broker, and SHALL warn the sender in the conversation when a previously verified peer's identity key changes.",
+      "acceptance_criteria": [
+        "The conversation details screen shows a stable, human-comparable fingerprint (safety number and/or QR code) derived from both participants' long-term identity public keys, not from any broker-issued SignedChannelGrant.",
+        "Two devices that have established a channel with each other display the identical fingerprint for that pair, and the comparison can be completed entirely out-of-band without trusting the broker.",
+        "Marking a peer as verified is persisted on-device and survives an app restart, and the verified state is visible in the conversation.",
+        "When a verified peer's long-term identity key changes, the conversation shows an explicit warning before the next outgoing message is sent, rather than silently re-keying.",
+        "An automated Android emulator test covers both directions: matching fingerprints on two real devices, and a simulated identity-key substitution at the broker producing a fingerprint mismatch plus the key-change warning."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN a user wants to preserve or transfer their conversation history, THE SYSTEM SHALL let the user export all of their conversations (text messages, attachment metadata, timestamps, sender/recipient) into a single, machine-readable, encrypted backup file that can be re-imported on a fresh install of the same account, comparably to WhatsApp/Signal chat-history export/backup.",
+      "acceptance_criteria": [
+        "The user can trigger an export from Settings that produces one encrypted file (e.g. ZIP+key or a .bak) containing all conversations with text, media attachment metadata (file name, MIME type, sha256), timestamps and participant identifiers.",
+        "The export file is encrypted with a user-chosen passphrase (or the existing account key) so that plaintext never leaves the device; the on-device store is not uploaded to any server in plaintext form.",
+        "A fresh install of the same account can import the backup file and restore the full conversation list, message history and attachment metadata, with the same per-message sent/delivered/read status as before export.",
+        "The export is incremental and resumable for large histories (>10k messages): an interrupted export can be resumed without producing a corrupt or partial-importable file, and the UI shows explicit progress and completion.",
+        "The export/import does not leak metadata to the broker/relay (no server-side involvement beyond what already exists for delivery); restoring on a new device does not replay already-delivered messages to old peers."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN a user enters or pastes a peer public key into the connect flow (MainActivity.onConnectClicked -> dialChannelDirect -> hex_decode_32 in native-bridge/src/channel.rs), THE SYSTEM SHALL validate that input before decoding and reject anything that is not exactly 64 hexadecimal ASCII characters with an honest, localized error shown in the UI, and SHALL NEVER let a Rust panic cross the UniFFI boundary and terminate the app.",
+      "acceptance_criteria": [
+        "Pasting the exact 64-BYTE repro from iteration 22's review -- U+20AC (EURO SIGN, 3 bytes) followed by 61 ASCII hex characters -- into the peer-key field and tapping Connect shows a clear invalid-key error and does not crash the app; hex_decode_32 must validate on codepoint count and hex-alphabet membership, not on str::len() bytes.",
+        "A hermetic Rust unit test in native-bridge asserts hex_decode_32 returns Err(InvalidPeerKey) (never panics) for: a multi-byte UTF-8 key of exactly 64 bytes, a 64-character key containing non-hex characters, a key shorter and longer than 64 characters, and an empty key.",
+        "A valid 64-character ASCII hex peer key still establishes the direct-address (M1) channel unchanged, proving the added validation is not over-restrictive; covered by an existing or new test.",
+        "onConnectClicked catches the failure as a real, typed error path (not only ChannelException/LinkageError, so an InternalException from a Rust panic can no longer escape the lifecycleScope coroutine uncaught), and the user-visible string comes from a localized string resource, not a hardcoded literal.",
+        "An automated Android emulator test enters a non-ASCII peer key (e.g. one containing a smart quote, em dash or emoji), asserts the app is still alive and showing the invalid-key error after the Connect tap, and asserts no Rust panic appears in logcat."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
     }
   ],
   "assistant_usage": {
-    "call_count": 2,
-    "input_tokens": 4,
-    "output_tokens": 640,
-    "cache_creation_input_tokens": 48313,
-    "cache_read_input_tokens": 28368,
-    "total_cost_usd": 0.514525
+    "call_count": 5,
+    "input_tokens": 10,
+    "output_tokens": 3116,
+    "cache_creation_input_tokens": 168065,
+    "cache_read_input_tokens": 70920,
+    "total_cost_usd": 1.797045
   },
   "chat_history": [
     {
@@ -607,7 +788,25 @@
       "response": "Nothing — the run's only milestone (\"1:1 Text-Messaging end-to-end\") is already `achieved: true`, and the run isn't paused (`paused: false`, 0 consecutive failures).\n\nWhat's actually open, if you want the next target:\n\n| Item | State |\n|---|---|\n| Milestones | 1/1 achieved — no unachieved milestone exists |\n| Backlog | 3 of 6 open (broker discovery, self-reported `sender_pubkey`, unclosed `SQLiteDatabase` handle) |\n| Stalled stages | `devsystem.document_extraction`, `devsystem.android_emulator_test` — declared roles that have never produced an iteration |\n| Budget | 6 iterations to ceiling, check-in due in 1 |\n| Requirements | 0 declared — the review gate added at iteration 8 has nothing to gate |\n\nThe real bottleneck is that there's no next milestone defined, so the pipeline has no target beyond the open backlog. The broker-mediated discovery item is the one that needs a whole different crate (ct-agent) and is the natural M2.",
       "at": 1786077029,
       "requirement_indices": []
+    },
+    {
+      "instruction": "What is blocking this run from reaching its milestone right now?",
+      "response": "M2 isn't blocked by a pipeline gate — it's blocked by scope: the broker join code lives in `ct-agent`/`ct_edge` (CADS-Tunnel), not in this run's repo `CADS-webconference-android`, and no iteration has ever claimed requirement #0.\n\n| Blocker | Real evidence |\n|---|---|\n| Work is in another repo | Open backlog item: broker join / SignedChannelGrant / rendezvous / :443 relay \"lebt aktuell komplett in ct-agent/ct_edge, nicht in dieser Crate\" |\n| Req #0 untouched | No iteration in `history` carries `requirement_indices: [0]`; last 6 went to #4, #5, #1/#2/#3 |\n| Req #1 gate is unsatisfiable | It gates #0 on an emulator test; `devsystem.android_emulator_test` is stalled (iteration 19, `succeeded:false`) and iteration 18 proved requirements are immutable, so #1 can't be rewritten |\n| Last 3 iterations produced nothing on M2 | 19 (emulator_test) and 20 (document_extraction) both `succeeded:false`; 21 was requirement #4 status UI |\n| Budget | 21/40 done, check-in due in 1 iteration |\n\nNext concrete step: an `android_native_bridge` iteration claiming requirement #0 against a pinned CADS-Tunnel commit — or an operator decision to add ct-agent as a second source in this run.",
+      "at": 1786122412,
+      "requirement_indices": []
+    },
+    {
+      "instruction": "What is blocking this run from reaching its milestone right now?",
+      "response": "M2 is blocked by scope, not by a gate: the broker code (`ct-agent`/`ct_edge`) lives in CADS-Tunnel, not in this run's repo `CADS-webconference-android`, and no implementation iteration has ever claimed requirement #0.\n\n| Blocker | Real evidence |\n|---|---|\n| Work sits in another repo | Open backlog item: broker join / SignedChannelGrant / rendezvous / :443 relay \"lebt aktuell komplett in ct-agent/ct_edge, nicht in dieser Crate\" |\n| #0 has no implementation | Only iteration 14 (`devsystem.review`) carries `requirement_indices: [0]`; no `android_native_bridge` iteration ever has |\n| #1 gate unsatisfiable | #1 gates #0 on an emulator test; `devsystem.android_emulator_test` is stalled (iteration 19, `succeeded:false`) and iteration 18 proved requirements are immutable |\n| 3 of 5 added stages dead | `stalled_stages`: `document_extraction`, `android_emulator_test`, `android_native_build_ci` — one iteration each, all `succeeded:false` |\n| Budget | 21/40 iterations, check-in due in 1 |\n\nNext concrete step: an `android_native_bridge` iteration claiming #0 against a pinned CADS-Tunnel commit — or your decision to add ct-agent as a second source repo in this run.",
+      "at": 1786122463,
+      "requirement_indices": []
+    },
+    {
+      "instruction": "What is blocking this run from reaching its milestone right now?",
+      "response": "M2 is blocked by scope, not by a gate: the broker code (`ct-agent`/`ct_edge`) lives in CADS-Tunnel, not in this run's repo `CADS-webconference-android`, and no implementation iteration has ever claimed requirement #0.\n\n| Blocker | Real evidence |\n|---|---|\n| Work is in a different repo | Open backlog item: broker join / SignedChannelGrant / rendezvous / :443 relay \"lebt aktuell komplett in ct-agent/ct_edge, nicht in dieser Crate\" |\n| #0 never implemented | Only iteration 14 (`devsystem.review`) carries `requirement_indices: [0]`; no `android_native_bridge` iteration ever has |\n| #1 gate unsatisfiable | #1 gates #0 on an emulator test; `devsystem.android_emulator_test` is in `stalled_stages` and iteration 18 proved requirements are immutable |\n| 3 of 5 added stages dead | `stalled_stages`: `document_extraction`, `android_emulator_test`, `android_native_build_ci` — one iteration each, all `succeeded:false` |\n| Budget | 21/40 iterations, 19 left, check-in acknowledged through 21 |\n\nNext concrete step: an `android_native_bridge` iteration claiming #0 against a pinned CADS-Tunnel commit — or your decision to add ct-agent as a second source repo in this run.",
+      "at": 1786122523,
+      "requirement_indices": []
     }
   ],
-  "checkin_acknowledged_through": 21
+  "checkin_acknowledged_through": 26
 }
