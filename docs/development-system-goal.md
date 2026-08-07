@@ -5052,4 +5052,44 @@ real disk incidents in one session, a future firing should treat available disk 
 precondition to check before starting any local hermetic build, not just react to failures after the
 fact -- worth naming as a process gap in its own right, per this document's own governing principle.
 
+**Main-dev-loop firing, 2026-08-07 (ff) -- the disk-headroom precondition from firing (ee) actually
+built and shipped, plus a real, successful deploy that also fully resolved production's remaining
+cosmetic staleness.** State check: no new operator input on any of the four standing decision points.
+
+Turned the previous firing's own finding into a real fix rather than leaving it as a written lesson:
+`deploy-devsystem-web.sh` now checks real free disk space on this repo's own filesystem before
+starting any build, refusing below a 2GB floor with a clear, actionable message
+(`CADS-devsystem@107fcc9`). Verified both branches before shipping -- the block case via isolated
+logic testing with a simulated low value, the pass case for real: ran the actual script live, which
+took the chance to also genuinely resolve the still-open cosmetic staleness from firing (ee)
+(production reporting an older git SHA than `HEAD`, though never a functional gap -- confirmed then,
+reconfirmed now).
+
+That live run turned into its own real lesson about this host's actual build cost: it took nearly 5
+real minutes, roughly double this project's own previously-documented "genuinely cold build" baseline
+of ~7 minutes for a *single* `cargo build`. Traced why rather than assumed a fluke: `web/Dockerfile`'s
+one `RUN` step actually invokes `cargo build` **twice** -- once for `web/Cargo.toml`, once for
+`pipeline/Cargo.toml`'s own client binaries -- and a genuinely cold BuildKit cache mount means neither
+build's compiled dependencies are available to the other, even for crates both share by name and
+version, if their enabled feature sets differ (real, standard Cargo behavior, not a bug). Watched it
+compile the exact same dependency (e.g. `reqwest`, `ed25519-dalek`, `chacha20poly1305`) a second time
+mid-build, confirming this directly rather than guessing at the cause. Two earlier attempts this same
+window were killed too early (100s, matching the earlier `timeout 120s` habit this project's own
+tooling defaults to) on the mistaken assumption that unusually slow meant something was actually
+wrong -- the real problem both times was genuine impatience against a legitimately-documented cold-
+build cost, not a new incident. Given a full, patient run: disk stayed stable throughout (no further
+drain beyond normal build variance), confirming the two *earlier* incidents this session were real
+(one genuine disk-full crash, one build correctly killed while the disk was still actively draining)
+and this one wasn't a third -- named plainly rather than conflated, since telling a real incident
+apart from ordinary cold-build cost is exactly the kind of judgment call this document's own honesty
+standard exists to get right.
+
+Redeployed for real: git-SHA verified (`04c326c`, now matching `HEAD` exactly), full 100/100 stress
+harness reconfirmed clean, including the same live-deployed binary this precondition check itself now
+protects.
+
+Docs: `CADS-devsystem-docs` gets a matching entry for this whole thread -- the two real disk
+incidents, the precondition fix, and the two-cargo-builds discovery -- once this firing's own docs
+loop runs next.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
