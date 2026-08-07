@@ -148,8 +148,15 @@ jobs:
         working-directory: web
         run: cargo test --all-targets --verbose -- --ignored
 
+      # Real CI failure, caught live 2026-08-07 (#382 goal doc §8, check [48]):
+      # this build never passed GIT_SHA, unlike deploy-devsystem-web.sh's own
+      # real deploy build -- so the CI-built image's GET /api/version honestly
+      # (and correctly, per its own "never fabricate" design) reported
+      # "unknown", which is exactly what check [48] exists to fail on. The bug
+      # was this build step never doing what a real deploy does, not the check
+      # being wrong. Matches the deploy script's own build-arg exactly.
       - name: docker build (the actual image deployed live behind devsystem-demo.bunsenbrenner.org)
-        run: docker build -f web/Dockerfile -t devsystem-web:ci .
+        run: docker build -f web/Dockerfile --build-arg "GIT_SHA=${{ github.sha }}" -t devsystem-web:ci .
 
       # Real gap closed 2026-08-06 (#382 goal doc §8, stress-test run 35 -> 36):
       # scripts/incompetent-agent-stress-test.sh existed as a real, live-verified
