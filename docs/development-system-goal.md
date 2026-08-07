@@ -4221,4 +4221,23 @@ breakage. Reverted cleanly, rebuilt, redeployed the real fix, reconfirmed 90/90 
 change ships. Two of today's four new checks now mutation-verified (`[44]`, `[45]`); `[42]`
 (price_ceiling bypass) and `[43]` (review staleness) remain for a future firing to complete the set.
 
+**Main-dev-loop firing, 2026-08-07 -- continuing the mutation-test sweep to a third of today's four
+new checks.** State check: no new operator input on any of the three open `#382` checkpoints, no new
+PRs, disk unchanged, 90/90 clean before starting.
+
+Applied the identical mutation-test discipline to check `[43]` (`no_review_for_succeeded_work`'s
+"since the last work" fix), explicitly named remaining by the previous firing. Temporarily reverted
+the review-coverage check to scan all of history unconditionally (the literal pre-fix "anywhere,
+ever" bug), keeping the early-return-on-no-work guard intact so the mutation stayed minimal and
+cleanly revertible. Confirmed both layers genuinely fail: the hermetic unit test
+`re_flags_when_real_new_work_lands_after_the_only_real_review` panicked with the exact missing
+finding, and the rebuilt, redeployed mutated binary made live stress check `[43]` fail precisely on
+its second half (`real new unreviewed work after the only review re-flags the risk... expected yes,
+got no`) while its first half (`the real review genuinely clears the risk first`) correctly still
+passed -- proof of precise, targeted detection, not collateral breakage. Reverted cleanly, rebuilt,
+redeployed the real fix, reconfirmed 90/90 clean. No source change ships.
+
+Three of today's four new checks are now mutation-verified (`[43]`, `[44]`, `[45]`); only `[42]`
+(the `price_ceiling` careless-re-proposal bypass) remains, for a future firing to complete the set.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
