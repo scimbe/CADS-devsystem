@@ -4555,4 +4555,34 @@ Closed the original backlog item on the flagship run and added a new, precisely-
 real residual (responder-side) gap, rather than overclaiming the fix's actual reach. 95/95 stress
 harness stays clean (unaffected). Committed to `CADS-devsystem@e7bfbfa`.
 
+**Main-dev-loop firing, 2026-08-07 (l) -- the MessageStore leak, reverted earlier this session for
+disk-space reasons, shipped for real.** State check: no new operator input on any of the four
+standing decision points, `#13`/`#14`/PRs unchanged. `CADS-webconference-android@79774cd`'s Android
+CI (real NDK cross-compile + committed-bindings verification, not just the local `cargo test` run
+earlier) confirmed green first.
+
+Revisited the standing gap this file has carried since early in the session: a real
+`MessageStore.close()` fix (`MainActivity.onDestroy()` never existed; the `SQLiteOpenHelper`'s real
+`SQLiteDatabase` handle was never released) had been written once already, then reverted via `git
+checkout --` rather than risk a disk-full incident pulling a multi-GB Android SDK image to test it
+locally (host was at 4.0G free then; now tighter still, 2.8G). Re-examined the actual constraint
+rather than assuming it still blocks everything: this repo's Kotlin side has never had a local
+hermetic test path at all -- its own CI workflow (`android-ci.yml`) is the established, real
+verification gate for every one of today's four earlier Kotlin fixes, not a fallback. The disk
+constraint blocks a *local* Docker-based Android SDK pull, not a real GitHub Actions run.
+
+Rewrote the fix properly this time: `MainActivity.onDestroy()` calls `messageStore.close()`, and a
+new Robolectric test drives the actual production path end to end -- launches the real activity,
+captures the live `SQLiteDatabase` handle, confirms it's genuinely open, moves the scenario through
+real teardown (`ActivityScenario.moveToState(DESTROYED)`), confirms `onDestroy` actually closed it.
+`messageStore`'s visibility widened from `private` to `internal`, matching the exact real precedent
+`resetForNewConnection` already established for this same test class. Pushed and waited for the
+actual GitHub Actions run rather than declaring it done on faith: `conclusion: success`. Closed the
+corresponding backlog item on the flagship run. 95/95 stress harness stays clean. Committed to
+`CADS-webconference-android@ce4aa2c` and `CADS-devsystem@1311855`.
+
+This resolves the standing "no hermetic Android test path" gap as a real constraint on *local*
+verification only -- it was never a reason a real fix couldn't ship, just a reason to route
+verification through the repo's own established CI gate instead of inventing a workaround.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
