@@ -4848,4 +4848,29 @@ deliberately **not** been deployed to the live production control-plane (`bunsen
 held back pending the operator's explicit go-ahead, asked directly mid-window when the operator
 asked whether it was built. No reply has arrived yet.
 
+**Main-dev-loop firing, 2026-08-07 (z) -- mutation-testing check `[48]`, the newest checks now
+covered too.** State check: no new operator input on any of the four standing decision points.
+Issue `#13` confirmed closed; `#14` unchanged. One real, positive change: CI on `scimbe/CADS-devsystem`
+finally cleared its unusually long runner-queue stall from earlier this window -- the concurrency
+group is now cancelling superseded runs as designed instead of stacking, and the latest push
+completed normally.
+
+Checks `[1]`, `[2]`, and the `[36]`-`[47]` batch already have live mutation-test proof; `[48]`/`[49]`
+(this session's own git-SHA version endpoints) did not yet. Mutation-tested `[48]`
+(`GET /api/version` on `devsystem-web`): neutered `version()` to always report `"unknown"`,
+ignoring `DEVSYSTEM_GIT_SHA` entirely -- the literal shape of the real regression this check exists
+to catch (a deploy that runs but fails to bake in the real SHA), not a synthetic one. No hermetic
+unit test applies here by design (the handler's own doc comment already states why: mutating a
+process-global env var in a multi-threaded test binary would race unpredictably -- the "set" case
+is deliberately proven live only, by the deploy script itself). Rebuilt and redeployed the mutated
+binary via the real `deploy-devsystem-web.sh` -- worth noting, the deploy script's own post-deploy
+verification caught the mismatch immediately and exited 1 (a real bonus confirmation that the
+git-SHA safety net has teeth at the deploy-script layer too, not only the harness layer; the
+mutated container was still left running for the harness to check, as designed). Ran the full live
+harness: exactly check `[48]` failed (`expected yes, got no ('unknown')`), all 99 sibling assertions
+stayed green. Reverted cleanly from a pre-mutation backup, rebuilt, redeployed the real fix
+(`Git SHA verified: ... (8321af3)`), reconfirmed 100/100. `[49]` (the separate
+`devsystem_assistant` binary) remains the one still-unverified check, a natural next target. No
+source change ships -- verification remains a real, legitimate increment on its own.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
