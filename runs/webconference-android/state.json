@@ -269,10 +269,14 @@
     },
     {
       "text": "Security: TextMessage.sender_pubkey is self-reported by the sender at compose time, not derived from the authenticated Noise session -- harmless today since only message direction drives rendering, but a forged sender_pubkey would be silently trusted if that ever changes. Found by devsystem.assistant, 2026-08-07, reading iteration 13's own real findings; pinned here so it survives past that iteration's prose.",
-      "done": false
+      "done": true
     },
     {
       "text": "MessageStore never closes its SQLiteDatabase handle (no onDestroy()/close() call in MainActivity). A real fix + Robolectric test were written earlier this session but reverted before shipping (host disk headroom too tight to safely pull an Android SDK image for a hermetic test path) -- corroborated independently by devsystem.assistant, 2026-08-07. Needs a firing with more disk headroom, or a lighter verification path that does not need the full Android SDK image.",
+      "done": false
+    },
+    {
+      "text": "Residual scope from the sender_pubkey provenance fix (native-bridge/src/channel.rs, CADS-webconference-android@79774cd): only the dialer/initiator side overrides a received messages sender_pubkey with the real, Noise_IK-authenticated key. The listener/responder side still trusts the wire value verbatim -- ct_common::a2a::a2a_respond (CADS-Tunnel, a separate pinned repo) learns the initiators key internally during the handshake but does not return it, only the resulting TransportState. Closing this needs an upstream CADS-Tunnel change (return the authenticated peer key from a2a_respond), correctly scoped as its own separate increment. Still harmless today: nothing in the GUI trusts sender_pubkey for anything, only message direction drives rendering.",
       "done": false
     }
   ],
