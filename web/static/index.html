@@ -1511,7 +1511,15 @@ function showPanel(id) {
   const base = current.autoHidden ? { ...current, ...PANEL_DEFAULTS[id], autoHidden: false } : current;
   const placed = ensurePanelVisible({ ...base, id });
   applyRect(win, placed);
-  layout[id] = { ...placed, visible: true };
+  // Real gap, GitHub issue #33 (evaluator finding, 2026-08-07): this never
+  // touched a panel's own minimized state -- the panel launcher's own bubble
+  // click (and `./show <panel>`) called this same function, so a minimized
+  // panel stayed a bare, empty-looking ~33px title bar forever, with no way
+  // back except finding and re-clicking its own tiny "-" button. "Show" has
+  // to mean "actually visible", not just `display:flex` on a collapsed
+  // shell -- un-minimizing here is what makes that true.
+  win.classList.remove('minimized');
+  layout[id] = { ...placed, visible: true, minimized: false };
   win.style.display = 'flex';
   saveLayout();
   bringToFront(id);
