@@ -3416,6 +3416,17 @@ Two real gaps of the identical shape remain, deliberately deferred: `update_crit
 thought before treating it as a safe direct action (it governs the run's own abort/pause safety
 bounds, not just inert metadata).
 
+**Closed, later the same session -- correcting the record here since this note was never marked
+done**: both landed as direct `Action` variants (`SetRoleFillMode`, seventeenth action type;
+`UpdateCriteria`, eighteenth), documented in the large multi-action commit comment recorded elsewhere
+in this file and in `CADS-devsystem-docs@bb64548`. The "deserves more thought" concern was real and
+is genuinely resolved, not skipped: `POST /api/runs/{id}/criteria` (the real endpoint
+`UpdateCriteria` dispatches to, `web/src/main.rs`) enforces `max_iterations`/
+`max_consecutive_failures` at least 1 and all three fields at most 10,000 server-side, closing
+exactly the "a run's own safety bounds could be set to something absurd or unbounded" risk this note
+was waiting on -- the same "call the real endpoint, let it be the one source of truth" discipline
+every other `Action` dispatch in this file already follows, not a special case.
+
 **Docs-loop firing, 2026-08-06 -- a real bug found and fixed while documenting firing (bbbb), not
 just a docs gap**: this page's own established "ask the real assistant, don't guess" pattern for its
 action-type count (already documented as a real gap twice before, in different firings) caught a
@@ -3878,5 +3889,34 @@ real `iteration_outcome=Continue`), then the byte-identical resubmission (`exit 
 to record it as a distinct, new iteration" message) -- confirmed live against the actual binary, not
 assumed from the unit test alone. Scratch run cleaned up afterward. Corrected the record here rather
 than re-flagging the same stale note a third time.
+
+**Goal-driven-loop firing, 2026-08-07 -- a systematic sweep of every "deliberately deferred"/"left
+open for a future firing" note in this document, not just the one from last firing.** State check: no
+new operator input on any of the three open `#382` checkpoints, no new PRs, issue #14 unchanged, CI
+finally running again (`in_progress`, cleared the queue this firing found stuck last time).
+
+The previous firing closed one stale "left open" note (`run_local`'s idempotency guard, already fixed
+in `3afdbd2` but never marked so). Rather than assume that was the only one, grepped this whole
+document for every remaining "deliberately deferred"/"left open"/"not attempted here" phrase and
+checked each against the current real source instead of trusting the prose:
+
+- The sitewide `aria-live` gap (firing yyy) -- already closed by firing zzz, right after. No action
+  needed, already correctly marked.
+- `update_criteria`/`set_role_fill_mode` (§7 item 2, this section) -- both real `Action` variants
+  exist today (confirmed in `devsystem_assistant.rs`), and the specific safety concern the note
+  raised (`update_criteria` governing real abort/pause bounds) is genuinely resolved by
+  `POST /api/runs/{id}/criteria`'s own server-side bounds check, not just shipped and hoped-safe.
+  Corrected the record above rather than leaving a third stale "still open" note for a future firing
+  to re-discover from scratch.
+- The "generic-but-varied review" gap (`runner.rs`'s own `MIN_REVIEW_FEEDBACK_LEN`/
+  `MIN_REVIEW_DISTINCT_WORDS` doc comment) -- checked and left alone deliberately, not silently
+  dropped: this one is genuinely, permanently open by design, not a stale note. Chasing it with an
+  ever-cleverer mechanical heuristic risks becoming exactly the "fake LLM-judgment-in-disguise" this
+  codebase's own established convention (`preflight.rs`, cited directly in that same doc comment)
+  already rejects -- a real, honest, accepted limitation of a deliberately crude gate, not a bug.
+
+No further stale "deferred" notes found after this sweep. Hermetic verification for this firing is
+the same live-code-reading discipline as the source check itself (no code changed, so no build/test
+was needed) -- a docs-only correction, honestly scoped as such.
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).
