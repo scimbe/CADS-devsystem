@@ -6421,4 +6421,35 @@ need updating everywhere at once, a real but separate piece of work) and a hard-
 issue's own analysis: remapping every iteration's `requirement_indices` after a removal is real,
 materially harder work than an in-place update). Both noted as open follow-ons in the issue comment.
 
+**Main-dev-loop firing, 2026-08-07 (bbb) -- issue 35: the requirements export's own numbering
+silently pointed at the wrong requirement.** The Requirements panel's `⬇ Download as Markdown`
+export -- the natural document to hand a reviewer alongside a real APK build -- renumbered every
+requirement with a fresh 1-based counter (`## 1.`, `## 2.`, ...), while every other real surface on
+this platform (the GUI's own `#N` badges, the New Iteration panel's "Addresses" checkboxes,
+`requirement_indices` itself) uses the run's real 0-based ordinal. Live-confirmed on the flagship
+`webconference-android` run before touching anything: requirement `#5` (the APK requirement, the one
+whose whole point is letting a reviewer verify the claimed behavior on a real device) exported as
+`"## 6."`, with `"## 5."` silently naming a completely different requirement. A citation in real
+iteration feedback ("this addresses requirement #5") pointed a reviewer reading the exported document
+at the wrong text entirely.
+
+The export also carried zero coverage information -- a requirement with a real, substantive iteration
+linked to it and one with none at all were byte-for-byte indistinguishable in the document, unlike the
+Requirements panel itself which already shows `addressed by iteration(s) N` per requirement.
+
+Fixed both together: `render_requirements_markdown` now emits the same real ordinal every other
+surface uses (`## #{i}`), and takes the run's real `history` to render a real coverage line per
+requirement -- `*Addressed by iteration(s) N, M.*` or `*Not yet addressed by any iteration.*` --
+mirroring the Requirements panel's own `addressedBy` derivation exactly, not a fresh, separate
+computation that could quietly drift from what the GUI shows. `CADS-devsystem@26cd5d6`.
+
+160/160 pipeline lib tests, 220/220 web tests, zero warnings. Both existing "forge a fake requirement
+entry via crafted statement text" security tests updated to target the new real heading format
+(`## #1`, replacing the old `## 2.` the attack used to mimic) so they stay faithful regression tests
+of the actual current forgery surface, not stale ones nothing can trigger any more. Live-verified
+against the redeployed container: the real flagship run's requirement `#5` now exports as `## #5`
+across all eighteen requirements (`#0`-`#17`, matching the GUI one-to-one), with its real coverage
+(`Addressed by iteration(s) 15, 16, 26`) cross-checked directly against the run's raw history data,
+not just trusted from the rendered text.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
