@@ -195,6 +195,17 @@
       ],
       "succeeded": true,
       "requirement_indices": []
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.review",
+      "iteration": 15,
+      "feedback": "Real devsystem.review iteration addressing requirement 0 (M2, broker-mediated channel discovery) -- the first review this run own mandatory review gate has ever actually had to evaluate against a real requirement, since none existed until iteration 15. Read native-bridge/src/channel.rs own module doc comment and docs/channel-join-options.md in full before writing this, not from memory. Honest finding: acceptance criteria are NOT met yet. What exists today is Option 2 from channel-join-options.md -- a real, hermetically-tested, cross-compiled Noise_IK direct peer-to-peer session (ct_common::a2a, genuine AEAD-authenticated handshake, real encrypted TextMessage exchange) -- but it requires a peers Noise public key and reachable host:port already known out of band (manually entered), exactly the M1 mechanism this requirement is meant to replace. Option 1 (the real thing: SignedChannelGrant presented to ct_edge::channel_broker, rendezvous, NAT traversal, :443 relay fallback) is explicitly NOT implemented here -- it lives in the separate ct-agent repo (native/src/channel.rs + channel_run.rs, ~8.5k lines) and reaching it needs either a real dependency on ct-agent channel.rs (the broker-client half, no ct_edge needed at runtime per that crates own tests) or a substantial extraction from channel_run.rs own CLI-process-shaped orchestration -- correctly scoped in channel-join-options.md as a separate, larger increment, not force-fit into what shipped for M1. None of this requirement three acceptance criteria (fresh-install broker discovery works, direct-address fallback stays available, an honest failure message on discovery failure) are met by code that does not exist yet. Do not mark this requirement verified -- this review exists to honestly confirm the gap, not rubber-stamp it. Real next step: adopt option 1 from channel-join-options.md as its own bounded increment.",
+      "proposals": [],
+      "succeeded": true,
+      "requirement_indices": [
+        0
+      ]
     }
   ],
   "added_stages": [
