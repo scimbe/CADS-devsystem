@@ -1927,6 +1927,21 @@ function checkPanelsFitViewport() {
   }
   saveLayout();
   renderPanelToggleBar();
+  // Real gap, GitHub issue #43 (evaluator finding, 2026-08-07): the orb
+  // launcher's bubble `active`/"currently open" state is only computed when
+  // the launcher opens (renderOrbBubbles(), called from openOrbLauncher()) --
+  // it was never refreshed while the overlay stayed open across a viewport-fit
+  // auto-hide/restore. A shrink that auto-hid panels left every one of their
+  // bubbles still claiming "currently open", and clicking one then *revealed*
+  // the hidden panel -- the opposite of what the stale dot implied. Treat the
+  // overlay as a live view, not a snapshot: if it's open and this pass
+  // actually changed anything, re-render the bubbles and reapply whatever
+  // filter the user had typed, rather than clobbering their search.
+  if ((hiddenTitles.length || restoredTitles.length) && document.getElementById('orb-overlay')?.classList.contains('open')) {
+    renderOrbBubbles();
+    const filter = document.getElementById('orb-filter');
+    if (filter) applyOrbFilter(filter.value);
+  }
   if (hiddenTitles.length) {
     showViewportFitNotice(
       `Hid ${hiddenTitles.length === 1 ? 'a panel' : hiddenTitles.length + ' panels'} that no longer fit this window: ${hiddenTitles.join(', ')} -- comes back automatically if the window grows, or reopen from the launcher.`
