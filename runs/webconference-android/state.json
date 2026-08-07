@@ -255,6 +255,14 @@
     {
       "text": "Broker-vermittelte Kanal-Discovery: aktuell direct-address-only (beide Seiten tauschen Public Key/Adresse manuell out-of-band aus, channel.rs eigener Modul-Kommentar). Naechster echter Schritt fuer echte Geraet-zu-Geraet-Nutzung ohne manuellen Adressaustausch: ct-agent channel join gegen den echten CADS-Tunnel Broker (SignedChannelGrant, Rendezvous, NAT-Traversal, :443 Relay-Fallback) -- lebt aktuell komplett in ct-agent/ct_edge, nicht in dieser Crate.",
       "done": false
+    },
+    {
+      "text": "Security: TextMessage.sender_pubkey is self-reported by the sender at compose time, not derived from the authenticated Noise session -- harmless today since only message direction drives rendering, but a forged sender_pubkey would be silently trusted if that ever changes. Found by devsystem.assistant, 2026-08-07, reading iteration 13's own real findings; pinned here so it survives past that iteration's prose.",
+      "done": false
+    },
+    {
+      "text": "MessageStore never closes its SQLiteDatabase handle (no onDestroy()/close() call in MainActivity). A real fix + Robolectric test were written earlier this session but reverted before shipping (host disk headroom too tight to safely pull an Android SDK image for a hermetic test path) -- corroborated independently by devsystem.assistant, 2026-08-07. Needs a firing with more disk headroom, or a lighter verification path that does not need the full Android SDK image.",
+      "done": false
     }
   ],
   "milestones": [
