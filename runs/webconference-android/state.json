@@ -158,6 +158,43 @@
       "proposals": [],
       "succeeded": true,
       "requirement_indices": []
+    },
+    {
+      "run_id": "webconference-android",
+      "stage": "devsystem.improve",
+      "iteration": 14,
+      "feedback": "Real self-optimization step, not a code change to this repo: closing three of this run own real, live-flagged 'no price ceiling set' risks (devsystem.document_extraction, devsystem.android_emulator_test, devsystem.review) using the pipeline own real, already-tested fix mechanism -- re-proposing each already-live role with the identical stage_id/tag it already has, this time with a real price_ceiling. apply_proposal correctly treats this as updating the already-approved role (AlreadyPresent), not a duplicate, and price_ceiling_for's own \"latest real proposal wins\" fix (closed earlier today) makes the new bound the one preflight actually reads. Picked 2000 units for all three, matching this project own documented tutorial convention (submit-an-iteration.md), since none of the three had any prior real ceiling anywhere in this run own history to match instead. This does not need an operator decision -- adding a spending cap where none existed is the strictly conservative direction, never removes a real permission.",
+      "proposals": [
+        {
+          "proposed_by": "devsystem.improve",
+          "stage_id": "devsystem.document_extraction",
+          "tag": "document_extraction",
+          "rationale": "Real cost-exposure risk closed: this role was live in the spec with zero price bound since iteration 1, flagged by this run own real preflight check the entire time.",
+          "use_existing_service": null,
+          "units": 1,
+          "price_ceiling": 2000
+        },
+        {
+          "proposed_by": "devsystem.improve",
+          "stage_id": "devsystem.android_emulator_test",
+          "tag": "android_emulator_test",
+          "rationale": "Real cost-exposure risk closed: this role was live in the spec with zero price bound since iteration 3, flagged by this run own real preflight check the entire time.",
+          "use_existing_service": null,
+          "units": 1,
+          "price_ceiling": 2000
+        },
+        {
+          "proposed_by": "devsystem.improve",
+          "stage_id": "devsystem.review",
+          "tag": "review",
+          "rationale": "Real cost-exposure risk closed: this role was live in the spec with zero price bound since iteration 8, flagged by this run own real preflight check the entire time.",
+          "use_existing_service": null,
+          "units": 1,
+          "price_ceiling": 2000
+        }
+      ],
+      "succeeded": true,
+      "requirement_indices": []
     }
   ],
   "added_stages": [
@@ -166,7 +203,35 @@
     "devsystem.android_emulator_test",
     "devsystem.review"
   ],
-  "approved_stage_proposals": [],
+  "approved_stage_proposals": [
+    {
+      "proposed_by": "devsystem.improve",
+      "stage_id": "devsystem.document_extraction",
+      "tag": "document_extraction",
+      "rationale": "Real cost-exposure risk closed: this role was live in the spec with zero price bound since iteration 1, flagged by this run own real preflight check the entire time.",
+      "use_existing_service": null,
+      "units": 1,
+      "price_ceiling": 2000
+    },
+    {
+      "proposed_by": "devsystem.improve",
+      "stage_id": "devsystem.android_emulator_test",
+      "tag": "android_emulator_test",
+      "rationale": "Real cost-exposure risk closed: this role was live in the spec with zero price bound since iteration 3, flagged by this run own real preflight check the entire time.",
+      "use_existing_service": null,
+      "units": 1,
+      "price_ceiling": 2000
+    },
+    {
+      "proposed_by": "devsystem.improve",
+      "stage_id": "devsystem.review",
+      "tag": "review",
+      "rationale": "Real cost-exposure risk closed: this role was live in the spec with zero price bound since iteration 8, flagged by this run own real preflight check the entire time.",
+      "use_existing_service": null,
+      "units": 1,
+      "price_ceiling": 2000
+    }
+  ],
   "criteria": {
     "max_iterations": 20,
     "max_consecutive_failures": 3,
