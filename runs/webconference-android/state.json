@@ -369,8 +369,8 @@
     "max_consecutive_failures": 3,
     "checkin_every": 1
   },
-  "paused": true,
-  "pause_reason": "paused manually",
+  "paused": false,
+  "pause_reason": null,
   "backlog": [
     {
       "text": "Stage-Proposal devsystem.android_native_bridge (cf0593ebc3409cdb) prüfen und freigeben oder ablehnen - blockiert alle Android-Transportarbeit",
@@ -402,6 +402,10 @@
     },
     {
       "text": "OPERATOR DECISION NEEDED (escalated by what was numbered iteration 19 when this was written, devsystem.plan -- renumbered to iteration 18 by the issue #38 duplicate-data repair on 2026-08-07, corrected here per issue #42): should CADS-webconference ever support offline/store-and-forward delivery? That iteration decided forward-only for THIS run's scope -- forced, since the run has no backend role, no server repo, and both milestones (M1 direct Noise_IK, M2 broker join/rendezvous/relay) only establish or forward, never store. Consequence: requirement #3 c4 (queued message for an offline recipient) is unsatisfiable by construction and, because requirements are immutable here (scimbe/CADS-devsystem#37), cannot be edited out -- #3 can never reach 4/4. If the product answer is YES, it needs a new backend service, its own repo, and a new role in this spec; #3 would have to be recreated, not amended. The architecture consequence is settled; only the product question is open.",
+      "done": false
+    },
+    {
+      "text": "STATUS-BLINDSPOT (measured 2026-08-07, bastler persona): 3 of this run's 5 added stages have never produced a single succeeded iteration -- devsystem.document_extraction (1 iter, 0 ok), devsystem.android_emulator_test (1 iter, 0 ok), devsystem.android_native_build_ci (1 iter, 0 ok). The run nevertheless reports stalled_stages: [] and shows no stalled badge, because the stalled signal keys on \"an iteration record exists\" rather than \"a succeeded iteration exists\" -- one succeeded:false iteration clears it permanently and it never re-arms (reproduced from scratch on run bastler-stalled-latch-probe; filed as scimbe/CADS-devsystem#53). Two of the three were silenced by iterations whose own text opens with \"drive the stalled <stage> stage\" and is recorded succeeded:false. Consequence for THIS run: the three dead stages are exactly the infra-blocked ones tracked as CADS-devsystem#12 / #13 / #14, they are why requirement #5 (downloadable, commit-traceable, checksummed APK) is still unsatisfiable (#36), and no panel currently tells an operator they are dead -- the Roles panel's \"N iteration(s) total for this role\" renders \"1 iteration(s)\" identically whether that iteration shipped or failed. Not new work, a correction to this run's own health picture.",
       "done": false
     }
   ],
@@ -554,6 +558,34 @@
         "Group membership is mutable: an admin/owner can add and remove members; removed members no longer receive new messages and cannot read future traffic.",
         "Group messages use the same end-to-end encryption as 1:1 (no plaintext to broker/relay); a new member cannot read messages sent before they joined (forward secrecy across join boundary).",
         "The group survives a member going offline and rejoining (group state is consistent across reconnects); leaving the group is explicit and confirmed."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN a participant is composing a message in a 1:1 conversation, THE SYSTEM SHALL show the remote participant a real 'typing…' indicator while the sender is actively entering text, and SHALL hide it when the sender stops or sends the message, so conversational flow feels live and comparable to WhatsApp/Signal instead of the recipient staring at a silent input with no feedback.",
+      "acceptance_criteria": [
+        "While the sender is actively typing in a 1:1 chat, the recipient UI shows a real, live 'typing…' indicator (not a static/fake one).",
+        "When the sender stops typing for a bounded idle window (e.g. a few seconds) or sends/cancels the message, the 'typing…' indicator disappears on the recipient side, not stuck on.",
+        "The indicator is per-conversation and does not leak across conversations or appear for senders who are not actually typing.",
+        "When the channel is down or the peer is unreachable, the indicator does not falsely show 'typing…' on the recipient side (no fabricated presence).",
+        "The indicator works over the same real channel as messages (broker-discovery or direct-address) and does not require a separate manual connection."
+      ],
+      "verified": false,
+      "verified_criteria": [],
+      "auto_judge": false,
+      "proposed_by": null
+    },
+    {
+      "statement": "WHEN the Android client is in the background or the screen is off and a new 1:1 or group message arrives that the user has not yet seen, THE SYSTEM SHALL surface a real OS-level push notification (with sender name/number and a message preview that respects end-to-end-encryption by decrypting locally before display) so the user is alerted to the message comparably to WhatsApp/Signal, instead of silently dropping the notification or only updating the in-app UI the user cannot see.",
+      "acceptance_criteria": [
+        "When a new 1:1 or group message arrives while the app is backgrounded or the screen is off, the device shows a real OS-level notification (notification channel, sound/vibration per system settings) containing the sender display name and a short preview of the message body.",
+        "The notification preview is produced by decrypting the message locally on-device (end-to-end-encrypted content is decrypted with the user's key before display); no plaintext is leaked to the OS notification surface beyond what the user's own device already holds.",
+        "Tapping the notification opens the app directly to the conversation that produced the message, not a generic inbox or the last-opened screen.",
+        "If the OS grants a restricted/background-execution budget that is too small to fetch and decrypt the message (e.g. Doze, battery saver), the app shows an honest, non-fabricated notification ('New message from <sender>' without a preview body) rather than fabricating a preview it never decrypted or silently dropping the notification.",
+        "The user can mute a specific 1:1 or group conversation so that its messages do NOT raise an OS-level push notification while still being delivered inside the app, and the mute setting persists across app restarts."
       ],
       "verified": false,
       "verified_criteria": [],
