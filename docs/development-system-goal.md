@@ -3540,4 +3540,42 @@ types, covering nine kinds of run data". Scratch run deleted after verification.
 This closes every previously-deferred instance of the §7.2 "assistant action parity with the human
 GUI" gap found so far -- no further items in that specific list remain open.
 
+**Goal-driven-loop firing, 2026-08-07 -- a real, fresh, scimbe-authored gap (issue #18) closed a
+DAU-proofing dead end in CADS-Tunnel's own login gate.** State check: no new operator input on any
+of the three open `#382` checkpoints (M1 direction, OIDC credential, hard-block review-gate); CI on
+both `CADS-devsystem` and `CADS-webconference-android` had actually cleared GitHub's earlier
+`major_outage` and is green again. Issue #13 closed since the last check (labor-setup.com's real
+two-device emulator walkthrough, already reflected in the M1 checkpoint). Issue #14 unchanged,
+still genuinely blocked on the OIDC credential. A brand-new issue (#18, opened 2026-08-06T23:29:57Z,
+zero comments) reported a real, reproduced-4/4-times gap: a first-time evaluator who successfully
+signs in to `devsystem-demo.bunsenbrenner.org` but isn't on the tunnel's access allow-list hits a
+genuine dead end -- "contact whoever shared this link with you," no real way to do that if they
+arrived with no prior contact (e.g. via documentation). This is squarely §7's own DAU-proofing
+mandate, just against the login gate rather than the assistant GUI: a human doing the reasonable
+thing (trying to sign up) gets silently stuck instead of led to a real next step.
+
+The actual fix lives in `CADS-Tunnel` (`crates/control-plane`), not this repo -- the gate itself is
+platform infrastructure, not devsystem-specific. [`CADS-Tunnel@f4a7238`](https://github.com/scimbe/CADS-Tunnel/commit/f4a7238):
+a real `GET /gate/request-access?host=...` form linked from the denial page, backed by a new
+`gate_access_requests` table (idempotent per hostname+email, only accepted for a hostname that's
+actually gated), surfaced to the tunnel owner right next to the allow-list it's asking to join
+(one-click Grant, which auto-dismisses the request, or Dismiss). No new notification
+infrastructure invented -- this crate genuinely has none, so the fix matches the allow-list's own
+existing "owner reviews and manually adds" pattern rather than a new architecture. 348/348
+`ct-control-plane` tests pass (5 new), hermetic (`rust:1-slim`, `RUSTFLAGS=-D warnings`). Also fixed
+two pre-existing clippy findings this change's own workspace-wide clippy run surfaced in
+`ct-common` (both `#[allow]`'d with a comment explaining why the suggested rewrite doesn't actually
+apply here, not silently suppressed) and factored a new 7-element tuple into a named type
+(`type_complexity`). Eight further pre-existing clippy findings remain elsewhere in
+`ct-control-plane`, unrelated to this change -- left alone as genuinely out of scope for one bounded
+increment, noted honestly rather than either fixed wholesale or swept under the rug.
+
+**Deliberately not deployed to the live production control-plane.** Every other proactive redeploy
+this session has been to `CADS-devsystem`'s own dev tools (`devsystem-web`/`devsystem_assistant`);
+this is the shared control-plane behind every live tunnel on the platform, a materially larger
+blast radius, and no prior firing has touched its live deployment autonomously. Landed on `main`,
+tested, and flagged clearly on issue #18 with the exact lever (`scripts/deploy-selfhost.sh`) rather
+than guessed past -- the same "surface it, don't guess" discipline already applied to the OIDC
+credential and the three open `#382` checkpoints.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
