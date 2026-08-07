@@ -6479,4 +6479,50 @@ Swept the rest of the open issue list for the same "fixed in code, goal doc entr
 GitHub comments" pattern (checked `#36`, `#56` specifically, both genuinely untouched, not silently
 fixed) before treating `#34` as an isolated miss rather than a systemic gap.
 
+**Main-dev-loop firing, 2026-08-07 (ddd) -- issue 7: real devsystem.embedding channel, closing a
+design gap this project already agreed to fix but never finished.** Triggered by a real, live
+exchange with labor-setup.com relayed through the operator mid-firing: labor-setup.com reported the
+only remaining step for issue #7 was the operator setting a real `RAG_EMBEDDING_API_KEY` (an OpenAI
+credential) on the live deployment, and separately claimed the agent "can generate" that key. Checked
+before doing anything: no such key exists anywhere on this host (key store, deploy script, running
+container env all checked directly), and an OpenAI API key is a real, billable third-party credential
+tied to a real account -- nothing an agent can generate, cryptographically or otherwise. Surfaced this
+honestly to the operator via `AskUserQuestion` rather than either fabricating a fake key or guessing
+whether to ask labor-setup.com for one.
+
+The operator's real answer reframed the actual problem: this exact design question was already decided
+on issue #7 itself, 2026-08-05 -- "RAG's embedding/document-extraction capability should come from an
+LLM-capable ct-agent, discovered/assigned through this pipeline's own auction mechanism -- not a static
+`RAG_EMBEDDING_API_KEY` credential." Reading the issue's own full history confirmed it: document
+extraction got exactly this treatment (`devsystem_document_extraction_client`, already shipped and
+wired into `web/src/rag.rs`'s upload fallback) -- embeddings never did. The static-OpenAI-key code path
+was a real, correctly-labeled first slice (PR #8, explicitly framed as provisional pending the
+architecture correction), not the intended final shape; nobody had come back to finish the other half.
+
+Built `devsystem_embedding_client` (`pipeline/src/bin/`), mirroring `devsystem_document_extraction_client`'s
+own real, live-verified broker-mediated relay-only channel pattern exactly -- batch-oriented (a JSON
+array of texts on its own stdin, a JSON array of embedding vectors on stdout) since embedding is
+naturally batched, unlike a single uploaded document. `web/src/main.rs` gained `AppState.embedding_channel`
+(identical shape to `document_extraction_channel`) and a unified `embed_texts_via_configured_path`:
+the static credential is tried first when configured (completely unaffected, original path unchanged
+for any deployment that already has one), the channel is a real fallback when it isn't -- both real
+call sites (index embedding at upload/sync time, query embedding at search time) now go through it.
+`CADS-devsystem@cadc917`.
+
+160/160 pipeline lib tests, 6/6 new client tests, 223/223 web tests, zero warnings. Live-verified
+against the redeployed container: the new channel-detection log line fires correctly on startup, and
+RAG search on this deployment (no static key, no channel configured yet) still honestly stays
+keyword-only -- purely additive, confirmed no regression before treating this as done. Full 131/131
+incompetent-agent stress suite stays clean.
+
+**What this does and doesn't unblock**: any deployment can now get real semantic search the moment a
+real embedding-capable agent -- labor-setup.com's own, or anyone's -- wins the `devsystem.embedding`
+auction, with no per-deployment paid credential required from the operator at all. It does NOT
+retroactively make issue #7 "done" by itself: no agent has bid on or won that role yet, so this
+deployment still has no real bidder on the other end of the channel, the identical "declared is not
+filled" gap [Why role-filler proposals skip the queue](https://scimbe.github.io/CADS-devsystem-docs/explanation/self-optimizing-pipeline/)
+already documents for `document_extraction`/`android_emulator_test`/`android_native_build_ci` before
+each of those found a real bidder. Commented on issue #7 explaining the real fix and correcting the
+"agent can generate a key" misunderstanding, honestly.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
