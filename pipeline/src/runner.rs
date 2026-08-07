@@ -750,7 +750,20 @@ pub fn toggle_milestone(state: &mut RunState, index: usize) -> Result<(), String
     milestone.achieved = !milestone.achieved;
     let just_achieved = !was_achieved && milestone.achieved;
     let description = milestone.description.clone();
-    if just_achieved {
+    // Real evaluator finding, issue #50: this used to set `pause_reason`
+    // unconditionally on every achieve-transition, even when the run was
+    // ALREADY paused for a genuine safety abort (max_iterations,
+    // max_consecutive_failures, a due check-in -- see `ceiling_already_reached`/
+    // `run_iteration`'s own real reasons). A milestone's own free text
+    // (self-serve, any signed-in account, on any unowned run per #44/#45's fail-
+    // open write path) would silently overwrite and permanently lose the real
+    // reason, and un-achieving never restored it -- an operator reading "milestone
+    // achieved: ..." had no way to know the run was actually halted on its
+    // consecutive-failure budget. Only ever set a NEW reason when the run
+    // genuinely wasn't already paused -- the first real reason a run halts for
+    // wins and stays visible; a milestone reached while already correctly halted
+    // doesn't get to relabel why.
+    if just_achieved && !state.paused {
         state.paused = true;
         state.pause_reason = Some(format!("milestone achieved: {description}"));
     }
@@ -1374,6 +1387,33 @@ mod tests {
     fn toggling_an_out_of_range_milestone_index_fails_loudly() {
         let mut state = RunState::new("run-milestone-oob");
         assert!(toggle_milestone(&mut state, 0).is_err());
+    }
+
+    #[test]
+    /// Real evaluator finding, issue #50, the exact live repro: a run genuinely
+    /// paused for a real safety abort (consecutive_failures over the limit) must
+    /// keep that real reason visible when an unrelated milestone is achieved
+    /// afterward -- not have it silently overwritten with a benign "milestone
+    /// achieved: ..." string that masks the actual, still-latched safety
+    /// condition (consecutive_failures itself is untouched by this, so the run
+    /// really is still in that state; only the displayed reason used to lie
+    /// about it).
+    fn achieving_a_milestone_while_already_paused_for_a_real_safety_reason_does_not_overwrite_it() {
+        let mut state = RunState::new("run-milestone-mask");
+        state.paused = true;
+        state.pause_reason = Some("3 consecutive failed iterations (limit 2)".to_string());
+        state.consecutive_failures = 3;
+        state.milestones.push(Milestone { description: "bastler probe: checkpoint".into(), achieved: false });
+
+        toggle_milestone(&mut state, 0).unwrap();
+
+        assert!(state.milestones[0].achieved, "the milestone toggle itself must still take effect");
+        assert!(state.paused, "must stay paused -- the real safety condition never went away");
+        assert_eq!(
+            state.pause_reason.as_deref(),
+            Some("3 consecutive failed iterations (limit 2)"),
+            "the real safety reason must survive, not get overwritten by the milestone's own free text"
+        );
     }
 
     #[test]
