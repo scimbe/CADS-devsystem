@@ -82,7 +82,7 @@ fn run_local(run_id: &str, record_path: &str) -> std::process::ExitCode {
     // bound (Resume clears it without re-checking whether the ceiling is still
     // true). This local path had no equivalent -- see
     // `ceiling_already_reached`'s own doc comment for the full story.
-    if let Some(reason) = devsystem_pipeline::runner::ceiling_already_reached(&state, &state.criteria) {
+    if let Some(reason) = devsystem_pipeline::runner::ceiling_already_reached(&state, &state.criteria, record.succeeded) {
         eprintln!("rejected: {reason}");
         return std::process::ExitCode::FAILURE;
     }

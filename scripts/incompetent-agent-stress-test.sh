@@ -775,10 +775,25 @@ check "a freshly-submitted iteration gets a real, current submitted_at, never th
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$id_run"
 
 echo
+echo "[54] a run at its consecutive-failure ceiling must accept the real, succeeded submission its own error message promises as the escape -- not refuse it identically to another failure. Live-reproduced as a real hard deadlock: max_consecutive_failures:1, one real failure, resume, then a succeeded:true resubmission got the identical 409 as a further failure, and the only working remedy was editing the criteria itself (issue #47 follow-up, #382 goal doc §8, 2026-08-07)"
+deadlock_run="deadlock-recovery-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$deadlock_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$deadlock_run/criteria" -H 'content-type: application/json' -d '{"max_iterations":20,"max_consecutive_failures":1,"checkin_every":10}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$deadlock_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.implement","feedback":"a real, honest failure","succeeded":false}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$deadlock_run/resume"
+still_refused_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$deadlock_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.implement","feedback":"another failure, still refused","succeeded":false}')
+check "a further failed submission at the bound is still refused -- this stays a real ceiling" "409" "$still_refused_status"
+recovery_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$deadlock_run/iterate" -H 'content-type: application/json' -d '{"stage":"devsystem.implement","feedback":"a real, succeeded fix","succeeded":true}')
+check "a real succeeded:true submission at the same bound is accepted -- the documented escape actually works" "200" "$recovery_status"
+recovered_failures=$(curl -s "$BASE/api/runs/$deadlock_run" | python3 -c 'import json,sys; print(json.load(sys.stdin)["health"]["consecutive_failures"])' 2>/dev/null)
+check "the real success actually cleared the streak, not just got let through once" "0" "$recovered_failures"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$deadlock_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the fifty-three gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the fifty-four gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."

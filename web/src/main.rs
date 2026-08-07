@@ -1200,7 +1200,7 @@ async fn iterate_run(
     // Resume was accepted and recorded past max_iterations/max_consecutive_failures
     // every time, one Resume click at a time. Checked independently of `paused` so
     // it refuses regardless of how `paused` got cleared.
-    if let Some(reason) = devsystem_pipeline::runner::ceiling_already_reached(&run_state, &run_state.criteria) {
+    if let Some(reason) = devsystem_pipeline::runner::ceiling_already_reached(&run_state, &run_state.criteria, body.succeeded) {
         return (StatusCode::CONFLICT, reason).into_response();
     }
     // DAU-lens gap found live 2026-08-06 (#382 goal doc §8), same lens and shape as the
@@ -8339,6 +8339,62 @@ exit 1"#);
         let body = body_json(response).await;
         assert_eq!(body["state"]["history"].as_array().unwrap().len(), 2, "history must stay at exactly the two real iterations that were actually accepted, not grow past the configured bound");
         assert_eq!(body["state"]["paused"], true);
+    }
+
+    #[tokio::test]
+    /// Real evaluator finding, issue #47 (follow-up deadlock, 2026-08-07): once
+    /// `consecutive_failures` reaches `max_consecutive_failures`, the ceiling gate's own
+    /// error text has always promised a real escape -- "a real, succeeded iteration is
+    /// needed to reset the streak" -- but the gate used to check the run's state before
+    /// the incoming submission, so a genuine `succeeded: true` resubmission got refused
+    /// with the identical `409` as another failure. Live-confirmed the real deadlock:
+    /// with `max_consecutive_failures: 1`, `consecutive_failures: 1`, both `succeeded:
+    /// true` and `succeeded: false` submissions were refused, and the only working
+    /// remedy was editing the criteria -- a door the message never named as the only
+    /// one that actually opened.
+    async fn a_real_succeeded_submission_at_the_consecutive_failure_ceiling_is_accepted_and_recovers_the_run() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "recover-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/recover-run/criteria", serde_json::json!({"max_iterations": 20, "max_consecutive_failures": 1, "checkin_every": 10})))
+            .await
+            .unwrap();
+
+        // Hit the ceiling with one real failure.
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/recover-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "a real, honest failure", "succeeded": false})))
+            .await
+            .unwrap();
+        assert_eq!(body_json(response).await["outcome"], "Abort");
+
+        // Resume, the real operator action the error message points to.
+        let response = app.clone().oneshot(Request::builder().method("POST").uri("/api/runs/recover-run/resume").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        // A further failure must still be refused -- this stays a real ceiling.
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/recover-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "another failure, still refused", "succeeded": false})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::CONFLICT, "a further failed submission at the bound must still be refused");
+
+        // The real recovery: a genuinely succeeded submission must be accepted, not
+        // refused identically to the failure above.
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/recover-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "a real, succeeded fix", "succeeded": true})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "the real succeeded submission the error message itself promises as the escape must actually be accepted");
+        assert_eq!(body_json(response).await["outcome"], "Continue");
+
+        // And the run must be genuinely usable afterward, not just for that one call.
+        let response = app.oneshot(Request::builder().uri("/api/runs/recover-run").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body["health"]["consecutive_failures"], 0, "the real success must have actually cleared the streak");
     }
 
     #[tokio::test]

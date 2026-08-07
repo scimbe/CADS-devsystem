@@ -1039,12 +1039,33 @@ pub fn validate_requirement_indices(state: &RunState, indices: &[usize]) -> Resu
 /// that surfaced it. `Resume` remains the correct action for every OTHER pause
 /// reason (a milestone, a manual pause) where the underlying condition genuinely
 /// isn't still true the moment the run resumes.
-pub fn ceiling_already_reached(state: &RunState, criteria: &AbortCriteria) -> Option<String> {
-    if state.consecutive_failures >= criteria.max_consecutive_failures {
+///
+/// Real evaluator finding, issue #47 (a follow-up to the fix above, 2026-08-07): this
+/// gate's own error message has always promised an escape -- "a real, succeeded
+/// iteration is needed to reset the streak before another can be accepted" -- but the
+/// gate checked the run's state *before* the incoming submission, with no visibility
+/// into what was actually being submitted. Once `consecutive_failures` reached the
+/// bound, EVERY subsequent request was refused, including a genuine `succeeded: true`
+/// submission that would have reset the streak to `0` -- the exact remedy the message
+/// itself names. Live-confirmed the real deadlock: `consecutive_failures: 1`,
+/// `max_consecutive_failures: 1`, a `succeeded: true` resubmission got the identical
+/// `409` as a `succeeded: false` one, and the only way out was editing
+/// `max_consecutive_failures` itself -- a door the error text never mentioned as the
+/// *only* one that actually opened.
+///
+/// `incoming_succeeded` is the fix: a real success is let through specifically because
+/// applying it is what clears the streak (`run_iteration`'s own `consecutive_failures =
+/// 0` on `record.succeeded`) -- letting it land is the resolution, not a bypass. A
+/// further `succeeded: false` while already at the bound is still refused outright, so
+/// this remains a real ceiling, not a blanket unlock. `max_iterations` has no such
+/// escape -- iteration count only ever grows, so it stays blocked regardless of what's
+/// being submitted.
+pub fn ceiling_already_reached(state: &RunState, criteria: &AbortCriteria, incoming_succeeded: bool) -> Option<String> {
+    if state.consecutive_failures >= criteria.max_consecutive_failures && !incoming_succeeded {
         Some(format!(
             "already at {} consecutive failed iteration(s), at or past the configured limit of {} -- \
-             raise max_consecutive_failures for this run, or a real, succeeded iteration is needed \
-             to reset the streak before another can be accepted",
+             raise max_consecutive_failures for this run, or submit a real, succeeded iteration to \
+             reset the streak (a succeeded:true submission is let through specifically to clear it)",
             state.consecutive_failures, criteria.max_consecutive_failures
         ))
     } else if state.history.len() as u32 >= criteria.max_iterations {
@@ -2244,7 +2265,7 @@ mod tests {
         let mut state = RunState::new("run-resume-ceiling");
         let criteria = AbortCriteria { max_iterations: 1, max_consecutive_failures: 3, checkin_every: 0 };
 
-        assert!(ceiling_already_reached(&state, &criteria).is_none(), "a fresh run has real headroom");
+        assert!(ceiling_already_reached(&state, &criteria, true).is_none(), "a fresh run has real headroom");
         assert_eq!(run_iteration(&mut spec, &mut state, record(1, true, vec![]), &criteria), RunOutcome::Abort);
         assert!(state.paused);
 
@@ -2252,11 +2273,13 @@ mod tests {
         // NOT raise the ceiling -- state.history/state.criteria are untouched.
         state.paused = false;
 
-        let reason = ceiling_already_reached(&state, &criteria);
+        // Unlike max_consecutive_failures, a succeeded:true submission is NOT an escape
+        // here -- iteration count only ever grows, so `true` must still be refused.
+        let reason = ceiling_already_reached(&state, &criteria, true);
         assert!(
             reason.is_some(),
             "a run already at its max_iterations ceiling must still be refused after paused is cleared, \
-             not just while paused was true"
+             not just while paused was true, and regardless of the incoming submission's own succeeded flag"
         );
         assert!(reason.unwrap().contains("1 of 1"), "the refusal must name the real, current count");
     }
@@ -2276,7 +2299,9 @@ mod tests {
 
         state.paused = false;
 
-        let reason = ceiling_already_reached(&state, &criteria);
+        // A further failed submission at the bound is still refused -- this remains a
+        // real ceiling, not a blanket unlock the moment anyone resumes.
+        let reason = ceiling_already_reached(&state, &criteria, false);
         assert!(reason.is_some(), "a run already past max_consecutive_failures must still be refused after resume");
         assert!(reason.unwrap().contains("consecutive failed"));
     }
@@ -2289,7 +2314,53 @@ mod tests {
         state.history.push(record(1, true, vec![]));
         state.consecutive_failures = 1;
         let criteria = AbortCriteria { max_iterations: 5, max_consecutive_failures: 3, checkin_every: 0 };
-        assert!(ceiling_already_reached(&state, &criteria).is_none());
+        assert!(ceiling_already_reached(&state, &criteria, false).is_none());
+    }
+
+    #[test]
+    /// Real evaluator finding, issue #47 (the follow-up deadlock): once
+    /// consecutive_failures reaches the bound, a real succeeded:true submission --
+    /// exactly the escape this gate's own error message has always promised -- must be
+    /// let through, since applying it is what actually resets the streak. Before this
+    /// fix, this exact submission got refused identically to a further failure, and the
+    /// only working remedy was editing max_consecutive_failures itself.
+    fn ceiling_already_reached_lets_a_succeeded_submission_through_to_reset_the_streak() {
+        let mut state = RunState::new("run-recover");
+        state.consecutive_failures = 1;
+        let criteria = AbortCriteria { max_iterations: 20, max_consecutive_failures: 1, checkin_every: 0 };
+
+        assert!(
+            ceiling_already_reached(&state, &criteria, true).is_none(),
+            "a succeeded:true submission must be let through -- it's the documented, intended way to \
+             recover from the consecutive-failure ceiling, not a bypass of it"
+        );
+        assert!(
+            ceiling_already_reached(&state, &criteria, false).is_some(),
+            "a further succeeded:false submission at the same bound must still be refused -- this stays \
+             a real ceiling, not unlocked for every submission once reached"
+        );
+    }
+
+    #[test]
+    /// The full real recovery, end to end: submitting the succeeded:true iteration the
+    /// gate now lets through must actually clear consecutive_failures, so the run is
+    /// genuinely usable again, not just permitted through once.
+    fn a_real_succeeded_submission_actually_recovers_the_run_from_the_ceiling() {
+        let mut spec = plan_only_spec("run-real-recovery", None);
+        let mut state = RunState::new("run-real-recovery");
+        let criteria = AbortCriteria { max_iterations: 20, max_consecutive_failures: 1, checkin_every: 0 };
+
+        assert_eq!(run_iteration(&mut spec, &mut state, record(1, false, vec![]), &criteria), RunOutcome::Abort);
+        assert_eq!(state.consecutive_failures, 1);
+        state.paused = false; // the real Resume action
+
+        assert!(ceiling_already_reached(&state, &criteria, true).is_none(), "the gate must let the real recovery submission through");
+        run_iteration(&mut spec, &mut state, record(2, true, vec![]), &criteria);
+        assert_eq!(state.consecutive_failures, 0, "the streak must actually be cleared by the real success, not just permitted past the gate");
+        assert!(
+            ceiling_already_reached(&state, &criteria, false).is_none(),
+            "the run must be genuinely usable again afterward, not just for the one recovery submission"
+        );
     }
 
     #[test]
