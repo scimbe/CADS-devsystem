@@ -5594,4 +5594,24 @@ backs all of them without a single-check blind spot. Reverted from the real back
 `[6]` moves from "written but never proven" to real, mutation-verified proof it has teeth --
 `[7]`-`[35]` remain the honestly-named backlog.
 
+**Main-dev-loop firing, 2026-08-07 (yy) -- mutation-tested check `[7]`'s real-deletion guarantee.**
+State check: no new issues, no new operator input on `#14`, `#31` (my own `#31` design comment from
+firing (ww) still has no reply), or the three `#382` checkpoints, CI green.
+
+Backed up `web/src/main.rs`, mutated `delete_run`'s real `fs::remove_dir_all(&dir)` call down to a
+literal soft-hide bug -- reports the same `204` success without actually touching the directory,
+marked `// MUTATION-TEST PROBE`. Hermetic `cargo test` confirmed the exact test
+(`delete_run_removes_it_for_real_and_it_stops_listing`) fails as expected. Rebuilt and redeployed the
+mutated binary locally, ran the full 100-assertion harness: `99 passed, 1 failed` -- and the failure
+shape itself is the interesting proof here, not just the count: the mutation's own `204` response
+kept the harness's first assertion (`deleting an existing run returns 204`) passing, exactly as a
+soft-hide bug would look from the caller's side -- only the second assertion (a follow-up `GET`
+genuinely 404s) caught it. A harness that only checked the delete call's own status code would have
+missed this class of bug entirely; check `[7]`'s own two-step shape (delete, then re-fetch) is what
+makes it real. Reverted from the real backup (`diff` against `git show HEAD:web/src/main.rs`
+confirmed byte-identical), rebuilt, redeployed, reconfirmed `100 passed, 0 failed`.
+
+`[7]` moves from "written but never proven" to real, mutation-verified proof it has teeth --
+`[8]`-`[35]` remain the honestly-named backlog.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
