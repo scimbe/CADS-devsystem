@@ -556,7 +556,7 @@ fn assistant_signing_key() -> SigningKey {
         }
         eprintln!("warning: {path} exists but is not a 32-byte key -- regenerating");
     }
-    let mut csprng = rand::rngs::OsRng;
+    let mut csprng = rand_core::OsRng;
     let key = SigningKey::generate(&mut csprng);
     if let Err(e) = fs::write(&path, key.to_bytes()) {
         eprintln!("warning: could not persist key to {path}: {e} -- this identity will not survive the next restart");
