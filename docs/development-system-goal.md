@@ -6452,4 +6452,31 @@ across all eighteen requirements (`#0`-`#17`, matching the GUI one-to-one), with
 (`Addressed by iteration(s) 15, 16, 26`) cross-checked directly against the run's raw history data,
 not just trusted from the rendered text.
 
+**Main-dev-loop firing, 2026-08-07 (ccc) -- process gap: issue #34's real fix was shipped but never
+communicated back.** State check: `#382`'s three checkpoints and `#14` still unanswered, no new
+activity; CI healthy. Swept the open scimbe-authored issue list for the next genuine, bounded
+increment and found something more valuable than a new fix: `#34` (run-wide requirement coverage at
+check-in) still showed zero comments despite its own fix -- a real "## Requirement coverage" section
+in the check-in markdown, scanned from the whole run's history -- already having shipped as
+`CADS-devsystem@eb5c6d9` and been documented in this very file (firing "hhh"). The loop's own
+discipline of posting a follow-up comment and leaving the issue open for the operator was followed for
+every other fix this session except this one -- a real gap in the *process*, exactly the governing
+principle's own domain: an evaluator whose valid, well-evidenced report gets a silent fix and no
+acknowledgment is a process failure to close the loop with the human, not a one-off oversight to shrug
+off.
+
+Did not re-implement anything already done. Re-verified the fix is still correct against the real,
+current `webconference-android` run (grown from 6 to 18 requirements since the issue was filed) before
+posting anything -- confirmed coverage renders correctly for every one of the now-7 addressed
+requirements and correctly flags all 11 untouched ones as "never addressed by any iteration". Posted
+the missed follow-up comment, including honest answers on the issue's other two suggestions (point 2
+was already shipped before the issue was even filed, confirmed by reading the code directly rather than
+assumed; point 3 remains real, open, separate work). Issue confirmed still open afterward, matching
+convention.
+
+No code changed this firing -- the increment was closing a real process gap, not shipping a new one.
+Swept the rest of the open issue list for the same "fixed in code, goal doc entry exists, but zero
+GitHub comments" pattern (checked `#36`, `#56` specifically, both genuinely untouched, not silently
+fixed) before treating `#34` as an isolated miss rather than a systemic gap.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
