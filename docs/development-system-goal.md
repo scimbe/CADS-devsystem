@@ -5660,8 +5660,35 @@ hermetic-coverage blind spot is closed for good, not just proven once live -- `[
 the honestly-named backlog.
 
 **Interrupted mid-firing by real, live operator input**: the operator asked to handle CADS-Tunnel
-PR #391 (a CSRF-mismatch retry fix) and a related high-priority issue. Pausing this loop's own
-increment cadence to review that PR for real, per the operator's own direct instruction -- picking
-this loop back up afterward.
+PR #391 (a CSRF-mismatch retry fix) and a related high-priority issue. Handled end to end outside
+this goal doc's own scope (CADS-Tunnel, not CADS-devsystem): fixed a real CI failure (the branch
+predated a `main`-side signature change -- mechanical, not a logic bug), reviewed the actual diff for
+real (CSRF protection itself unaffected, no injection risk), 349/349 tests, merged (`b37d7fe`), then
+-- with the operator's explicit go-ahead, asked for directly given the stakes (live production auth
+for every hostname behind `bunsenbrenner.org`, not just this demo) -- rebuilt and restarted just the
+`control-plane` service and live-verified the exact reported repro against real production. Picking
+this loop back up now.
+
+**Main-dev-loop firing, 2026-08-07 (bbb) -- docs-loop found nothing new (a genuinely clean, thorough
+audit, not a skipped check), then issue #33 fixed and closed.** Docs-loop side: broken-link/image
+check, REST API reference completeness, and a live regression check on `work-through-open-points.md`
+and `manage-panel-windows.md` all came back clean -- no user-facing CADS-devsystem feature shipped
+since the last docs firing (the only intervening commit was a hermetic-test addition, no GUI/API
+surface). Reported the clean audit honestly rather than manufacture a trivial edit.
+
+Main-dev-loop side: eight genuinely new issues arrived while the loop was on the PR #391 detour
+(`#33`-`#40`). Picked `#33` -- well-scoped, matches the established pattern: `showPanel()` (called by
+both the panel launcher's own bubble click and `./show <panel>`) never touched a panel's `minimized`
+state at all, so a minimized panel stayed a bare, empty-looking ~33px stub forever, persisted across
+reloads, with no way back except finding and re-clicking its own tiny `-` button -- a real evaluator
+hit this on their very first visit, on the single best onboarding panel (Process), and concluded the
+app was broken. Fixed: `showPanel()` now clears both the DOM's own `minimized` class and the
+persisted state. `CADS-devsystem@45decaf`, live-verified against the actual deployment replicating
+the exact repro: minimized Process (33px), clicked its launcher bubble (fully restored, 300px, real
+content), reloaded (stays restored). Full 100/100 stress harness stays clean.
+
+Remaining new issues (`#34`-`#40`) are real and mostly bigger/structural (requirement coverage
+surfacing, artifact channel, iteration provenance/dedup, requirement edit/remove) -- honestly left for
+future firings, not attempted speculatively in this same bounded increment.
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).
