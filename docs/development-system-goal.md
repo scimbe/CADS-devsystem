@@ -5931,4 +5931,34 @@ bucket) remains real, open, larger work. `#46` (max_iterations not actually a bo
 looping-Resume gap in the guided Open Points flow) also remains open, real, and unaddressed --
 picked up next.
 
+**Main-dev-loop firing, 2026-08-07 (lll) -- issue #46: max_iterations/max_consecutive_failures are
+now real bounds, not just displayed ones.** State check: `#382`'s three checkpoints and `#14` still
+unanswered; a fresh sibling issue (`#47`) had landed, reporting the identical gap for
+`max_consecutive_failures`. Picked `#46` -- a severe, precisely-reproduced finding striking directly
+at this project's own governing principle and repeated architectural claim ("a bounded super loop"):
+reaching a ceiling correctly paused the run and correctly refused the very next submission, but
+`POST /resume` unconditionally cleared `paused` without re-checking whether the ceiling was still
+true, so the following submission was accepted and durably recorded one past the declared bound.
+Resume, submit, re-pause, repeat -- the real Health panel rendered `iterations: 2 / 1`.
+
+New `ceiling_already_reached(state, criteria)` (pipeline crate), checked independently of `paused` so
+it refuses regardless of how `paused` got cleared -- wired into both real entry points (the HTTP
+handler and the local non-`--remote` CLI, matching this project's established "two real entry points,
+one bug class" discipline). Direction (a) from the issue: the ceiling now genuinely refuses; `Resume`
+remains correct for every other pause reason. `CADS-devsystem@49aac9c`. Three new hermetic tests
+reproduce the exact repro for both criteria plus a real-headroom negative case; 135/135 pipeline lib
+tests, 200/200 web tests. Live-verified against the actual deployment with the issue's own exact
+repro: create `max_iterations:1`, iterate once (pauses), resume (`paused:false`, ceiling unchanged),
+iterate again -> real `409` naming the actual count, not silently accepted. Full 100/100 stress
+harness stays clean.
+
+Fixed both `#46` and `#47`'s shared root cause in the same pass, since tracing the code first showed
+they hit the identical fix location -- but a real process mistake happened doing so: the commit
+message's own "Also closes #47" phrase auto-closed that issue via GitHub's blunt keyword parser, even
+though three of its own separate findings (unclamped `N / M` display, the New-Iteration form's
+default-checked, self-re-arming `succeeded` box, and the ambiguous collapsed abort-reason text) remain
+genuinely unaddressed. Caught on the very next check, reopened immediately with an honest correction.
+Same failure class as the earlier `#42` incident this session -- the lesson clearly hasn't fully taken
+yet, applying it more mechanically going forward rather than trusting memory alone.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
