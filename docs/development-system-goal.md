@@ -6564,4 +6564,46 @@ caller-side plumbing before wiring in a GUI), the optional gate blocking `succee
 attached artifact (the issue's own "ideally" framing, not core to what it asked), and the issue's own
 separately-flagged `CADS-webconference-demo`/`CADS-webconference-android` repo-name inconsistency.
 
+**Main-dev-loop firing, 2026-08-09 (fff) -- closed out the pending Dependabot version-issue thread and
+completed firing (eee)'s own deferred live-verification.** State check: `#382`'s three checkpoints and
+`#14` still no new scimbe activity; CI on scimbe/CADS-devsystem's runner queue not re-checked this
+firing (deprioritized in favor of the operator's own explicit, still-half-done instruction to fix/merge
+the open Dependabot PRs and free more disk). Separately confirmed both `CADS-auction-demo` and
+`CADS-a2a-demo` (the two new demo repos requested earlier) are already fully built, committed, and
+pushed with clean working trees -- that thread is done, not tracked further here.
+
+Real dependency break, not cosmetic: `rand` 0.10 relocated `rand::rngs::OsRng` out of `rand::rngs`
+entirely, breaking the one real RNG call site each in `devsystem_offer`, `devsystem_assistant`, and
+`web`'s GUI-offer-submission path, all three needing an RNG satisfying ed25519-dalek 2.x's own
+`CryptoRngCore` bound. Fixed by adding `rand_core = "0.6"` as an explicit direct dependency (confirmed
+`ed25519_dalek::rand_core` does NOT exist as a re-export) and switching call sites to
+`rand_core::OsRng`. `CADS-devsystem@573846e`. Hermetically verified in `rust:1-slim` with
+`-D warnings`, both crates build clean.
+
+Closed dependabot PR#9 and PR#10 (the bare `rand` 0.10 bumps for `/pipeline` and `/web`) as superseded
+-- merging either would have left a version-mismatched `OsRng` and failed to compile, since neither
+bump alone included the `rand_core` fix. Left PR#11 (`ed25519-dalek` 2.2.0 -> 3.0.0) open with a
+comment explaining the real, structural blocker: `ct-common` (this repo's own git-tag-pinned
+dependency) itself depends on `ed25519-dalek = "2"`, and 2.x/3.x `SigningKey`/`VerifyingKey` types
+aren't interchangeable across the real signing-key boundary this crate shares with `ct-common` --
+needs an upstream `ct-common` bump first, not something fixable locally.
+
+Redeployed `devsystem-web` with the fix live (`scripts/deploy-devsystem-web.sh`); its own smoke test
+confirmed the running container's git SHA matches `573846e` and the `devsystem.assistant` bridge stays
+reachable. Then completed firing (eee)'s own explicitly-deferred verification: a real upload/download
+round trip against the live container on a scratch run (`verify-artifact-roundtrip-live`, deleted after)
+-- uploaded a real file, independently confirmed the server-computed `sha256` against a local
+`sha256sum` of the same bytes, confirmed the downloaded bytes were byte-identical to the original via
+`diff`, and confirmed a forged client-supplied `sha256` (`deadbeef...`) was silently ignored and the
+real hash recomputed server-side regardless. Issue #36's artifact feature is now genuinely, not just
+hermetically, verified end to end.
+
+Also freed disk space per the operator's own instruction: removed two fully-orphaned, zero-container
+Docker volumes left over from `CADS-webconference-demo`'s local stop (confirmed via
+`docker ps -a --filter volume=...` showing zero attached containers, and cross-checked against this
+session's own memory of that demo now running on remote/server-central instead), and pruned Docker
+build-cache entries older than 24h (freed ~1GB). Did not touch `cads-devsystem-cargo-registry` /
+`cads-devsystem-web-target` (the two protected hermetic-build volumes) or any image still backing a
+running container.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
