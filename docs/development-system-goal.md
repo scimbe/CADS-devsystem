@@ -7025,4 +7025,25 @@ run updates the hash, a fresh load with a deep-link hash selects that exact run 
 last one, and a real `hashchange` event re-selects correctly -- zero console errors. Closed issue #58
 with the real commit citing all four fixes.
 
+**Goal-driven-loop firing, 2026-08-09 (uuu) -- honest backlog bookkeeping on the flagship run:
+STATUS-BLINDSPOT item marked done against a real, verified fix.** State check: `#382`'s three
+checkpoints still no new scimbe reply; issues #13/#14 unchanged; `webconference-android#16`'s CI
+still in flight (`verify-release-install` passed on the single-line fix; `verify-native-bridge`
+still running, unrelated to this change). The flagship run's own check-in from iteration 34 is still
+correctly un-acknowledged, left for the operator, not waved through here.
+
+Audited the live run's backlog for real drift, same discipline `ppp` used: backlog item 8
+(STATUS-BLINDSPOT, filed 2026-08-07) claims `stalled_stages: []` permanently hides three dead
+stages because of issue #53's one-way-latch bug. Checked both halves before touching anything:
+issue #53 closed 2026-08-09T17:03:58Z (fixed in `CADS-devsystem@acc63ce`), and the live
+run's own `stalled_stages` field right now correctly reads
+`['devsystem.document_extraction', 'devsystem.android_emulator_test']` -- real, non-empty, and
+notably `devsystem.android_native_build_ci` is no longer in it, consistent with that stage's own
+CI work (PR #14, PR #16) actually landing since the item was filed. The item's own core claim no
+longer holds for this run. Toggled `done: true` via the real API
+(`POST /backlog/8/toggle`) -- `toggle_backlog_item` has no paused-run gate (unlike `iterate_run`),
+so this bookkeeping-only write didn't need to touch the operator's own pending check-in decision.
+This committed goal-doc entry, citing the real evidence, is the trace -- the usual
+`devsystem.improve` iteration route was correctly unavailable while the run stays paused.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
