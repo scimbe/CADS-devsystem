@@ -7408,4 +7408,32 @@ UTF-8/JSON work); criteria 1 (the full hostile-frame test set, partially covered
 new tests, but not yet including a malformed-length-prefix case owned by `ct_common`'s own framing
 layer, out of this repo's scope), 3, and 4 remain real, separate, open work.
 
+**Goal-driven-loop firing, 2026-08-09 (iiii) -- a real, live staleness bug found in the check-in
+document itself, closed (issue #39).** State check: `#382`'s three checkpoints still no new scimbe
+reply; issue #14 unchanged; no open PRs remained on either repo.
+
+Issue #39 (open, real: "a run has no channel for an open question... the check-in's own Decision
+needed section is static boilerplate") asks for a genuine structural fix -- a `pending_decisions`
+channel -- that's real, larger work, not attempted here. But reading the issue's own text against
+the real, live check-in document found something smaller, sharper, and immediately fixable: the
+"Decision needed" section's own static text still said *"there is currently no reply field here --
+a real, open gap (issue #41)"* -- a claim that stopped being true the moment issue #41 suggestion
+#2 shipped (2026-08-09, this same session): the real `checkin_notes` reply textarea next to
+**Acknowledge check-in**. Every check-in document rendered since then was actively lying to its own
+reader, sending them to `ecc-plan-canvas` or a GitHub comment instead of the working field already
+in front of them -- the exact "the pipeline's own guidance leads the user away from the perfect
+result" failure mode the goal doc's own governing principle names directly.
+
+Fixed the text to describe the real current capability, and (issue #39's own suggestion #4, "at
+least echo any unresolved flagged item") went further: now echoes every real past answer already
+on record for the run, not just the mechanism, bidi-escaped via the same `inline_code_escape` every
+other role-filler-controlled field in this renderer already uses. Live-verified against the real
+flagship run's own check-in, not just a synthetic test: it now genuinely shows its own two real
+past answers (iterations 32 and 33). 2 new hermetic tests, 167/167 pipeline lib tests green, clippy
+clean. `CADS-devsystem@ca7e63a`, deployed and git-SHA-verified.
+
+Issue #39 stays open for its own real ask (a real `pending_decisions` channel, gating semantics,
+Open Points surfacing) -- this closes one concrete, live-lying instance of the same problem class,
+not the structural fix.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
