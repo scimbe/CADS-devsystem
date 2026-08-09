@@ -463,10 +463,23 @@ enum Action {
     /// `SetRoleFillMode`/`UpdateCriteria`/`SetPaused`. Given `SetPaused`'s own
     /// direct-action treatment, not `ProposeDeleteRun`'s propose-then-approve
     /// one: acknowledging is explicit, idempotent, and never destructive --
-    /// the same reasoning `SetPaused`'s own doc comment gives. No fields:
-    /// the real endpoint takes none either, it always acknowledges through
-    /// the run's current iteration count.
-    AcknowledgeCheckin,
+    /// the same reasoning `SetPaused`'s own doc comment gives.
+    ///
+    /// Real gap closed, found by re-running this exact audit (#382 goal doc
+    /// §7.2, gap #2's own "the next one will be whatever a future firing's
+    /// own re-audit finds"): this action was added the same day the
+    /// check-in-pending *gate* shipped, but the real `note` field on
+    /// `POST /checkin/acknowledge` (issue #41 suggestion #2 -- "your
+    /// answer/direction," a real, persisted, provenance-tracked reply)
+    /// landed as a separate, later fix and this enum was never revisited.
+    /// `note` is genuinely optional here too (`#[serde(default)]`, `None`
+    /// round-trips as the real endpoint's own bodyless `POST` always has),
+    /// not re-validated in this binary -- same "call the real endpoint, let
+    /// it be the one source of truth" convention as every other action.
+    AcknowledgeCheckin {
+        #[serde(default)]
+        note: Option<String>,
+    },
 }
 
 fn default_stage_units() -> u64 {
@@ -677,10 +690,13 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
             serde_json::json!({"rationale": rationale}),
             "proposed",
         ),
-        Action::AcknowledgeCheckin => (
-            "acknowledge this run's most recently fired check-in".to_string(),
+        Action::AcknowledgeCheckin { note } => (
+            match note {
+                Some(n) => format!("acknowledge this run's most recently fired check-in, with a reply: {n}"),
+                None => "acknowledge this run's most recently fired check-in".to_string(),
+            },
             format!("{base}/api/runs/{run_id}/checkin/acknowledge"),
-            serde_json::json!({}),
+            serde_json::json!({"note": note}),
             "done",
         ),
     };
@@ -1253,7 +1269,7 @@ mod tests {
 
     #[test]
     fn extract_actions_parses_all_twenty_one_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"},{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"alice\"},{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5},{\"type\":\"set_paused\",\"paused\":true},{\"type\":\"propose_delete_run\",\"rationale\":\"testing only, real reason\"},{\"type\":\"acknowledge_checkin\"}]\n```";
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"},{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"alice\"},{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5},{\"type\":\"set_paused\",\"paused\":true},{\"type\":\"propose_delete_run\",\"rationale\":\"testing only, real reason\"},{\"type\":\"acknowledge_checkin\",\"note\":\"looks good, proceed\"}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -1293,7 +1309,7 @@ mod tests {
                 Action::UpdateCriteria { max_iterations: 20, max_consecutive_failures: 3, checkin_every: 5 },
                 Action::SetPaused { paused: true },
                 Action::ProposeDeleteRun { rationale: "testing only, real reason".to_string() },
-                Action::AcknowledgeCheckin,
+                Action::AcknowledgeCheckin { note: Some("looks good, proceed".to_string()) },
             ]
         );
     }
@@ -1698,11 +1714,35 @@ mod tests {
     fn apply_action_posts_the_real_acknowledge_checkin_request() {
         let (addr, rx) = spawn_capturing_server();
         let client = reqwest::blocking::Client::new();
-        let result = apply_action(&client, &addr, "my-run", &Action::AcknowledgeCheckin);
+        let result = apply_action(&client, &addr, "my-run", &Action::AcknowledgeCheckin { note: None });
         assert!(result.starts_with("done:"));
-        let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        let (method, url, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
         assert_eq!(method, "POST");
         assert_eq!(url, "/api/runs/my-run/checkin/acknowledge");
+        assert_eq!(body, r#"{"note":null}"#);
+    }
+
+    #[test]
+    /// Real gap closed by re-running the "cross-check every real
+    /// human-editable GUI control against this enum" audit (#382 goal doc
+    /// §7.2, gap #2): the check-in `note` field (issue #41 suggestion #2)
+    /// shipped as a real, persisted, provenance-tracked reply on the human
+    /// GUI's own Acknowledge button, but this action had no matching field
+    /// until now. Asserts the real note text actually reaches the real
+    /// request body the endpoint parses, not just that the field exists on
+    /// the enum.
+    fn apply_action_posts_a_real_checkin_note_when_the_assistant_provides_one() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let result = apply_action(
+            &client,
+            &addr,
+            "my-run",
+            &Action::AcknowledgeCheckin { note: Some("looks good, proceed with M2".to_string()) },
+        );
+        assert!(result.starts_with("done:"));
+        let (_, _, body) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(body, r#"{"note":"looks good, proceed with M2"}"#);
     }
 
     #[test]
