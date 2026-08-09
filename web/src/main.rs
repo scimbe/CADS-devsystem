@@ -271,7 +271,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/rag/documents", post(add_rag_document))
         .route("/api/runs/{id}/rag/upload-file", post(upload_rag_file))
         .route("/api/runs/{id}/rag/documents/{doc_id}/remove", post(remove_rag_document))
-        .route("/api/runs/{id}/artifacts", post(upload_artifact))
+        .route("/api/runs/{id}/artifacts", get(list_artifacts).post(upload_artifact))
         .route("/api/runs/{id}/artifacts/{artifact_id}/download", get(download_artifact))
         .route("/api/runs/{id}/artifacts/{artifact_id}/remove", post(remove_artifact))
         .route("/api/runs/{id}/panels", post(add_custom_panel))
@@ -3011,6 +3011,30 @@ const MAX_ARTIFACTS_PER_RUN: usize = 10;
 /// `sha256` is never accepted from the client -- computed here, from the real
 /// uploaded bytes, the same "server computes/stamps, client never dictates"
 /// discipline `submitted_by`/`created_by`/`confirmed_by` already established.
+///
+/// `GET /api/runs/{id}/artifacts` -- the real listing this GUI panel needs
+/// (added alongside the panel itself, 2026-08-09): upload/download/remove all
+/// existed since issue #36, but nothing could ever enumerate what a run
+/// already has, so a human had no way to discover an artifact's real id
+/// short of already knowing it. Owner-gated like every other per-run read
+/// that isn't the top-level listing.
+async fn list_artifacts(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let run_state = match load_or_init_run(&run_dir(&state, &id), &id) {
+        Ok((_spec, s)) => s,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    Json(load_artifact_index(&state, &id)).into_response()
+}
+
 async fn upload_artifact(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap, mut multipart: axum::extract::Multipart) -> impl IntoResponse {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
@@ -10276,6 +10300,7 @@ exit 1"#);
         let artifact_id = body["id"].as_str().expect("real server-generated id").to_string();
 
         let response = app
+            .clone()
             .oneshot(Request::builder().uri(format!("/api/runs/artifact-run/artifacts/{artifact_id}/download")).body(Body::empty()).unwrap())
             .await
             .unwrap();
@@ -10283,6 +10308,28 @@ exit 1"#);
         assert!(response.headers().get(axum::http::header::CONTENT_DISPOSITION).unwrap().to_str().unwrap().contains("app-release.apk"));
         let downloaded = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
         assert_eq!(downloaded.as_ref(), apk_bytes, "the downloaded bytes must be byte-identical to what was actually uploaded");
+
+        let response = app
+            .oneshot(Request::builder().uri("/api/runs/artifact-run/artifacts").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        let artifacts = body["artifacts"].as_array().expect("real artifacts array");
+        assert_eq!(artifacts.len(), 1, "the one real uploaded artifact must be listed");
+        assert_eq!(artifacts[0]["id"], artifact_id, "the listed artifact's id must match the one the upload response returned");
+        assert_eq!(artifacts[0]["filename"], "app-release.apk");
+    }
+
+    #[tokio::test]
+    async fn list_artifacts_on_a_run_with_none_uploaded_is_a_real_empty_list_not_an_error() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "artifact-empty-run"}))).await.unwrap();
+        let response = app.oneshot(Request::builder().uri("/api/runs/artifact-empty-run/artifacts").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["artifacts"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]

@@ -733,6 +733,15 @@ const PANEL_DEFAULTS = {
   // reasoning as every other non-starter panel: one launcher click away
   // rather than force-opened before a run even has a plan iteration to review.
   plancanvas: { title: 'Plan Canvas',        x: 1064, y: 16,   w: 460, h: 520 },
+  // Real gap closed 2026-08-09 (issue #36's own explicitly-deferred leftover,
+  // #382 goal doc): the backend (upload/download/remove, real server-computed
+  // sha256, real producing_iteration cross-check against history) shipped
+  // 2026-08-07 with deliberately no GUI -- REST-only, matching the
+  // devsystem_document_extraction_client backend-first precedent. Left that
+  // way too long turns a real, checkable feature into one only a curl user can
+  // reach -- the DAU lens (#382 §7/§8) this project holds itself to. Below
+  // rag/panels/flow's own row, same reasoning as flow's own placement comment.
+  artifacts:  { title: 'Build Artifacts',    x: 620,  y: 1108, w: 420, h: 360 },
 };
 
 // Real operator ask, live 2026-08-07 ("die Piktogramme mit mouseover"): the
@@ -766,6 +775,7 @@ const PANEL_ICONS = {
   usage: '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
   openpoints: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
   plancanvas: '<path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/>',
+  artifacts: '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>',
 };
 function panelIconSvg(id) {
   const paths = PANEL_ICONS[id];
@@ -2486,7 +2496,7 @@ async function selectRun(id) {
     for (const pid of Object.keys(REFRESHABLE_PANELS)) lastRefreshedAt[pid] = Date.now();
   }
   await refreshRunsList();
-  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow', 'usage', 'openpoints', 'plancanvas']) {
+  for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow', 'usage', 'openpoints', 'plancanvas', 'artifacts']) {
     document.getElementById(`body-${panelId}`).innerHTML = '<span class="lede">Loading…</span>';
   }
   try {
@@ -2536,13 +2546,14 @@ async function selectRun(id) {
     renderCodePanel(id, data);
     renderArchitecturePanel(id, data);
     renderRagPanel(id, data);
+    renderArtifactsPanel(id, data);
     renderCustomPanelsManager(id, data);
     renderCustomPanels(id, data);
     renderFlowPanel(id, data);
     renderUsagePanel(data);
     renderPanelToggleBar();
   } catch (e) {
-    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow', 'usage', 'openpoints', 'plancanvas']) {
+    for (const panelId of ['process', 'roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'requirements', 'code', 'architecture', 'rag', 'panels', 'flow', 'usage', 'openpoints', 'plancanvas', 'artifacts']) {
       document.getElementById(`body-${panelId}`).innerHTML = `<span class="status-line err">${e.message}</span>`;
     }
   }
@@ -2760,6 +2771,114 @@ async function renderRagPanel(id, data) {
         await renderRagPanel(id, data);
       } catch (err) {
         alert(`Could not remove document: ${err.message}`);
+      }
+    };
+  }
+}
+
+// Real gap closed 2026-08-09 (#382 goal doc, issue #36's own explicitly-
+// deferred leftover): the backend (upload/download/remove, real
+// server-computed sha256, real producing_iteration cross-check) shipped
+// 2026-08-07 with deliberately no GUI, matching the backend-first precedent
+// devsystem_document_extraction_client set -- but left REST-only too long
+// makes a real, checkable feature reachable only via curl, which is exactly
+// the DAU lens (#382 §7/§8) this project holds itself to. `GET
+// /api/runs/{id}/artifacts` (added alongside this panel) is the real list
+// source -- like renderRagPanel, a separate fetch rather than folding into
+// the main run payload, since not every panel needs every run's artifacts on
+// every render.
+function formatArtifactBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+async function renderArtifactsPanel(id, data) {
+  const body = document.getElementById('body-artifacts');
+  let index;
+  try {
+    index = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/artifacts`);
+  } catch (e) {
+    body.innerHTML = `<span class="status-line err">${escapeHtml(e.message)}</span>`;
+    return;
+  }
+  const artifacts = index.artifacts || [];
+  const history = data.state.history || [];
+  const wasFormOpen = body.querySelector('details')?.open ?? false;
+  const list = artifacts.length
+    ? artifacts.map(a => `
+        <div class="role-card" style="padding:.4rem .5rem">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:.4rem">
+            <span class="role-meta">${escapeHtml(a.filename)}</span>
+            <span class="lede" style="font-size:.68rem">${formatArtifactBytes(a.size_bytes)}</span>
+          </div>
+          <div class="lede" style="font-size:.68rem;font-family:var(--mono);word-break:break-all">sha256: ${escapeHtml(a.sha256)}</div>
+          <div class="lede" style="font-size:.68rem">from iteration ${a.producing_iteration} (${escapeHtml(a.producing_stage)})${a.version_name ? ` &middot; v${escapeHtml(a.version_name)}` : ''}${a.version_code ? ` (${escapeHtml(a.version_code)})` : ''}</div>
+          ${a.source_commit ? `<div class="lede" style="font-size:.68rem;font-family:var(--mono)">commit ${escapeHtml(a.source_commit.slice(0, 12))}</div>` : ''}
+          <div style="display:flex;gap:.3rem;margin-top:.3rem">
+            <a class="secondary" style="font-size:.68rem;padding:.1rem .4rem;text-decoration:none" href="${API}/runs/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(a.id)}/download" download="${escapeHtml(a.filename)}">Download</a>
+            <button type="button" class="secondary artifact-remove-btn" data-id="${escapeHtml(a.id)}" data-filename="${escapeHtml(a.filename)}" style="font-size:.68rem;padding:.1rem .4rem">Remove</button>
+          </div>
+        </div>`).join('')
+    : `<span class="lede" style="font-size:.72rem">No build artifacts uploaded yet.</span>`;
+  const iterOptions = history.length
+    ? history.map(h => `<option value="${h.iteration}">#${h.iteration} -- ${escapeHtml(h.stage)}</option>`).join('')
+    : `<option value="" disabled>no iterations yet -- submit one first</option>`;
+  body.innerHTML = `
+    <div id="artifacts-list" style="display:flex;flex-direction:column;gap:.4rem">${list}</div>
+    <details style="margin-top:.6rem"${(wasFormOpen || !artifacts.length) ? ' open' : ''}>
+      <summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Upload an artifact (${artifacts.length}/10)</summary>
+      <form id="artifact-upload-form" style="margin-top:.4rem;display:flex;flex-direction:column;gap:.3rem">
+        <label style="font-size:.72rem">file (up to 150 MB)<input id="artifact-file-input" type="file" required style="display:block;margin-top:.2rem"></label>
+        <label style="font-size:.72rem">produced by iteration<select id="artifact-iteration-select" required style="display:block;margin-top:.2rem">${iterOptions}</select></label>
+        <label style="font-size:.72rem">producing stage<input id="artifact-stage-input" type="text" placeholder="devsystem.android_native_build_ci" required></label>
+        <label style="font-size:.72rem">source commit (optional)<input id="artifact-commit-input" type="text" placeholder="deadbeef..."></label>
+        <label style="font-size:.72rem">version name (optional)<input id="artifact-version-name-input" type="text" placeholder="1.0.0"></label>
+        <label style="font-size:.72rem">version code (optional)<input id="artifact-version-code-input" type="text" placeholder="3"></label>
+        <button type="submit">Upload</button>
+        <span id="artifact-upload-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></span>
+      </form>
+    </details>`;
+
+  document.getElementById('artifact-upload-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const statusEl = document.getElementById('artifact-upload-status');
+    const fileInput = document.getElementById('artifact-file-input');
+    const file = fileInput.files[0];
+    if (!file) { statusEl.textContent = 'Choose a file first.'; statusEl.className = 'status-line err'; return; }
+    statusEl.textContent = 'Uploading…'; statusEl.className = 'status-line';
+    // Real multipart/form-data, no 'content-type' header set by hand -- same
+    // real reason renderRagPanel's own file-upload form leaves it to the
+    // browser (the real boundary a hand-set header would omit).
+    const form = new FormData();
+    form.append('file', file, file.name);
+    form.append('producing_iteration', document.getElementById('artifact-iteration-select').value);
+    form.append('producing_stage', document.getElementById('artifact-stage-input').value);
+    const commit = document.getElementById('artifact-commit-input').value.trim();
+    const versionName = document.getElementById('artifact-version-name-input').value.trim();
+    const versionCode = document.getElementById('artifact-version-code-input').value.trim();
+    if (commit) form.append('source_commit', commit);
+    if (versionName) form.append('version_name', versionName);
+    if (versionCode) form.append('version_code', versionCode);
+    try {
+      await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/artifacts`, { method: 'POST', body: form });
+      statusEl.textContent = 'Uploaded.'; statusEl.className = 'status-line ok';
+      await renderArtifactsPanel(id, data);
+    } catch (err) {
+      statusEl.textContent = err.message; statusEl.className = 'status-line err';
+    }
+  });
+
+  for (const btn of body.querySelectorAll('.artifact-remove-btn')) {
+    btn.onclick = async () => {
+      // Same real DAU-lens confirm discipline as the RAG panel's own document
+      // removal -- real and permanent, both the metadata and the actual file
+      // on disk, no undo.
+      if (!confirm(`Remove "${btn.dataset.filename}" from this run's build artifacts? This is real -- there's no undo, the actual file is deleted.`)) return;
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(btn.dataset.id)}/remove`, { method: 'POST' });
+        await renderArtifactsPanel(id, data);
+      } catch (err) {
+        alert(`Could not remove artifact: ${err.message}`);
       }
     };
   }
@@ -5631,7 +5750,7 @@ loadWhoami();
 checkAssistantHeartbeat();
 setInterval(checkAssistantHeartbeat, 20000);
 setInterval(refreshTick, 1000);
-for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'checkin', 'memory', 'architecture', 'rag', 'panels']) {
+for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'checkin', 'memory', 'architecture', 'rag', 'panels', 'artifacts']) {
   placeholderIfNoRun(id);
 }
 </script>
