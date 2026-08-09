@@ -2481,6 +2481,34 @@ function renderRunsList(filterText) {
         };
         row.appendChild(bBtn);
       }
+      // Real gap #45 (suggestion #3, closed 2026-08-09): #44/#45's own
+      // ownership-note and typed-confirmation fixes (2026-08-07) made the
+      // danger of an unowned run visible, but nothing could ever give one a
+      // real owner -- every run, including webconference-android, stayed
+      // permanently in the permissive "open to anyone" bucket the platform's
+      // own Architecture panel text says is a migration state, not a steady
+      // state. Not restricted to any "admin" role -- this codebase has none,
+      // and adoption is strictly narrower than the write access an unowned
+      // run already grants any signed-in account today.
+      if (!r.owner_email) {
+        const adoptBtn = document.createElement('button');
+        adoptBtn.type = 'button';
+        adoptBtn.className = 'secondary run-adopt-btn';
+        adoptBtn.title = `Claim ownership of "${r.run_id}" -- no recorded owner yet`;
+        adoptBtn.textContent = '🏳';
+        adoptBtn.style.cssText = 'font-size:.8rem;padding:.1rem .5rem';
+        adoptBtn.onclick = async (e) => {
+          e.stopPropagation();
+          if (!confirm(`Claim "${r.run_id}"? It has no recorded owner right now, so any signed-in account (including you) can write to it. Adopting makes future writes exclusive to your account -- this is one-shot, not reversible from here.`)) return;
+          try {
+            await fetchJSON(`${API}/runs/${encodeURIComponent(r.run_id)}/adopt`, { method: 'POST' });
+            await refreshRunsList();
+          } catch (err) {
+            alert(`Could not adopt this run: ${err.message}`);
+          }
+        };
+        row.appendChild(adoptBtn);
+      }
       row.appendChild(delBtn);
       el.appendChild(row);
   }

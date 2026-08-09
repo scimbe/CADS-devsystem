@@ -265,6 +265,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/requirements/export", get(export_requirements))
         .route("/api/runs/{id}/repo", post(set_repo_url))
         .route("/api/runs/{id}/operator-pubkey", post(set_operator_pubkey))
+        .route("/api/runs/{id}/adopt", post(adopt_run))
         .route("/api/runs/{id}/roles/{tag}/fill-mode", post(set_role_fill_mode))
         .route("/api/runs/{id}/rag/sync", post(sync_rag))
         .route("/api/runs/{id}/rag/search", get(search_rag))
@@ -2318,6 +2319,54 @@ async fn set_repo_url(
     run_state.repo_url = if trimmed.is_empty() { None } else { Some(trimmed) };
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"repo_url": run_state.repo_url})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/adopt` -- closes issue #45's own suggestion #3, the one real
+/// piece of the ownership gap #44/#45 found that wasn't already fixed (#1/#2, the
+/// delete confirmation's ownership note and typed-confirmation-for-real-history,
+/// shipped `CADS-devsystem@e1d4dc9`, 2026-08-07). Every one of this platform's 138+
+/// runs -- including `webconference-android` -- has `owner_email: None` forever,
+/// since nothing populated it before this endpoint existed and nothing could ever
+/// change it afterward: `owner_authorized()`'s permissive branch for `None` was
+/// meant to be a *migration* state, not a permanent one.
+///
+/// Deliberately NOT restricted to a designated "admin" account -- this codebase has
+/// no such concept anywhere, and the current, already-shipped rule for an unowned
+/// run is that ANY signed-in account may already write to it unchallenged (the
+/// Architecture panel's own real text: "Runs created before that scoping existed
+/// stay open to anyone"). Adoption doesn't grant a new permission; it's strictly
+/// narrower than what's already allowed -- the first real signed-in account to
+/// claim an unowned run converts it from "open to everyone, attributable to no
+/// one" into "protected, with a real owner", exactly the direction #44/#45 asked
+/// for. A real `409` once a run already has an owner -- adoption is one-shot, not a
+/// transfer/steal mechanism (which nothing here asked for and this endpoint does
+/// not build). A real `401` for a headless/no-`X-Gate-Email` caller -- adopting is
+/// a real human claiming responsibility, not something a harness can invisibly do
+/// to itself.
+async fn adopt_run(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let Some(caller) = headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string()) else {
+        return (StatusCode::UNAUTHORIZED, "adopting a run requires a real signed-in account (X-Gate-Email)").into_response();
+    };
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if let Some(existing) = &run_state.owner_email {
+        return (StatusCode::CONFLICT, format!("this run already has a real owner ({existing}) -- adoption is one-shot, not a transfer")).into_response();
+    }
+    run_state.owner_email = Some(caller);
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"owner_email": run_state.owner_email})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
     }
 }
@@ -5610,6 +5659,57 @@ mod tests {
 
         let response = app.oneshot(gate_request("GET", "/api/runs/legacy-run", "anyone@example.com", None)).await.unwrap();
         assert_eq!(response.status(), SC::OK, "an unowned run must stay open to any signed-in user, not lock everyone out");
+    }
+
+    #[tokio::test]
+    async fn adopting_an_unowned_run_gives_it_a_real_owner_and_then_protects_it() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "adopt-me"}))).await.unwrap();
+
+        let response = app.clone().oneshot(gate_request("POST", "/api/runs/adopt-me/adopt", "new-owner@example.com", None)).await.unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["owner_email"], "new-owner@example.com");
+
+        // The real point of adopting -- it now actually protects the run.
+        let response = app
+            .clone()
+            .oneshot(gate_request("GET", "/api/runs/adopt-me", "someone-else@example.com", None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::FORBIDDEN, "once adopted, a different account must be turned away exactly like any other owned run");
+
+        let response = app.oneshot(gate_request("GET", "/api/runs/adopt-me", "new-owner@example.com", None)).await.unwrap();
+        assert_eq!(response.status(), SC::OK, "the real new owner must still reach their own run");
+    }
+
+    #[tokio::test]
+    async fn adopting_an_already_owned_run_is_a_real_409_not_a_silent_transfer() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "original-owner@example.com", Some(serde_json::json!({"run_id": "already-owned"}))))
+            .await
+            .unwrap();
+
+        let response = app.oneshot(gate_request("POST", "/api/runs/already-owned/adopt", "wants-it@example.com", None)).await.unwrap();
+        assert_eq!(response.status(), SC::CONFLICT);
+        let body = String::from_utf8(axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+        assert!(body.contains("original-owner@example.com"), "the conflict message must name the real existing owner: {body}");
+    }
+
+    #[tokio::test]
+    async fn adopting_with_no_gate_header_is_a_real_401_not_a_silent_no_op() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "adopt-headless"}))).await.unwrap();
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/adopt-headless/adopt").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::UNAUTHORIZED, "adopting is a real human claiming responsibility, not something a headless caller can do to itself");
     }
 
     #[tokio::test]
