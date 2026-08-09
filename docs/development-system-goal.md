@@ -7355,4 +7355,34 @@ approving human), and a real Playwright browser session against the deployed con
 proposal card, its `LLM-proposed` badge, and a real click on the Approve button all confirmed
 working, zero console/page errors.
 
+**Self-optimizing-pipeline firing, 2026-08-09 (gggg) -- a real, blocked gap found and correctly
+left blocked, plus a real, independent increment shipped instead.** State check: `#382`'s three
+checkpoints still no new scimbe reply; issue #14 unchanged.
+
+Went looking for the next real role-filler task and found one: requirements #5 and #17 both sit at
+5/5 acceptance criteria confirmed, but `verified: false` -- `qualifying_review_evidence`
+(`pipeline/src/runner.rs`) requires a real, successful `devsystem.review` iteration whose own
+`requirement_indices` names the requirement, and no review in this run's history was ever tagged
+with `17` specifically (iteration 28 reviewed it in prose, but never in `requirement_indices`) --
+the exact "declared isn't the same as happened" pattern this project keeps finding. Attempted to
+submit a real, substantive, properly-tagged review iteration to close it -- and hit the run's own
+real, standing block: it's still paused on iteration 34's unacknowledged check-in, the same
+deliberate operator checkpoint every prior firing has correctly left alone. Did **not** resume or
+acknowledge it to force this through -- that decision belongs to the operator, not to this loop.
+Requirement #17's review-tagging gap stays real and open, `iterate_run`-blocked exactly as
+designed; noting it here rather than working around the gate.
+
+Pivoted to real, independent app-level work instead: requirement #22 (native-bridge treats a
+received frame as hostile input even on an authenticated Noise_IK session) had zero enforcement of
+its own criterion 2 -- `decode_text_message` had no size bound at all. Added `MAX_MESSAGE_BYTES`
+(64 KiB, a real, named, documented limit) and a new `MessageDecodeError::TooLarge`, checked before
+the UTF-8/JSON work that scales with `bytes.len()`. Real bug found and fixed before this even
+compiled: the new error fields first used `usize`, which has no `uniffi::Lower`/`Lift` impl (only
+fixed-width integers do) -- switched to `u64`. 5 new hermetic tests (zero-length frame, a genuine
+200MB oversized body, the exact boundary, one byte over), 23/23 native-bridge tests green, clippy
+clean. Opened as
+[PR #19](https://github.com/scimbe/CADS-webconference-android/pull/19) -- criteria 3/4 (a typed
+`ChannelException` reaching Kotlin, a rejected frame not tearing down the channel) are real,
+separate, larger work, honestly not attempted in this same increment.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
