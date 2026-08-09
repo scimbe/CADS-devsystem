@@ -6977,4 +6977,29 @@ verified against the real GitHub Actions run once it completes, not assumed gree
 criterion confirmation, and requirement #5 fraction update are the next firing's job once that
 evidence exists -- not fabricated ahead of it.
 
+**Goal-driven-loop firing, 2026-08-09 (sss) -- PR #16's real CI run failed on its first attempt;
+root-caused and fixed, not silently retried.** State check: `#382`'s three checkpoints still no new
+scimbe reply; `CADS-devsystem`'s own CI queue has genuinely cleared (a real green run observed, not
+just an absence of new stuck ones). Picked up two independent, well-scoped threads this firing.
+
+First: the honest "not yet claimed" stance from `rrr` paid off immediately -- `verify-release-install`
+(databaseId 31328864952) really did fail. Read the actual log rather than assuming a flaky emulator:
+`/usr/bin/sh: 1: set: Illegal option -o pipefail`, immediately after the AVD finished booting and
+right before the first real `adb` command. Root cause: `reactivecircus/android-emulator-runner`'s own
+`script` input runs under `dash` (`/bin/sh`), not the job's default `bash` -- `pipefail` is a bash-only
+option dash rejects outright. Fixed by dropping to `set -eu`; the script's one real pipe already
+checks `grep`'s own exit status explicitly via `||`, so this isn't a weaker check, just a
+shell-compatible one. `CADS-webconference-android@f56a934`, same PR #16. A fresh real CI run (databaseId
+31329351844) was in flight when this entry was written -- again not claimed green ahead of the
+evidence.
+
+Second: picked up `ggg`'s own flagged-but-not-fixed sibling gap -- `renderRagPanel`'s three real write
+paths (sync, text upload, file upload) had the identical transient-status-wiped-by-refresh bug issue
+#58 fixed for Requirements, plus the text-upload path never showed a success message at all.
+Generalized `pendingPanelStatus` with a `targetId` field (one status element per panel no longer holds
+for RAG's three) rather than duplicating the mechanism. `CADS-devsystem@1681d95`. Live-verified against
+the real deployed container: text-upload and sync (against `webconference-android`, which has a real
+`repo_url`) both now show a real, visible, run-naming confirmation surviving the re-render -- zero
+console errors.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
