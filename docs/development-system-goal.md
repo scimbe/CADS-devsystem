@@ -7517,4 +7517,32 @@ issue #14's handler-side format coverage as genuinely done, still blocked only o
 tracked, separately-owned OIDC credential checkpoint on `#382` (needs the operator's own Keycloak
 admin action -- not self-provisioned).
 
+**Goal-driven-loop firing, 2026-08-09 (llll) -- stress-harness catches up to a real gate it never
+covered (issue #42 suggestion #2).** State check: issue #14 quiet since firing (kkkk)'s review; no
+new scimbe reply on any of `#382`'s open checkpoints; no new open PRs; the formal §7/§8 ranked gap
+list itself (checked via a fresh full-document scan, not memory) is fully closed except the one
+item already, deliberately, repeatedly left for the operator (hard-blocking `succeeded: true`) --
+confirms the right place to look for the next increment is the live, ongoing thread, not that list.
+
+Ran `scripts/incompetent-agent-stress-test.sh` cold against the real deployment first, as a sanity
+check: 131/131 passing, no drift. But a gap in the harness itself, not the platform: the withdraw
+endpoint shipped two firings ago (`1f98f79`) with its own real unit/integration tests, but the
+harness -- the regression net this project relies on to catch a shipped gate silently breaking
+later, the exact thing checks [43]-[58] all exist to be -- had zero coverage of it. Same is true of
+the checkin-watermark-drift check and the requirement-proposal mechanism; noting both here as real,
+separate follow-ups, not attempted in this same bounded increment.
+
+Added check [59]: 7 real assertions against the live API -- empty reason rejected before the id
+lookup, unknown id a real 404, a real withdrawal succeeds, an earlier and a later record's own
+ordinals both stay untouched, the targeted record is the one actually marked withdrawn, and a
+second withdrawal of the same record is refused rather than silently reapplied. **Mutation-tested
+before committing**, matching this project's own established discipline for a brand-new check, not
+just written and trusted: built a throwaway image with the double-withdraw guard removed (`if false
+&& record.withdrawn`), ran it on an isolated port (18790, the real production container on 8790
+never touched), confirmed the new "second withdrawal is refused" assertion correctly failed (136
+passed, 2 failed) while every other check in the same block still passed -- proves the new
+assertion has real teeth, not that it just happens to agree with whatever the code currently does.
+Reverted the mutation, reconfirmed clean (249/249 web tests, clippy clean), then ran the full real
+harness against the live deployment: 138/138 passing. `CADS-devsystem@a3ec9d6`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
