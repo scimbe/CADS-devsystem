@@ -6606,4 +6606,45 @@ build-cache entries older than 24h (freed ~1GB). Did not touch `cads-devsystem-c
 `cads-devsystem-web-target` (the two protected hermetic-build volumes) or any image still backing a
 running container.
 
+**Goal-driven-loop firing, 2026-08-09 (ggg) -- the Build Artifacts panel, closing issue #36's own
+explicitly-deferred GUI gap (§7/§8's DAU lens).** State check: `#382`'s three checkpoints and `#14`
+still no new scimbe activity; picked up the one concrete leftover firing (eee) itself named:
+"a minimal GUI panel (upload form + download links)" for the real per-run build artifact feature
+that shipped backend-only on 2026-08-07. Left REST-only meant a real, checkable feature (the whole
+point of closing requirement #5's traceability gap) was reachable only via curl -- exactly the
+"pipeline's own gates must lead the user to a good outcome" standard this document holds itself to,
+not a hypothetical DAU miss.
+
+Backend: `GET /api/runs/{id}/artifacts` (`list_artifacts`) -- nothing could previously enumerate a
+run's own artifacts at all, so the GUI (or a human) had no way to discover an artifact's real id
+short of already knowing it from the upload response. `CADS-devsystem@329653e`. 2 new hermetic
+tests (list after upload; an empty run's list is a real `[]`, not an error), 231/231 web tests green
+under `-D warnings`.
+
+Frontend: new "Build Artifacts" panel, matching `renderRagPanel`'s own established structure --
+lists filename/size/sha256/producing iteration+stage/version/commit, a real Download link, Remove
+with the same permanent-delete `confirm()` discipline every other destructive action here already
+uses. The upload form's producing-iteration field is a real `<select>` populated from the run's own
+history, not a free-text number a human has to already know -- closes the same "arbitrary number"
+gap client-side that the backend's own `producing_iteration` cross-check already defends
+server-side.
+
+Live-verified end to end via a real headless Playwright run (`scripts/simulated-user.sh`, the image
+built for the first time this firing) against the actual deployed container: empty state, a real
+upload with version metadata, byte-identical download independently confirmed against the uploaded
+bytes, and remove-with-confirm all exercised through the real GUI, zero console errors.
+
+**A real, honest finding from that same live run, not fixed here**: the verification script's own
+first attempt timed out waiting for the upload success message to become visible -- tracing it down
+(request/navigation logging, not guessing) showed the real cause: both this new panel's and
+`renderRagPanel`'s own pre-existing upload success path set a status message then immediately
+re-render the whole panel, replacing the very element that message lives on before a human (or a
+waiting script) can ever observe it. The real, actually-visible confirmation in both panels is the
+uploaded item appearing in the list, not the transient status text -- verified that instead, and
+adjusted the live-verification script accordingly rather than declaring a false failure. This is a
+genuine, sibling UX gap this firing found but is **not** fixing here (out of this slice's own
+bounded scope, and `renderRagPanel`'s copy of the same pattern predates this firing) -- flagged
+honestly as a real, small, newly-discovered gap for a future firing rather than silently absorbed
+into this one's scope.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
