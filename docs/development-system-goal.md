@@ -6781,4 +6781,34 @@ a real note (using the reply field firing `jjj` just shipped) explaining this wa
 check-in, not a new decision point, and that the three genuine open decisions on `#382` remain
 exactly as they were.
 
+**Goal-driven-loop firing, 2026-08-09 (lll) -- stopped the GUI from silently auto-selecting an
+arbitrary run, closing issue #58's own root cause.** State check: `#382`'s three checkpoints still
+no new scimbe activity; CI green. A new issue appeared mid-session (#58, filed 17:11:51Z) --
+an exceptionally severe, well-evidenced beginner-persona report: `refreshRunsList`'s own fallback
+picked `lastFetchedRuns[0]` -- effectively a random run out of 130+, mostly cryptically-named
+scratch fixtures -- the instant `currentRun` was empty, which is true on *every single reload*
+(nothing before this fix ever remembered a real human choice). The Requirements panel's own
+honest-but-misleading empty state ("this run has no requirements yet") gave zero indication the
+active run had silently changed -- a write could have landed in someone else's project.
+
+Fixed the root cause exactly as the issue's own "cheapest, most direct" suggestion asked:
+`selectRun` now persists the real choice (`localStorage`, matching the existing panel-layout
+persistence convention); `refreshRunsList` restores it on load only if that run still exists,
+otherwise selects nothing rather than guessing a substitute. Every run-scoped panel -- including
+`requirements` and `process`, the two `DEFAULT_VISIBLE_PANELS` this startup pass never covered
+before, since a run was always auto-selected by the time either would render -- now shows a real
+"Select a run" placeholder in that case, both at startup and when a run gets deleted elsewhere at
+runtime (the existing 404-recovery path, previously only handled correctly at page load).
+`CADS-devsystem@405bf79`.
+
+Live-verified end to end via a real headless Playwright run against the redeployed container, four
+real scenarios: a first-ever visit selects nothing with real placeholders shown; selecting a run
+survives a reload; switching runs updates the persisted choice; deleting the persisted run falls
+back to "select a run," never an arbitrary replacement. Zero console errors across all four.
+
+**Deliberately not built in this same firing**: issue #58's own two other, separately-scoped
+suggestions -- a real per-run URL (bookmark/link/reload via actual routing, not just persistence)
+and naming the run in every write panel's own title bar -- are real, larger, separate work, not
+folded into this bounded increment.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
