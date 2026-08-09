@@ -930,6 +930,10 @@
         {
           "confirmed_by": "scimbe+persona-coder@gmail.com",
           "confirmed_at": 1786128911
+        },
+        {
+          "confirmed_by": null,
+          "confirmed_at": 1786313356
         }
       ],
       "auto_judge": false,
@@ -1086,15 +1090,18 @@
     }
   ],
   "checkin_acknowledged_through": 33,
+  "checkin_acknowledged_through_id": null,
   "checkin_notes": [
     {
       "iteration": 32,
+      "iteration_id": null,
       "note": "Routine cadence check-in, not a decision point -- iteration 32 was a real, independently-verified devsystem.review covering the two most recent unreviewed succeeded:true iterations (PR #13 ABI-filter fix, commit 79774cd forged-sender_pubkey fix). No new defect found in either; both real, correctly scoped, CI/test-confirmed. The three genuine open decision points (M1 checkpoint, OIDC credential, hard-block succeeded:true policy) remain on CADS-Tunnel#382, unaffected by this.",
       "acknowledged_by": "scimbe+devsystem-loop@gmail.com",
       "acknowledged_at": 1786296479
     },
     {
       "iteration": 33,
+      "iteration_id": null,
       "note": "Routine cadence check-in -- iteration 33 was honest bookkeeping, not new work: marked backlog items 9 (hex_decode_32 panic) and 11 (APK ABI coverage gap) done, since both are real, merged, independently-verified fixes (PRs #11 and #13) that the backlog had not caught up to. Real next actionable step, already scoped by the run own backlog (item 10): add a release signingConfig + sha256sum + build-metadata step to android-ci.yml, which would move requirement #5 from 0/5 to 4/5 with no platform change needed. Good candidate for the next firing.",
       "acknowledged_by": "scimbe+devsystem-loop@gmail.com",
       "acknowledged_at": 1786298318
