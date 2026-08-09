@@ -7147,4 +7147,25 @@ scale with total history) remain honestly open -- `e7e02bb`'s own commit message
 ("Not addressed here, and deliberately not claimed"), real, separate work for a future firing.
 Requirement #19: 2/4.
 
+**Goal-driven-loop firing, 2026-08-09 (zzz) -- merged webconference-android#17.** State check:
+`#382`'s three checkpoints still no new scimbe reply; issues #13/#14 unchanged. Checked backlog item
+7's own premise before treating it as still real, not assumed stale: `CADS-Tunnel`'s
+`ct_common::a2a::a2a_respond` still returns only `io::Result<TransportState>`, no authenticated peer
+key -- the upstream gap it names is genuinely unchanged, correctly still out of scope for this repo
+alone.
+
+Read the real CI log before trusting the green checkmark, not just the run's own conclusion: the
+`verify-connect-flow-instrumented-test` job's log shows `Starting 1 tests on test(AVD) - 10` →
+`Finished 1 tests on test(AVD) - 10` → `BUILD SUCCESSFUL`, no `FAILED` line anywhere in it -- the real
+`replaceText` fix genuinely worked, not just a lucky rerun. Merged (squash, `00fb390`). Waiting for
+the real post-merge `push` run (databaseId 31336212256) before confirming requirement #17's own
+criterion 0 -- same discipline as every prior merge this session, not claimed ahead of that evidence.
+
+Also scanned requirement #13 (full-text message search, 0/5) and requirement #21 (listener-side
+`sender_pubkey` authentication, the other half of backlog item 7) as candidates for this same
+"already shipped, just untracked" pattern that worked for #19 -- neither is: #13 has no real search
+UI or local FTS index anywhere in this scaffold, genuinely substantial unimplemented work, not a
+bounded slice; #21 depends on the same real upstream `CADS-Tunnel` gap just re-confirmed above.
+Correctly left open rather than forced into a firing they don't fit.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
