@@ -6647,4 +6647,46 @@ bounded scope, and `renderRagPanel`'s copy of the same pattern predates this fir
 honestly as a real, small, newly-discovered gap for a future firing rather than silently absorbed
 into this one's scope.
 
+**Goal-driven-loop firing, 2026-08-09 (hhh) -- real "adopt this run" action, closing issue #45's
+own suggestion #3.** State check: `#382`'s three checkpoints still no new scimbe activity; main
+CI cleared (green on the `ggg` firing, PR #57 -- see below -- merged clean). Picked issue #45
+(follow-up to #44), an exceptionally well-evidenced report from the `anfaenger` (beginner)
+evaluator persona: every run on this platform, including `webconference-android`, has
+`owner_email: None` permanently, so the Architecture panel's own "writes are scoped to the
+account that created it" claim protects zero runs. Checked first, not assumed: #44/#45's
+suggestions #1/#2 (the delete confirmation's ownership note, and typed-confirmation for any run
+with real iteration history) were already shipped 2026-08-07 (`CADS-devsystem@e1d4dc9`), before
+this session's own window -- neither issue had ever been closed on GitHub to reflect that.
+Suggestion #3 -- no way for an unowned run to ever *acquire* a real owner -- was the one genuinely
+still-open piece.
+
+Built `POST /api/runs/{id}/adopt`: sets `owner_email` from the real `X-Gate-Email` caller, only
+when the run is currently unowned (`CADS-devsystem@30187d4`). Deliberately not restricted to any
+"admin" role -- this codebase has no such concept, and adoption is strictly *narrower* than the
+write access an unowned run already grants any signed-in account today; it doesn't grant a new
+permission, it closes one. Real `409` (naming the existing owner) against re-adoption -- one-shot
+claim, not a transfer/steal mechanism. Real `401` for a headless/no-gate-header caller -- adopting
+is a real human claiming responsibility, not something a harness can do to itself invisibly. GUI:
+a small claim button next to any unowned run's row in the Runs panel, with a real `confirm()`
+naming what adopting actually changes.
+
+3 new hermetic tests (adopting protects the run against a different account afterward; a real 409
+against re-adoption, naming the real existing owner; a real 401 for a headless caller). 234/234
+web tests green under `-D warnings`. Live-verified end to end against the redeployed container,
+not just hermetically: created a real scratch run, confirmed `owner_email: null`, adopted it as a
+real account, confirmed the owner stuck, confirmed a different account got a real `409`, confirmed
+a headless (no-header) attempt got a real `401`.
+
+**Deliberately not done in this same firing**: did not adopt the real `webconference-android` run
+myself under this session's own tooling identity -- who the flagship run's real owner *should* be
+is the operator's own call, not something to guess and act on unilaterally, especially given
+adoption is one-shot by this endpoint's own design. The mechanism is live and available; the
+decision of whether/who adopts `webconference-android` is left open, not made here.
+
+**Also closed in this session, cross-referenced here for completeness**: PR #57 (real image OCR
+for `devsystem.document_extraction`, issue #14) reviewed and merged
+(`CADS-devsystem@c1e09f4`) -- 23/23 tests, the real compiled binary run against a real generated
+image, independently re-verified rather than trusted from the PR's own claim, same discipline as
+every other external contribution reviewed here.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
