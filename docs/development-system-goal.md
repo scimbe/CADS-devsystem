@@ -7436,4 +7436,46 @@ Issue #39 stays open for its own real ask (a real `pending_decisions` channel, g
 Open Points surfacing) -- this closes one concrete, live-lying instance of the same problem class,
 not the structural fix.
 
+**Goal-driven-loop firing, 2026-08-09 (jjjj) -- real id-keyed history-record withdrawal, replacing
+manual compaction (issue #42 suggestion #2 slice).** State check: `#382`'s three checkpoints (M1
+direction, OIDC credential note, hard-block choice) still no new scimbe reply; issue #14 unchanged;
+no open PRs on either repo; CI's earlier GitHub-Actions-outage-driven queue delays confirmed
+cleared (recent `main` pushes all completed/cancelled-by-supersession, not stuck). Also commented
+on issue #39 tying it explicitly to firing (iiii)'s fix, since that comment had gone unposted.
+
+Issue #42's own incident (a duplicate iteration repaired by compacting the history array, silently
+re-pointing every later ordinal and every durable cross-reference to it -- issues #34, #35, #36,
+#39, #41 all quoted numbers that broke) has two suggestions left open: #1 (id-key
+`checkin_acknowledged_through`) shipped firing (a few sessions back, `6d43d8e`); #2 (append-only
+history, tombstone instead of compact) had no safe supported path at all -- the only way to mark a
+bad record wrong was still the exact manual `state.json` edit that caused the incident in the first
+place.
+
+Shipped the missing repair mechanism: `IterationRecord.withdrawn`/`withdrawn_at`/`withdrawn_by`/
+`withdrawn_reason`, and `POST /api/runs/{id}/history/{iteration_id}/withdraw` -- owner-authorized,
+looks the record up by its real, stable id (issue #38/#52), never by array position, and only ever
+flips `withdrawn` in place. The record stays at its original index forever; no other record's
+ordinal, and no existing prose cross-reference to it, ever moves. `reason` is required and
+non-empty at the HTTP boundary so a tombstone can't be as opaque as the compaction it replaces. GUI
+history panel now renders a visible "⊘ withdrawn" label with who/why instead of a record ever
+silently vanishing.
+
+Deliberately scoped narrower than suggestion #2's full ask: withdrawing a record does **not** yet
+exclude it from `iterations_completed`, checkin cadence, or the `max_iterations` ceiling -- whether
+a withdrawn iteration should refund its budget slot is a separate, real design question (does a
+reverted commit get its CI minutes back?) not guessed at in this firing. This slice closes the
+sharper, unambiguous half: a bad record can now be marked wrong without destroying the numbering
+everything else depends on.
+
+169/169 pipeline lib tests (2 new), 249/249 web tests (9 new: happy path proving ordinals don't
+move, empty-reason rejection, unknown-id 404, double-withdraw rejection, cross-account 403), clippy
+clean on both crates (hermetic `rust:1-slim`, `RUSTFLAGS=-D warnings`). `CADS-devsystem@1f98f79`,
+deployed and git-SHA-verified, live-verified end to end against the real running container on a
+disposable test run (`withdraw-live-verify`, deleted after): submitted 3 real iterations, withdrew
+the middle one by its real id, confirmed all three ordinals (1, 2, 3) stayed exactly as they were
+and only the targeted record carries `withdrawn: true` with its real reason.
+
+Issue #42 stays open for the accounting-exclusion half of suggestion #2. Commented on the issue
+with what shipped.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
