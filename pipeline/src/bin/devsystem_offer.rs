@@ -34,7 +34,12 @@ fn signing_key_from_file(path: &str) -> SigningKey {
         }
         eprintln!("warning: {path} exists but is not a 32-byte key -- regenerating");
     }
-    let mut csprng = rand::rngs::OsRng;
+    // rand_core::OsRng (the explicit 0.6 dependency), not rand::rngs::OsRng --
+    // SigningKey::generate needs an RNG satisfying ed25519-dalek's own real
+    // rand_core 0.6 CryptoRngCore bound, which this crate's own (newer)
+    // top-level `rand` no longer provides directly (rand 0.10's OsRng moved
+    // out from under `rand::rngs`, and ed25519-dalek doesn't re-export its own).
+    let mut csprng = rand_core::OsRng;
     let key = SigningKey::generate(&mut csprng);
     // Real gap found live (#382 goal doc §8, 2026-08-06): a plain fs::write here
     // used to leave this real private key at whatever the process umask allows

@@ -19,7 +19,18 @@ serde_json = "1"
 # run on a different host, connected only by real channels/network calls).
 # Same rustls-backed, no-default-features shape CADS-Tunnel's own crates use.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
-rand = "0.8"
+# 0.10 (bumped from 0.8, Dependabot): rand::rngs::OsRng moved out from under
+# rand::rngs entirely -- any real call site that needs an RNG compatible with
+# ed25519-dalek 2.x's own CryptoRngCore bound now uses the real rand_core =
+# "0.6" dependency just below directly (ed25519-dalek does NOT re-export it as
+# ed25519_dalek::rand_core -- checked directly, that path doesn't exist).
+rand = "0.10"
+# ed25519-dalek 2.x's own real, pinned RNG-trait dependency (confirmed in
+# Cargo.lock: rand_core 0.6.4, separate from the 0.10.x this crate's own newer
+# `rand` now pulls in) -- kept as an explicit direct dependency so
+# SigningKey::generate's own real CryptoRngCore bound is satisfied by a
+# version-matched OsRng, not this crate's newer, incompatible one.
+rand_core = "0.6"
 # devsystem_assistant --serve only -- a minimal, synchronous HTTP server so the
 # GUI can call the assistant over the same real logic the one-shot CLI uses.
 # Deliberately not axum/tokio (already web/'s job): this bridge is meant to run

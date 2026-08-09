@@ -4810,9 +4810,13 @@ fn default_units() -> u64 {
 
 /// The browser-driven equivalent of running `devsystem_offer` by hand -- a real
 /// signed `CapacityOffer`, not a fixture, built server-side with a fresh,
-/// ephemeral ed25519 key generated per submission (a real CSPRNG, `rand::rngs::OsRng`
-/// -- the same one `devsystem_offer --key-file` uses to mint a first-time
-/// identity). Each submission is a genuinely new bidder identity, matching how
+/// ephemeral ed25519 key generated per submission (a real CSPRNG,
+/// `rand_core::OsRng` -- the explicit, version-matched `rand_core = "0.6"`
+/// dependency ed25519-dalek 2.x's own `CryptoRngCore` bound actually needs,
+/// not this crate's own newer top-level `rand`'s `OsRng`; ed25519-dalek
+/// doesn't re-export a compatible one itself, checked directly -- the same
+/// real fix `devsystem_offer --key-file`'s own key generation needed for the
+/// same reason). Each submission is a genuinely new bidder identity, matching how
 /// this run's roles have been staffed by hand via the CLI so far: an honest
 /// "someone just bid this," not a persistent account -- account-scoped
 /// resource ownership is a separate, larger increment (see the Architecture
@@ -4836,7 +4840,7 @@ async fn quick_submit_offer(State(state): State<AppState>, AxPath(id): AxPath<St
         return (StatusCode::BAD_REQUEST, format!("units must be at most {MAX_ROLE_UNITS}")).into_response();
     }
 
-    let mut csprng = rand::rngs::OsRng;
+    let mut csprng = rand_core::OsRng;
     let signing_key = ed25519_dalek::SigningKey::generate(&mut csprng);
     let now = unix_now();
     let offer = CapacityOffer::sign_new_with_services(

@@ -904,7 +904,10 @@ fn assistant_signing_key() -> SigningKey {
         }
         eprintln!("warning: {path} exists but is not a 32-byte key -- regenerating");
     }
-    let mut csprng = rand::rngs::OsRng;
+    // rand_core::OsRng, not rand::rngs::OsRng -- see devsystem_offer.rs's own
+    // identical fix for why (rand 0.10's OsRng moved, ed25519-dalek needs the
+    // version-matched rand_core 0.6 one instead).
+    let mut csprng = rand_core::OsRng;
     let key = SigningKey::generate(&mut csprng);
     // Real gap found live (#382 goal doc §8, 2026-08-06): confirmed directly
     // against this exact deployed key file -- real mode 664, world-readable --
