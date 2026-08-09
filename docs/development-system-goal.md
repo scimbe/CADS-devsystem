@@ -6953,4 +6953,28 @@ emulator install) remain open. The check-in this iteration correctly triggered (
 is left un-acknowledged here -- a real decision checkpoint for the operator, not something this
 firing should wave through on its own behalf.
 
+**Self-optimizing-pipeline firing, 2026-08-09 (rrr) -- opened `webconference-android#16`, a real
+emulator-install CI job closing `qqq`'s own honest gap (issue #15).** State check: `#382`'s three
+checkpoints still no new scimbe reply; `webconference-android`'s CI queue, stuck for an unusually
+long stretch earlier this session, has genuinely cleared (confirmed via a real successful run, not
+just an absence of new stuck runs). Picked up issue #15 directly -- it was filed by the immediately
+prior firing, already fully scoped, exactly the kind of concrete already-named next step this
+document's own discipline prefers over inventing new work.
+
+`android-ci.yml`'s "Confirm the signed release APK actually installs" step is renamed to what it
+actually checks (`apksigner verify --print-certs` proves a valid signature, nothing about install),
+and a real `verify-release-install` job is added: downloads the `build-and-test` job's own release
+APK artifact, boots a clean x86_64 AVD (`reactivecircus/android-emulator-runner`, a real ABI this
+app ships per its own `abiFilters` -- not a workaround that dodges the actual architecture), runs a
+genuine `adb install -r`, and checks the package manager -- not just the install command's exit code
+-- actually lists the app installed. `CADS-webconference-android@1d3fdf8`, PR #16.
+
+**Deliberately not yet claiming requirement #5 criterion 3 confirmed here** -- the real CI run
+(databaseId 31328864952) was still in flight when this entry was written. No local Android
+SDK/emulator on this project's own dev host to verify hermetically (the same standing constraint
+noted for every prior Android-side PR this session), so this, like #11/#12/#13/#14 before it, is
+verified against the real GitHub Actions run once it completes, not assumed green. The actual merge,
+criterion confirmation, and requirement #5 fraction update are the next firing's job once that
+evidence exists -- not fabricated ahead of it.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
