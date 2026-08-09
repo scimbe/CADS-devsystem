@@ -7545,4 +7545,29 @@ assertion has real teeth, not that it just happens to agree with whatever the co
 Reverted the mutation, reconfirmed clean (249/249 web tests, clippy clean), then ran the full real
 harness against the live deployment: 138/138 passing. `CADS-devsystem@a3ec9d6`.
 
+**Goal-driven-loop firing, 2026-08-09 (mmmm) -- stress-harness check [60] closes the second real
+regression-coverage gap found last firing (issue #56).** State check: no new commits on either repo
+since (llll); no new scimbe reply on any of `#382`'s open checkpoints; no new open PRs.
+
+Picked up the tracked follow-up from (llll) directly: the requirement-proposal queue
+(`propose_requirement`/approve/reject, issue #56's first slice) had its own real unit tests but zero
+live-harness coverage. Added check [60]: an empty rationale refused, a proposal lands in the pending
+queue without yet becoming a real requirement, rejecting discards it outright (nothing left behind,
+never becomes a real requirement either), approving an unknown id is a real 404, and an approved
+requirement carries real, honest provenance (`proposed_by` always the fixed `devsystem.assistant`
+label, `created_by` the real gate-verified approving human).
+
+**Mutation-tested before committing**, same discipline as check [59]: hardcoded `created_by` to a
+fabricated value ignoring the real `X-Gate-Email` header, built a throwaway image, ran it on the
+same isolated port (18790, production on 8790 never touched), confirmed the provenance assertion
+correctly failed while every other check in the block still passed. Reverted, reconfirmed clean
+(249/249 web tests, clippy clean), full harness against the real deployment: 146/146 passing.
+`CADS-devsystem@c1a6f01`.
+
+The other tracked item from (llll), `checkin_watermark_identity_drift` (issue #42 suggestion #1),
+is deliberately left out of this shell-script harness -- it already has real Rust unit-test
+coverage, and can only be triggered by a history-array mutation no legitimate API path performs, so
+a live check for it would need to reach past the HTTP surface into the run's own `state.json`,
+unlike every other check in this harness. Noting it explicitly rather than silently dropping it.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
