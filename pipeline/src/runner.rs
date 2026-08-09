@@ -615,6 +615,24 @@ pub struct RunState {
     /// reason.
     #[serde(default)]
     pub checkin_acknowledged_through: u32,
+    /// Real evaluator finding, issue #42 (suggestion #1, "id-key
+    /// `checkin_acknowledged_through` rather than array position"): the field
+    /// above is a bare positional integer into `history` -- issue #38's own
+    /// live incident showed a history repair (compacting out a duplicate
+    /// record) silently re-points every such position, and nothing recorded
+    /// that it happened. `IterationRecord::id` (issue #38/#52) now gives every
+    /// record real, stable identity; this captures the id of the record that
+    /// was actually being acknowledged at `POST /checkin/acknowledge` time,
+    /// alongside the position, not instead of it -- the cadence math in
+    /// [`checkin_pending`] genuinely needs a count, but a count alone can't
+    /// answer "does this watermark still point at the record a human actually
+    /// looked at?" after a future history mutation. See
+    /// `preflight::checkin_watermark_identity_drift`, the real, mechanical
+    /// check built on this field. `None` for every pre-existing acknowledgment
+    /// (recorded before this field existed, or a legacy `state.json` with no
+    /// id-bearing history at that position) -- honestly absent, never guessed.
+    #[serde(default)]
+    pub checkin_acknowledged_through_id: Option<String>,
     /// Real evaluator finding, issue #41 (suggestion #2, "small: give Acknowledge
     /// check-in an optional free-text note, persisted next to the watermark"):
     /// `checkin_acknowledged_through` alone recorded THAT a human looked, never
@@ -661,6 +679,14 @@ pub struct CheckinNote {
     /// against -- which check-in it's actually answering, not just a loose
     /// timestamp next to unrelated history.
     pub iteration: u32,
+    /// Same real-identity pairing as `RunState::checkin_acknowledged_through_id`
+    /// (issue #42, suggestion #1) -- the id of the record `iteration` named at
+    /// the moment this note was written, so a later reader can tell whether
+    /// `iteration`'s own position still means what it meant then. `None` for
+    /// notes recorded before this field existed, or against a legacy position
+    /// with no id-bearing record.
+    #[serde(default)]
+    pub iteration_id: Option<String>,
     pub note: String,
     /// Real, gate-verified identity (`X-Gate-Email`), honestly `None` for a
     /// header-less acknowledgment -- same convention as `confirmed_by`/`created_by`.
@@ -893,6 +919,7 @@ impl RunState {
             assistant_usage: AssistantUsageTotals::default(),
             chat_history: Vec::new(),
             checkin_acknowledged_through: 0,
+            checkin_acknowledged_through_id: None,
             checkin_notes: Vec::new(),
             plan_canvas_annotations: Vec::new(),
         }

@@ -79,6 +79,9 @@ pub fn preflight_annotations(state: &RunState) -> Vec<RiskAnnotation> {
     if let Some(a) = checkin_cadence_effectively_disabled(state) {
         findings.push(a);
     }
+    if let Some(a) = checkin_watermark_identity_drift(state) {
+        findings.push(a);
+    }
     findings.extend(vague_acceptance_criteria(state));
     findings.extend(historical_bidi_control_character(state));
     findings
@@ -195,6 +198,44 @@ fn historical_bidi_control_character(state: &RunState) -> Vec<RiskAnnotation> {
         flag(format!("approved stage proposal for {:?}'s rationale", p.stage_id), &p.rationale);
     }
     findings
+}
+
+/// Real evaluator finding, issue #42 (suggestion #1): `checkin_acknowledged_through`
+/// is a bare position into `history`, and issue #38's own live incident showed a
+/// history repair (compacting out a duplicate record) can silently re-point it at
+/// the wrong record -- the operator's own prior acknowledgment then covers an
+/// iteration they never actually reviewed, with no signal anywhere that this
+/// happened. `checkin_acknowledged_through_id` (added alongside the position,
+/// same firing as this check) records which record was *actually* being
+/// acknowledged; this check is the mechanical, always-on comparison that catches
+/// the two disagreeing again, rather than requiring a human evaluator to notice
+/// by hand the way issue #42 itself was found. Deliberately only fires when
+/// there's a real, checkable disagreement -- a `None` id (every acknowledgment
+/// recorded before this field existed) is a legacy gap, not fresh evidence of
+/// drift, and is left alone rather than false-positiving on history that
+/// predates the mechanism entirely.
+fn checkin_watermark_identity_drift(state: &RunState) -> Option<RiskAnnotation> {
+    let through = state.checkin_acknowledged_through;
+    if through == 0 {
+        return None;
+    }
+    let recorded_id = state.checkin_acknowledged_through_id.as_ref()?;
+    let current = state.history.get((through - 1) as usize);
+    let current_id = current.and_then(|h| h.id.as_ref());
+    if current_id != Some(recorded_id) {
+        return Some(RiskAnnotation {
+            label: "check-in acknowledgment watermark no longer matches the record it was recorded against".into(),
+            evidence: format!(
+                "checkin_acknowledged_through is {through}, recorded against iteration id {recorded_id:?} \
+                 at acknowledgment time, but history position {through} now holds id {current_id:?} -- \
+                 the history array was very likely mutated (compacted, reordered, or a record was \
+                 removed) since the last acknowledgment, so this watermark may no longer cover the \
+                 iteration a human actually reviewed (the exact real gap issue #42 found)"
+            ),
+            fix_target: None,
+        });
+    }
+    None
 }
 
 /// Real gap named directly in the goal doc's own §4.3 -- an explicit worked
@@ -907,6 +948,75 @@ mod tests {
         // RunState::new's own default (checkin_every: 5, max_iterations: 20) --
         // a real, sensible cadence must never be flagged.
         assert!(!preflight_annotations(&state).iter().any(|f| f.label == "mandatory check-in cadence effectively disabled"));
+    }
+
+    #[test]
+    fn no_watermark_drift_finding_when_never_acknowledged() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_TEST, 1, "a real iteration", vec![]));
+        // checkin_acknowledged_through stays 0 (RunState::new's own default) --
+        // "never acknowledged" must never be reported as drift.
+        assert!(!preflight_annotations(&state).iter().any(|f| f.label.contains("watermark")));
+    }
+
+    #[test]
+    fn no_watermark_drift_finding_for_a_legacy_acknowledgment_with_no_recorded_id() {
+        let mut state = RunState::new("run-preflight");
+        state.history.push(iteration(STAGE_TEST, 1, "a real iteration", vec![]));
+        state.checkin_acknowledged_through = 1;
+        state.checkin_acknowledged_through_id = None; // acknowledged before this field existed
+        assert!(!preflight_annotations(&state).iter().any(|f| f.label.contains("watermark")));
+    }
+
+    #[test]
+    fn no_watermark_drift_finding_when_the_recorded_id_still_matches() {
+        let mut state = RunState::new("run-preflight");
+        let mut rec = iteration(STAGE_TEST, 1, "a real iteration", vec![]);
+        rec.id = Some("real-id-abc".to_string());
+        state.history.push(rec);
+        state.checkin_acknowledged_through = 1;
+        state.checkin_acknowledged_through_id = Some("real-id-abc".to_string());
+        assert!(!preflight_annotations(&state).iter().any(|f| f.label.contains("watermark")));
+    }
+
+    #[test]
+    fn flags_watermark_drift_when_the_position_now_holds_a_different_record() {
+        let mut state = RunState::new("run-preflight");
+        let mut rec = iteration(STAGE_TEST, 1, "the record that's really there now", vec![]);
+        rec.id = Some("real-id-after-compaction".to_string());
+        state.history.push(rec);
+        state.checkin_acknowledged_through = 1;
+        // Simulates issue #42's exact real incident: a human acknowledged
+        // position 1 when it held a different record (this id), and a later
+        // history compaction silently moved a different record into that slot.
+        state.checkin_acknowledged_through_id = Some("real-id-before-compaction".to_string());
+        let findings = preflight_annotations(&state);
+        assert!(
+            findings.iter().any(|f| {
+                f.label == "check-in acknowledgment watermark no longer matches the record it was recorded against"
+                    && f.evidence.contains("real-id-before-compaction")
+                    && f.evidence.contains("real-id-after-compaction")
+            }),
+            "got: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn flags_watermark_drift_when_the_position_no_longer_exists_at_all() {
+        let mut state = RunState::new("run-preflight");
+        let mut rec = iteration(STAGE_TEST, 1, "a real iteration", vec![]);
+        rec.id = Some("real-id".to_string());
+        state.history.push(rec);
+        // Acknowledged through position 2, but a later removal shrank history
+        // back to 1 record -- the acknowledged record is gone entirely, the
+        // most extreme real case of the same drift.
+        state.checkin_acknowledged_through = 2;
+        state.checkin_acknowledged_through_id = Some("a-record-that-no-longer-exists".to_string());
+        let findings = preflight_annotations(&state);
+        assert!(
+            findings.iter().any(|f| f.label == "check-in acknowledgment watermark no longer matches the record it was recorded against"),
+            "got: {findings:?}"
+        );
     }
 
     #[test]

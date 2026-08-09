@@ -1655,10 +1655,20 @@ async fn acknowledge_checkin(State(state): State<AppState>, AxPath(id): AxPath<S
     if !owner_authorized(&headers, &run_state) {
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
     }
+    // Real id, captured before the position changes any further -- issue #42
+    // (suggestion #1): a bare position survives fine right now, but carries no
+    // way to tell, after some *future* history mutation, whether it still
+    // means what it meant today. Pairing it with the actual record's own
+    // stable id (issue #38/#52) is what lets `preflight::
+    // checkin_watermark_identity_drift` catch that later, instead of it going
+    // silent the way issue #42's own incident did.
+    let acknowledged_id = run_state.history.last().and_then(|h| h.id.clone());
     run_state.checkin_acknowledged_through = run_state.history.len() as u32;
+    run_state.checkin_acknowledged_through_id = acknowledged_id.clone();
     if let Some(note) = note {
         run_state.checkin_notes.push(devsystem_pipeline::runner::CheckinNote {
             iteration: run_state.checkin_acknowledged_through,
+            iteration_id: acknowledged_id,
             note,
             acknowledged_by: headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string()),
             acknowledged_at: unix_now(),
@@ -1683,6 +1693,7 @@ async fn acknowledge_checkin(State(state): State<AppState>, AxPath(id): AxPath<S
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({
             "checkin_acknowledged_through": run_state.checkin_acknowledged_through,
+            "checkin_acknowledged_through_id": run_state.checkin_acknowledged_through_id,
             "checkin_notes": run_state.checkin_notes,
         }))
         .into_response(),
@@ -8957,6 +8968,36 @@ exit 1"#);
         let get = app.oneshot(Request::builder().uri("/api/runs/checkin-note-run").body(Body::empty()).unwrap()).await.unwrap();
         let state_body = body_json(get).await;
         assert_eq!(state_body["state"]["checkin_notes"].as_array().unwrap().len(), 1, "the note must be real, persisted state, not just an echoed response");
+    }
+
+    #[tokio::test]
+    /// Real evaluator finding, issue #42 (suggestion #1): acknowledging must
+    /// capture the real, stable id of the iteration it's actually acknowledging,
+    /// not just its position -- otherwise a future history repair (issue #38's
+    /// own live incident) can silently re-point the watermark with nothing to
+    /// detect it. See `preflight::checkin_watermark_identity_drift`.
+    async fn acknowledging_records_the_real_iteration_id_alongside_the_position() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "checkin-id-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/checkin-id-run/iterate", serde_json::json!({"stage": "devsystem.plan", "feedback": "real work", "succeeded": true})))
+            .await
+            .unwrap();
+
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/checkin-id-run").body(Body::empty()).unwrap()).await.unwrap();
+        let real_id = body_json(get).await["state"]["history"][0]["id"].as_str().unwrap().to_string();
+        assert!(!real_id.is_empty(), "a freshly submitted iteration must have a real, server-generated id");
+
+        let ack = app
+            .clone()
+            .oneshot(gate_request("POST", "/api/runs/checkin-id-run/checkin/acknowledge", "reviewer@example.com", Some(serde_json::json!({"note": "confirmed"}))))
+            .await
+            .unwrap();
+        let body = body_json(ack).await;
+        assert_eq!(body["checkin_acknowledged_through"], 1);
+        assert_eq!(body["checkin_acknowledged_through_id"], real_id, "the watermark must record the real id of the iteration it's acknowledging, not just its position");
+        assert_eq!(body["checkin_notes"][0]["iteration_id"], real_id, "the note must carry the same real id pairing");
     }
 
     #[tokio::test]
