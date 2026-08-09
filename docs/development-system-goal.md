@@ -7124,4 +7124,27 @@ for every prior Android-side PR) -- real CI run (databaseId 31331029217) was in 
 entry was written. Not claiming requirement #17's last criterion confirmed here -- that's the next
 firing's job once the real run completes, same discipline as `rrr`/`sss` before it.
 
+**Goal-driven-loop firing, 2026-08-09 (yyy) -- requirement #19's own already-shipped fix, found stale
+and confirmed with real evidence, not new work.** State check: `#382`'s three checkpoints still no
+new scimbe reply; issues #13/#14 unchanged; PR #17's `verify-connect-flow-instrumented-test` job
+passed for real (the `replaceText` fix worked), `verify-release-install` and `build-and-test` both
+green too -- only the unrelated `verify-native-bridge` job was still finishing when checked.
+
+Scanned the flagship run's own requirements for the next genuine, already-scoped gap rather than
+starting new speculative work: requirement #19 (transcript-render performance) sat at 0/4, but
+checking the actual code first (not trusting the tracker) found criteria 0 and 3 were already real,
+shipped, and tested -- `CADS-webconference-android@e7e02bb` (PR #12, merged 2026-08-07, well before
+this session's own window) replaced `MainActivity.renderMessage`'s `messagesText.text =
+"${messagesText.text}\n$line"` (a real, measured O(N^2): 2/9/54/218 ms at 1k/2k/5k/10k messages,
+quadrupling per doubling of n) with an in-place `Editable` append, and added
+`MessageThreadRenderScalingTest` -- a real structural test (the buffer identity must not change
+across an append) plus a real ratio-based scaling test (10x the messages must cost <=15x the time,
+not the ~100x the old quadratic path cost). Both tests exist and are real, not proposed. The
+requirement's own tracker had simply never been told -- exactly the kind of staleness `ppp`/`uuu`
+already found and fixed elsewhere on this run. Confirmed criteria 0 and 3 via the real API, citing
+this evidence; criteria 1 and 2 (bounded/paged `MessageStore.loadAll()` reads, so memory doesn't
+scale with total history) remain honestly open -- `e7e02bb`'s own commit message says so directly
+("Not addressed here, and deliberately not claimed"), real, separate work for a future firing.
+Requirement #19: 2/4.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
