@@ -253,25 +253,40 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
     // Real gap found by a non-technical evaluator reading only the web control panel, never the
     // assistant or the CLI (issue #41, 2026-08-07): this document used to tell every reader --
     // web included -- to `request-changes` with `--reply`, a verb that only exists in the
-    // `ecc-plan-canvas` CLI. The web panel implements neither `approve` nor `request-changes`;
-    // its only check-in action is a content-free "Acknowledge check-in" button
-    // (`POST /checkin/acknowledge`, no body). An evaluator who read this document end to end,
-    // on the run's one open operator decision, had literally nowhere to type the answer the
-    // document itself asked for. Cheapest honest fix (#41 suggestion #1): stop telling a GUI
-    // reader to do something the GUI cannot do -- name both real channels explicitly instead of
-    // implying one universal action. A real reply field in the web panel itself (#41 suggestions
-    // #2/#3) remains open, larger work.
+    // `ecc-plan-canvas` CLI. Cheapest honest fix (#41 suggestion #1): stop telling a GUI reader
+    // to do something the GUI cannot do -- name both real channels explicitly instead of
+    // implying one universal action.
+    //
+    // Real gap found live 2026-08-09, issue #39 (raised the exact same class of problem this
+    // section itself was still an instance of): #41 suggestion #2 shipped the real reply field
+    // this text used to say didn't exist -- `POST /checkin/acknowledge`'s own optional `note`,
+    // surfaced in the web panel as a textarea right above Acknowledge -- but this static text
+    // was never updated, so it kept telling a reader to go use `ecc-plan-canvas` or a GitHub
+    // comment instead of the real, working field already in front of them. Fixed to describe
+    // the real current capability, and (issue #39's own suggestion #4, "at least echo any
+    // unresolved flagged item") lists every real past answer already on record for this run,
+    // not just the mechanism -- so a reader can tell at a glance whether THIS run's open
+    // question has already been answered once, not just that answering is possible in general.
     md.push_str("## Decision needed\n\n");
     md.push_str("**If you're reading this via `ecc-plan-canvas`** (the CLI checkpoint): reply \
         `approve` to accept this iteration's proposals as-is and let the next iteration proceed, \
         or `request-changes` with your answer/direction (this canvas live-reloads on \
         `--reply`).\n\n");
-    md.push_str("**If you're reading this in the web control panel instead:** there is currently \
-        no reply field here -- a real, open gap (issue #41). The only check-in action the web \
-        panel implements is **Acknowledge check-in**, which records that you've seen this and \
-        carries no answer. If this check-in raises a question you need to answer, use \
-        `ecc-plan-canvas`, or leave your answer as a comment on the relevant GitHub issue for \
-        now.\n");
+    md.push_str("**If you're reading this in the web control panel instead:** use the optional \
+        reply field right above the **Acknowledge check-in** button -- a real, persisted answer, \
+        not just a seen/unseen marker. It doesn't yet feed back into the run's own next \
+        iteration the way `ecc-plan-canvas`'s own `--reply` does (issue #41's own larger, \
+        separate suggestion #3, still open); until then, also leave your answer as a comment on \
+        the relevant GitHub issue if the run's next iteration needs to act on it.\n");
+    if state.checkin_notes.is_empty() {
+        md.push_str("\nNo reply has been recorded for this run yet.\n");
+    } else {
+        md.push_str("\n**Past answers on record for this run:**\n\n");
+        for n in &state.checkin_notes {
+            let by = n.acknowledged_by.as_deref().unwrap_or("no account on the session");
+            md.push_str(&format!("- (iteration {}, {}) {}\n", n.iteration, by, inline_code_escape(&n.note)));
+        }
+    }
     md
 }
 
@@ -327,6 +342,35 @@ mod tests {
         assert!(md.contains("reuse the audited Rust Noise_IK code"));
         assert!(md.contains("none -- a new service must be built or provided"));
         assert!(md.contains("Decision needed"));
+    }
+
+    #[test]
+    /// Issue #39/#41: the static "Decision needed" text must describe the real
+    /// current capability, not a stale claim that the reply field doesn't
+    /// exist (it shipped 2026-08-09) -- and a run with no recorded answer yet
+    /// must say so honestly, not silently omit the section.
+    fn checkin_markdown_describes_the_real_reply_field_not_the_stale_no_field_claim() {
+        let state = state_with_one_iteration(vec![]);
+        let md = render_plan_markdown(&state).expect("history is non-empty");
+        assert!(md.contains("the optional reply field right above the **Acknowledge check-in** button"), "got: {md}");
+        assert!(!md.contains("there is currently no reply field here"), "this claim is stale -- issue #41 suggestion #2 shipped the real field");
+        assert!(md.contains("No reply has been recorded for this run yet."));
+    }
+
+    #[test]
+    fn checkin_markdown_echoes_real_past_answers_when_they_exist() {
+        let mut state = state_with_one_iteration(vec![]);
+        state.checkin_notes.push(crate::runner::CheckinNote {
+            iteration: 1,
+            iteration_id: None,
+            note: "go ahead with the offline-delivery approach".to_string(),
+            acknowledged_by: Some("reviewer@example.com".to_string()),
+            acknowledged_at: 1_786_000_000,
+        });
+        let md = render_plan_markdown(&state).expect("history is non-empty");
+        assert!(md.contains("Past answers on record for this run"));
+        assert!(md.contains("(iteration 1, reviewer@example.com) `go ahead with the offline-delivery approach`"), "got: {md}");
+        assert!(!md.contains("No reply has been recorded"));
     }
 
     #[test]
