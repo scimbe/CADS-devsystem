@@ -5860,12 +5860,34 @@ async function loadWhoami() {
     // access_denied_html in CADS-Tunnel's gate.rs), just made visible here
     // too instead of only reachable by hitting a gated page cold.
     const signinHref = `https://bunsenbrenner.org/gate/start?host=${encodeURIComponent(window.location.hostname)}&return=%2F`;
+    // Real evaluator finding, issue #20: the previous fix here (2026-08-04)
+    // already carried this exact caveat -- but only in a `title` tooltip,
+    // which needs a hover a touch/mobile user can't even perform and a
+    // desktop user has no reason to trigger on a link whose own visible text
+    // ("logout") looks completely unambiguous. Live-reproduced by a real
+    // evaluator anyway: logout, then sign in as a different account, landed
+    // silently back on the FIRST account with zero indication -- `gate/start`
+    // reuses the still-live Keycloak SSO session at auth.bunsenbrenner.org,
+    // which this app's own `/gate/logout` route was never able to touch (it
+    // only clears this host's own gate cookie -- confirmed against
+    // CT-Tunnel's own gate.rs, which has no forced-reauth parameter this
+    // route could even ask for). A full fix needs a change to that shared,
+    // multi-tenant CT-Tunnel infrastructure, not this one app -- real,
+    // separate, cross-cutting work, not something to guess at unilaterally.
+    // What's actually fixable here: make the real scope visible in the text
+    // itself, not just a tooltip nobody reads.
+    // `.whoami` is `white-space:nowrap` in a shared, width-constrained header
+    // row -- the fuller explanation (switch accounts via the portal first)
+    // stays in the real `title` tooltip as supplementary detail; what has to
+    // fit inline is just enough to stop "logout"/"Sign in" from reading as
+    // unambiguous on their own, matching what a real evaluator's report says
+    // actually caused the confusion.
     if (data.email) {
       el.className = 'whoami signed-in';
-      el.innerHTML = `<span class="dot"></span>${escapeHtml(data.email)} · <a href="${logoutHref}" title="ends this site's session only, not the shared bunsenbrenner.org login">logout</a>`;
+      el.innerHTML = `<span class="dot"></span>${escapeHtml(data.email)} · <a href="${logoutHref}" title="Ends this site's session only -- the shared bunsenbrenner.org login stays active. To switch accounts, sign out at bunsenbrenner.org/portal first.">logout (this app only)</a>`;
     } else {
       el.className = 'whoami';
-      el.innerHTML = `<span class="dot"></span>not signed in · <a href="${signinHref}">Sign in</a>`;
+      el.innerHTML = `<span class="dot"></span>not signed in · <a href="${signinHref}" title="Reuses your bunsenbrenner.org login if one is still active elsewhere. To switch accounts, sign out at bunsenbrenner.org/portal first.">Sign in (reuses existing login)</a>`;
     }
   } catch (e) {
     el.className = 'whoami';
