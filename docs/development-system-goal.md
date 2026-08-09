@@ -6862,4 +6862,29 @@ console errors.
 reload working through real navigation, not just this session's persistence fix) stays separate,
 structural work -- three of its four suggestions are now real and live.
 
+**Goal-driven-loop firing, 2026-08-09 (ooo) -- made the shared-SSO-session caveat visible, not
+hover-only.** State check: `#382`'s three checkpoints still no new scimbe activity; issue #58
+untouched since `nnn`. Picked issue #20: a real evaluator clicked the in-app "logout" link (which
+looked fully effective -- the control panel returned to a genuinely unauthenticated state), then
+signed back in as a different account and landed silently back on the FIRST account with zero
+indication. `/gate/logout` only clears this app's own gate cookie; the shared Keycloak SSO session
+at `auth.bunsenbrenner.org` stayed live, and `gate/start` silently reused it.
+
+**Checked first, not guessed**: a prior fix (2026-08-04) already carried this exact caveat, but
+only in a `title` tooltip -- unreachable on touch/mobile, easy to never trigger on desktop when the
+link's own visible text ("logout") looks completely unambiguous. Issue #20 is real, live proof a
+hover-only warning doesn't work for this danger. Checked whether a real structural fix (forcing a
+fresh Keycloak login on sign-in) was possible from this repo alone: read CT-Tunnel's own
+`gate.rs` directly -- no forced-reauth parameter exists for this route to even request. That's
+multi-tenant, cross-cutting shared infrastructure well outside `CADS-devsystem`'s own bounded
+scope; not something to guess at or touch unilaterally from this loop.
+
+What's actually fixable here: the real scope is now stated in the VISIBLE link text itself --
+"logout (this app only)" and "Sign in (reuses existing login)" -- with the fuller explanation kept
+in the `title` tooltip as supplementary detail, not the only copy of the warning.
+`CADS-devsystem@ed9f1ca`. Live-verified against the redeployed container at a real, unremarkable
+viewport width (1366px, not an artificially wide one that would hide an overflow): the caveat text
+is genuinely visible, and the header row does not overflow (measured `document.body.scrollWidth`
+vs `window.innerWidth`, not eyeballed).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
