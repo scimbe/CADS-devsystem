@@ -3273,7 +3273,13 @@ async function renderRolesPanel(id, data) {
       ${toolsHtml}
       ${bidListHtml}
       ${latestHtml}
-      <div class="role-count lede">${roleHistory.length} iteration(s) total for this role</div>
+      <!-- Real gap, backlog item 8 on the flagship run (STATUS-BLINDSPOT, bastler
+           persona, 2026-08-07): this used to render "N iteration(s) total" identically
+           whether every one of them succeeded or every one of them failed -- a role
+           with 1 iteration and 0 real successes looked no different from a role that
+           actually shipped. The succeeded/failed split is what tells an operator a
+           role is genuinely dead, not just "has some history". -->
+      <div class="role-count lede">${roleHistory.length} iteration(s) total for this role${roleHistory.length ? ` (${roleHistory.filter(h => h.succeeded).length} succeeded, ${roleHistory.filter(h => !h.succeeded).length} failed)` : ''}</div>
     </div>`;
   }).join('');
 
