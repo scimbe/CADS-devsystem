@@ -6887,4 +6887,32 @@ viewport width (1366px, not an artificially wide one that would hide an overflow
 is genuinely visible, and the header row does not overflow (measured `document.body.scrollWidth`
 vs `window.innerWidth`, not eyeballed).
 
+**Self-optimizing-pipeline firing, 2026-08-09 (ppp) -- honest backlog bookkeeping on the flagship
+run: two stale items marked done against real, verified fixes.** State check: issue #13 closed,
+#14 unchanged since last checked (labor-setup.com's own PR #57 writeup, already reviewed/merged);
+no new webconference-android commits since `716c206`. Checked the live run's own backlog for real
+drift rather than inventing new work -- found two items still `done: false` despite the real bugs
+they describe being fixed, merged, and independently re-verified earlier this session:
+
+- The `hex_decode_32` char-boundary panic (iteration 22's own finding) -- fixed by
+  `CADS-webconference-android` PR #11 (`ff3864d`).
+- The APK ABI coverage gap (iteration 28's own finding) -- fixed by PR #13 (`716c206`), the same
+  fix independently re-verified in the `kkk` firing's own `devsystem.review`.
+
+Submitted a real `devsystem.improve` iteration (33) explaining exactly why, citing both PRs and the
+prior independent verification, before toggling either item -- the same "a real trace before the
+state change" discipline this codebase's own server-side provenance fields already enforce,
+applied here to a bare-boolean field that has none. A stale backlog is a real pipeline defect under
+this document's own governing principle: a future firing (or a real evaluator) trusting `done:
+false` here would spend time re-investigating an already-closed bug, the identical waste the `iii`
+firing's own 21-issue GitHub cleanup existed to prevent, just on this run's own backlog instead of
+GitHub's issue tracker.
+
+Acknowledged the real `checkin_every: 1` cadence check-in this iteration correctly fired, with a
+note naming the next genuine, already-scoped actionable step for a future firing: backlog item 10
+(evidence-based, from iteration 25) names exactly what's needed to move requirement #5 from 0/5 to
+4/5 with **no platform change required** -- a release `signingConfig`, a `sha256sum` step, and a
+build-metadata file (commit SHA + versionName + versionCode) added to `android-ci.yml`. Deliberately
+not started in this same firing -- this one was scoped to honest bookkeeping, not new build work.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
