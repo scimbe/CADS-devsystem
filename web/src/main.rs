@@ -10,7 +10,7 @@ mod artifacts;
 mod rag;
 mod vector_store;
 
-use axum::extract::{Path as AxPath, Query, State};
+use axum::extract::{DefaultBodyLimit, Path as AxPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
 use axum::routing::{get, post};
@@ -309,6 +309,15 @@ fn api_router(state: AppState) -> Router {
         .route("/api/assistant/status", get(assistant_status))
         .route("/api/me", get(whoami))
         .route("/api/version", get(version))
+        // Real gap, live-discovered: axum's own `Multipart` extractor enforces a
+        // default 2 MiB request-body limit regardless of what a handler's own code
+        // claims to allow -- `upload_artifact`'s `MAX_ARTIFACT_BYTES` (150MB) was
+        // pure dead code for anything past 2MiB; a real 8MB release APK failed with
+        // an opaque "Error parsing `multipart/form-data` request", not a clear
+        // "too large" message, while attempting the very first real upload of an
+        // actual production artifact. Raising the router's own limit to match is
+        // what makes the handler's own stated cap the real one.
+        .layer(DefaultBodyLimit::max(MAX_ARTIFACT_BYTES))
         .with_state(state)
 }
 
@@ -10533,6 +10542,48 @@ exit 1"#);
         assert_eq!(artifacts.len(), 1, "the one real uploaded artifact must be listed");
         assert_eq!(artifacts[0]["id"], artifact_id, "the listed artifact's id must match the one the upload response returned");
         assert_eq!(artifacts[0]["filename"], "app-release.apk");
+    }
+
+    /// Real regression test, live-discovered: axum's `Multipart` extractor enforces
+    /// its own default 2 MiB request-body limit independent of `MAX_ARTIFACT_BYTES`
+    /// (150MB) -- a real 8MB release APK upload failed with an opaque
+    /// "Error parsing `multipart/form-data` request" on the very first real attempt
+    /// to upload a real production artifact. This body is deliberately over 2MiB
+    /// (the old, silent failure point) so a regression here reproduces the exact
+    /// live failure, not just a smaller in-range case that the bug never touched.
+    #[tokio::test]
+    async fn upload_artifact_accepts_a_real_file_larger_than_axums_own_default_2mib_body_limit() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "large-artifact-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/large-artifact-run/iterate",
+                serde_json::json!({"stage": "devsystem.plan", "feedback": "produced a real large build", "succeeded": true}),
+            ))
+            .await
+            .unwrap();
+
+        // 3 MiB: real bytes, deterministic, comfortably past axum's own 2 MiB default.
+        let large_bytes: Vec<u8> = (0..3 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+        let response = app
+            .clone()
+            .oneshot(multipart_artifact_request(
+                "/api/runs/large-artifact-run/artifacts",
+                "app-release.apk",
+                &large_bytes,
+                &[("producing_iteration", "1"), ("producing_stage", "devsystem.android_native_build_ci")],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "a real file over axum's own default 2 MiB body limit must still upload successfully");
+        let body = body_json(response).await;
+
+        use sha2::Digest;
+        let real_sha256 = format!("{:x}", sha2::Sha256::digest(&large_bytes));
+        assert_eq!(body["sha256"], real_sha256);
+        assert_eq!(body["size_bytes"], large_bytes.len());
     }
 
     #[tokio::test]
