@@ -857,10 +857,38 @@ check "un-confirming clears the whole real record back to null" "None" "$cleared
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$prov_run"
 
 echo
+echo "[59] a bad history record must be repairable by real, safe, id-keyed withdrawal -- never by the manual array-compaction that caused issue #42's own incident (every ordinal after the bad record silently shifted, breaking every durable cross-reference to it). Withdrawing must never touch any record's own iteration number or array position, must require a real non-empty reason, must be looked up by id (never position), and must refuse a second withdrawal of the same record rather than silently reapplying it (issue #42 suggestion #2, #382 goal doc §8, 2026-08-09)"
+withdraw_run="withdraw-stress-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$withdraw_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$withdraw_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"real work, iteration one","succeeded":true}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$withdraw_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"real work, iteration two -- this one gets withdrawn","succeeded":true}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$withdraw_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"real work, iteration three","succeeded":true}'
+empty_reason_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$withdraw_run/history/no-such-id/withdraw" -H 'content-type: application/json' -d '{"reason":"   "}')
+check "an empty reason is refused before the id is even looked up" "400" "$empty_reason_status"
+unknown_id_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$withdraw_run/history/no-such-id/withdraw" -H 'content-type: application/json' -d '{"reason":"a real reason"}')
+check "withdrawing an unknown id is a real 404, not a silent no-op" "404" "$unknown_id_status"
+bad_id=$(curl -s "$BASE/api/runs/$withdraw_run" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"]["history"][1]["id"])' 2>/dev/null)
+withdraw_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$withdraw_run/history/$bad_id/withdraw" -H 'content-type: application/json' -d '{"reason":"duplicate content, wrong role tag"}')
+check "withdrawing a real record by its real id succeeds" "200" "$withdraw_status"
+post_withdraw=$(curl -s "$BASE/api/runs/$withdraw_run")
+iter1_num=$(echo "$post_withdraw" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"]["history"][0]["iteration"])' 2>/dev/null)
+check "an earlier record's own ordinal never moves" "1" "$iter1_num"
+iter3_num=$(echo "$post_withdraw" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"]["history"][2]["iteration"])' 2>/dev/null)
+check "a later record's own ordinal never moves either" "3" "$iter3_num"
+withdrawn_flag=$(echo "$post_withdraw" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"]["history"][1]["withdrawn"])' 2>/dev/null)
+check "the targeted record is the one actually marked withdrawn" "True" "$withdrawn_flag"
+double_withdraw_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$withdraw_run/history/$bad_id/withdraw" -H 'content-type: application/json' -d '{"reason":"trying again"}')
+check "a second withdrawal of the same record is refused, not silently reapplied" "400" "$double_withdraw_status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$withdraw_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the fifty-eight gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the fifty-nine gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
