@@ -7046,4 +7046,33 @@ so this bookkeeping-only write didn't need to touch the operator's own pending c
 This committed goal-doc entry, citing the real evidence, is the trace -- the usual
 `devsystem.improve` iteration route was correctly unavailable while the run stays paused.
 
+**Goal-driven-loop firing, 2026-08-09 (vvv) -- merged webconference-android#16, requirement #5 now
+4/5, and a real GUI bug found and fixed along the way.** State check: `#382`'s three checkpoints
+still no new scimbe reply; issues #13/#14 unchanged. `verify-release-install`'s real CI run on the
+fixed single-line script (`98a464d`) passed for real -- checked the actual log line by line, not
+just the green checkmark: `Performing Streamed Install` / `Success`, then the `pm list packages`
+check genuinely matching, then the step's own final confirmation line printing. Merged (squash,
+`c045c2d`).
+
+Waited for the real post-merge `push`-triggered run on `main` (databaseId 31330108473) rather than
+trusting the PR-preview run's own ephemeral merge-SHA -- same discipline as `qqq`. Downloaded the
+real production artifact, independently recomputed its SHA-256 by hand and matched it against the
+CI-recorded value, confirmed `source_commit=c045c2d...` is the real, permanent, fetchable merge
+commit on `origin/main`. Confirmed requirement #5 criterion 3 on the live run against that evidence.
+**Requirement #5 is now 4/5** -- exactly what backlog item 10 (filed 2026-08-07) predicted: "moves
+requirement #5 from 0/5 to 4/5 with no platform change required." Toggled that item done too, same
+real-trace-via-committed-entry pattern as item 8 above (run still paused, `iterate_run`
+unavailable). Only criterion 0 (downloadable from the run's own UI) remains open -- the one genuine
+platform gap item 10 itself already identified, tracked separately as issue #36.
+
+**A real, separate GUI bug found and fixed while checking item 8's own text, not new work invented
+for its own sake**: item 8 itself named the consequence of issue #53's now-fixed latch bug --
+"the Roles panel's own iteration count renders `1 iteration(s)` identically whether that iteration
+shipped or failed" -- and checking the live code confirmed this was still true; issue #53 fixed the
+*stalled-stage detection*, not this separate GUI text. Fixed for real: the count now reads
+`N iteration(s) total for this role (S succeeded, F failed)`. `CADS-devsystem@0ec76db`.
+Live-verified against `webconference-android`'s own real dead stages: two roles now correctly show
+`(0 succeeded, 1 failed)`, distinguishing them from roles with real successes -- zero console
+errors.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
