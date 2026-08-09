@@ -6745,4 +6745,40 @@ changes gate feeding a structured field an agent reads) stays open -- that's #39
 separate ask (a real pipeline-side open-question channel, the *other* direction of the same loop
 this issue's own body distinguishes), not folded into this bounded increment.
 
+**Self-optimizing-pipeline firing, 2026-08-09 (kkk) -- a real `devsystem.review` role-filler
+iteration on the flagship run, closing its own live `no_review_for_succeeded_work` risk.** State
+check: `#382`'s three checkpoints still no new scimbe activity; issue #14's newest comment is
+labor-setup.com's own writeup of PR #57 (already reviewed and merged in firing `hhh`), no new
+action needed. `webconference-android`'s own live risk annotations flagged the exact class the
+still-undecided hard-block-policy checkpoint on `#382` is about (a `succeeded: true` iteration with
+no substantive review since) -- rather than guess at that undecided policy question, did the
+concrete thing that's actually missing: a real review.
+
+Two unreviewed pieces of real, `succeeded: true` work, each independently re-verified, not trusted
+from its own commit message:
+- **Iteration 31 (PR #13, `716c206`)**: the APK packaged five ABI directories (`armeabi`,
+  `armeabi-v7a`, `mips`, `mips64`, `x86`) it ships no `libnative_bridge.so` for -- a real
+  install-then-crash bug on any 32-bit device selecting one of them. Fetched `origin/main` for
+  real, read the actual diff (exactly 2 files, matching the claim precisely), confirmed
+  `abiFilters` matches `jniLibs/`'s real contents exactly, read the new CI guard's logic (correctly
+  bidirectional), and confirmed real CI green both pre-merge (PR branch) and post-merge (main).
+- **Iteration 21 (`79774cd`)**: `recv_text` overriding a forged `sender_pubkey` with the real,
+  handshake-authenticated key on the dialer/initiator side. Built and ran the real native-bridge
+  test suite myself, hermetically, in a fresh container -- 15/15 pass, including the exact
+  forged-key regression test, read in full. `cargo clippy -- -D warnings` also independently
+  clean.
+
+No new defect found in either -- both real, correctly scoped, verified. Submitted as a real,
+substantive `devsystem.review` iteration (iteration 32) against the live run, not a rubber stamp --
+cross-referenced two still-open, already-tracked residual gaps (listener-side pubkey pinning
+blocked on an upstream `ct_common::a2a` change; iteration 30's own finding that
+`decode_text_message`'s receive path lacks validation analogous to the now-fixed `hex_decode_32`
+panic guard) without silently absorbing either into this review. This cleared the run's own live
+`no_review_for_succeeded_work` risk annotation, confirmed via the real API before and after.
+
+The review iteration correctly fired the run's own `checkin_every: 1` cadence -- acknowledged with
+a real note (using the reply field firing `jjj` just shipped) explaining this was a routine cadence
+check-in, not a new decision point, and that the three genuine open decisions on `#382` remain
+exactly as they were.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
