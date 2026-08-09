@@ -7075,4 +7075,30 @@ Live-verified against `webconference-android`'s own real dead stages: two roles 
 `(0 succeeded, 1 failed)`, distinguishing them from roles with real successes -- zero console
 errors.
 
+**Goal-driven-loop firing, 2026-08-09 (www) -- requirement #5 is now genuinely 5/5, and a real
+platform bug found and fixed getting the last real artifact uploaded.** State check: `#382`'s three
+checkpoints still no new scimbe reply; issues #13/#14 unchanged. Backlog item 10's own real, already-
+scoped next step (upload the actual CI-verified release APK to close criterion 0) was reachable now
+that issue #36 (Build Artifacts panel) was closed earlier this session -- checked first, not assumed:
+`gh issue view 36` confirmed `CLOSED 2026-08-09T17:04:04Z`, so item 10's "still open" note about it
+was itself stale.
+
+**Real bug, found on the actual first attempt, not staged**: uploading the real 8MB release APK
+(the exact one independently verified after PR #16's merge) failed with an opaque
+`Error parsing multipart/form-data request`. Traced, not guessed: `upload_artifact`'s own
+`MAX_ARTIFACT_BYTES` (150MB) is real, but axum's `Multipart` extractor enforces its own separate
+default 2 MiB request-body limit that the router never overrode -- the handler's stated cap was
+dead code for anything past 2MiB, and this was the very first real upload big enough to hit it.
+Fixed with `DefaultBodyLimit::max(MAX_ARTIFACT_BYTES)` on the router, plus a real regression test
+uploading a 3MB payload (deliberately over the old failure point) -- 9/9 artifact tests green,
+clippy clean. `CADS-devsystem@e212da7`.
+
+Live end-to-end proof, not just a passing unit test: re-uploaded the real APK through the fixed
+endpoint (server-computed SHA-256 matched the independently-verified value exactly), confirmed a
+byte-identical download round-trip via curl, and confirmed via a real Playwright run that it's
+genuinely visible and downloadable from `webconference-android`'s own Build Artifacts panel --
+zero console errors. Confirmed requirement #5's last remaining criterion (0) against that evidence.
+**Requirement #5: 5/5 confirmed** -- every acceptance criterion this requirement names is now
+genuinely, live-verifiably true, closing an item that was 0/5 at the start of this session.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
