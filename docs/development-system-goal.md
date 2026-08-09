@@ -6836,4 +6836,30 @@ run id truncates with ellipsis without the header itself overflowing its own box
 **Still open on issue #58, deliberately not folded in**: a real per-run URL via actual routing, and
 a success confirmation naming the run on write -- both real, separate, larger work.
 
+**Goal-driven-loop firing, 2026-08-09 (nnn) -- a real, visible write-success confirmation, closing
+the third of issue #58's own four suggestions.** State check: `#382`'s three checkpoints still no
+new scimbe activity; issues #13/#14 unchanged since last checked; CI green. Picked #58's own third
+piece: `#requirement-status` only ever rendered for a rejection -- a successful Add/Edit set real
+success text on it, then the very next line (`await selectRun(id)`) replaced the whole panel body,
+wiping the message before a human could ever see it. Exactly the transient-status-wiped-by-
+immediate-re-render bug class flagged-but-not-fixed in the `ggg` firing (Build Artifacts panel) --
+finally closed here, on the panel issue #58 itself demonstrated.
+
+`pendingPanelStatus` (`CADS-devsystem@a17c5d7`): set right before the refresh call that used to
+erase the message, naming the real run the write landed in ("Requirement added to
+webconference-android."). The panel's own render function applies it to the fresh DOM exactly once
+-- right after the `innerHTML` assignment recreates `#requirement-status` -- then clears it,
+surviving the one re-render that used to erase it without leaking into any later, unrelated one.
+Wired into both real write paths this panel has: adding a requirement, and issue #37's own
+edit-in-place.
+
+Live-verified via a real headless Playwright run against the redeployed container, three scenarios:
+add-requirement's success message is genuinely visible and names the run; edit-in-place's own
+success does too; switching to an unrelated run afterward shows no leaked/stale message. Zero
+console errors.
+
+**Issue #58's own remaining suggestion** (a real per-run URL via actual routing -- bookmark/link/
+reload working through real navigation, not just this session's persistence fix) stays separate,
+structural work -- three of its four suggestions are now real and live.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
