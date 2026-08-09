@@ -799,6 +799,9 @@ function panelIconSvg(id) {
 const DEFAULT_VISIBLE_PANELS = new Set(['runs', 'process', 'architecture', 'requirements']);
 
 const LAYOUT_KEY = 'devsystem-panel-layout-v1';
+// See issue #58: the real choice of which run to write into, remembered
+// across a reload instead of `refreshRunsList` guessing an arbitrary one.
+const LAST_RUN_KEY = 'devsystem-last-run-v1';
 let layout = {};
 try { layout = JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}'); } catch (e) { layout = {}; }
 // Seed from the highest z persisted across sessions, not a fixed 10 -- otherwise a
@@ -2362,10 +2365,32 @@ async function refreshRunsList() {
     return;
   }
   renderRunsList(document.getElementById('runs-filter')?.value || '');
-  // First load, nothing picked yet: load the first run automatically so the
-  // dashboard isn't a wall of "select a run" placeholders on open.
+  // Real gap, GitHub issue #58 (a beginner's own report, live on the actual
+  // deployment): this used to always fall back to `lastFetchedRuns[0]` --
+  // effectively an arbitrary run out of 130+, mostly cryptically-named
+  // stress-test scratch fixtures -- the moment `currentRun` was empty,
+  // including on every single reload (a fresh page load always starts with
+  // `currentRun === null`; nothing before this fix ever remembered a real
+  // choice). A human who'd genuinely selected their own project 30 seconds
+  // earlier could reload and silently start writing into someone else's
+  // run, with the Requirements panel's own honest-but-misleading "this run
+  // has no requirements yet" empty state giving no hint anything had
+  // changed. Restore the real last selection instead, and only if it still
+  // exists -- never guess a substitute.
   if (!currentRun && lastFetchedRuns.length) {
-    await selectRun(lastFetchedRuns[0].run_id);
+    let lastRunId;
+    try { lastRunId = localStorage.getItem(LAST_RUN_KEY); } catch (e) { /* private-browsing/storage-disabled */ }
+    if (lastRunId && lastFetchedRuns.some(r => r.run_id === lastRunId)) {
+      await selectRun(lastRunId);
+    } else {
+      // No real prior choice to restore (first-ever visit, or that run is
+      // gone) -- select nothing rather than picking one at random, and make
+      // sure every run-scoped panel actually says so (not just at startup --
+      // this same branch is reached from the run-deleted-elsewhere recovery
+      // path below, where panels would otherwise keep showing the
+      // now-gone run's stale content indefinitely).
+      placeholderAllRunScopedPanels();
+    }
   }
 }
 
@@ -2517,6 +2542,13 @@ function renderRunsList(filterText) {
 async function selectRun(id) {
   const switching = currentRun !== id;
   currentRun = id;
+  // Real gap, GitHub issue #58 (a beginner's own report): nothing remembered
+  // which run a human actually chose, so a reload always fell back to
+  // `refreshRunsList`'s own arbitrary-first-run default -- a write could
+  // silently land in a completely different run than the one just selected
+  // 30 seconds earlier, with zero on-screen indication. Persisting the real
+  // choice here is what `refreshRunsList` below reads back on a fresh load.
+  try { localStorage.setItem(LAST_RUN_KEY, id); } catch (e) { /* private-browsing/storage-disabled -- degrades to no memory, not an error */ }
   if (switching) {
     resetAssistantTranscript(id);
     editingCustomPanelId = null;
@@ -2617,6 +2649,16 @@ function placeholderIfNoRun(panelId) {
   const el = document.getElementById(`body-${panelId}`);
   if (!currentRun) { el.innerHTML = '<span class="lede">Select a run in the Runs panel.</span>'; return true; }
   return false;
+}
+
+// Every run-scoped panel this app has -- kept as one real list (issue #58)
+// rather than duplicated at each call site, so "select a run" placeholders
+// stay applied consistently both at startup and whenever a run genuinely
+// stops being selected at runtime (e.g. the run-deleted-elsewhere recovery
+// path below), not just on the very first page load.
+const RUN_SCOPED_PANEL_IDS = ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'checkin', 'memory', 'architecture', 'rag', 'panels', 'artifacts', 'requirements', 'process'];
+function placeholderAllRunScopedPanels() {
+  for (const id of RUN_SCOPED_PANEL_IDS) placeholderIfNoRun(id);
 }
 
 // Real, minimal helper (GitHub issue #24): a plain, human "X ago" phrase
@@ -5804,9 +5846,7 @@ loadWhoami();
 checkAssistantHeartbeat();
 setInterval(checkAssistantHeartbeat, 20000);
 setInterval(refreshTick, 1000);
-for (const id of ['roles', 'healthcrit', 'risks', 'newiter', 'history', 'backlog', 'milestones', 'code', 'checkin', 'memory', 'architecture', 'rag', 'panels', 'artifacts']) {
-  placeholderIfNoRun(id);
-}
+placeholderAllRunScopedPanels();
 </script>
 </body>
 </html>
