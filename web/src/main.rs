@@ -251,6 +251,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/pause", post(pause_run))
         .route("/api/runs/{id}/resume", post(resume_run))
         .route("/api/runs/{id}/checkin/acknowledge", post(acknowledge_checkin))
+        .route("/api/runs/{id}/history/{iteration_id}/withdraw", post(withdraw_history_record))
         .route("/api/runs/{id}/memory", get(memory_run))
         .route("/api/runs/{id}/memory/{index}/govern", post(govern_memory))
         .route("/api/runs/{id}/backlog", post(add_backlog_item))
@@ -1397,6 +1398,10 @@ async fn iterate_run(
         id: Some(format!("{:016x}", rand::random::<u64>())),
         submitted_at: Some(unix_now()),
         submitted_by,
+        withdrawn: false,
+        withdrawn_at: None,
+        withdrawn_by: None,
+        withdrawn_reason: None,
     };
 
     let memory_path = dir.join("memory.jsonl");
@@ -1710,6 +1715,70 @@ async fn acknowledge_checkin(State(state): State<AppState>, AxPath(id): AxPath<S
             "checkin_acknowledged_through": run_state.checkin_acknowledged_through,
             "checkin_acknowledged_through_id": run_state.checkin_acknowledged_through_id,
             "checkin_notes": run_state.checkin_notes,
+        }))
+        .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct WithdrawHistoryRecordRequest {
+    reason: String,
+}
+
+/// Real, id-keyed alternative to the manual `state.json` compaction that caused
+/// issue #42's cascade (see [`devsystem_pipeline::IterationRecord::withdrawn`]'s
+/// own doc comment for the full incident). Looks the record up by its stable
+/// `id`, never by array position, and only ever flips `withdrawn` in place --
+/// the record stays at its original index forever, so no other record's
+/// ordinal, and no existing prose cross-reference to it, ever moves.
+///
+/// `reason` is required and non-empty at this boundary specifically so a
+/// tombstone can't be as opaque as the silent compaction it replaces -- a
+/// future reader of a withdrawn record always has a real, stated "why."
+async fn withdraw_history_record(State(state): State<AppState>, AxPath((id, iteration_id)): AxPath<(String, String)>, headers: axum::http::HeaderMap, Json(req): Json<WithdrawHistoryRecordRequest>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let reason = req.reason.trim().to_string();
+    if reason.is_empty() {
+        return (StatusCode::BAD_REQUEST, "reason must not be empty").into_response();
+    }
+    if reason.len() > MAX_SHORT_TEXT_LEN {
+        return (StatusCode::BAD_REQUEST, format!("reason must be under {MAX_SHORT_TEXT_LEN} characters")).into_response();
+    }
+    if contains_bidi_control_char(&reason) {
+        return (StatusCode::BAD_REQUEST, "reason contains a Unicode bidi control character (e.g. a right-to-left override) -- these can make the visually displayed text not match what's actually stored").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let record = match run_state.history.iter_mut().find(|h| h.id.as_deref() == Some(iteration_id.as_str())) {
+        Some(r) => r,
+        None => return (StatusCode::NOT_FOUND, "no history record with that id -- only records with a real id (issue #38/#52) can be withdrawn").into_response(),
+    };
+    if record.withdrawn {
+        return (StatusCode::BAD_REQUEST, "this record is already withdrawn").into_response();
+    }
+    record.withdrawn = true;
+    record.withdrawn_at = Some(unix_now());
+    record.withdrawn_by = headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+    record.withdrawn_reason = Some(reason);
+    let iteration = record.iteration;
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({
+            "withdrawn": true,
+            "iteration": iteration,
+            "iteration_id": iteration_id,
         }))
         .into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
@@ -4126,6 +4195,10 @@ async fn plan_canvas_verdict(State(state): State<AppState>, AxPath(id): AxPath<S
         id: Some(format!("{:016x}", rand::random::<u64>())),
         submitted_at: Some(unix_now()),
         submitted_by,
+        withdrawn: false,
+        withdrawn_at: None,
+        withdrawn_by: None,
+        withdrawn_reason: None,
     };
     let memory_path = dir.join("memory.jsonl");
     let envelope = envelope_from_iteration(&record, &run_state.requirements);
@@ -9339,6 +9412,150 @@ exit 1"#);
         assert_eq!(body["checkin_acknowledged_through"], 1);
         assert_eq!(body["checkin_acknowledged_through_id"], real_id, "the watermark must record the real id of the iteration it's acknowledging, not just its position");
         assert_eq!(body["checkin_notes"][0]["iteration_id"], real_id, "the note must carry the same real id pairing");
+    }
+
+    #[tokio::test]
+    /// Real, id-keyed alternative to the manual `state.json` compaction that
+    /// caused issue #42's cascade (see `IterationRecord::withdrawn`'s own doc
+    /// comment). Proves the record stays at its original array index and its
+    /// ordinal is untouched -- the whole point of tombstoning instead of
+    /// compacting.
+    async fn withdrawing_a_record_tombstones_it_in_place_without_moving_any_ordinal() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "withdraw-run"}))).await.unwrap();
+        for i in 0..3 {
+            app.clone()
+                .oneshot(json_request("POST", "/api/runs/withdraw-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": format!("real work {i}"), "succeeded": true})))
+                .await
+                .unwrap();
+        }
+
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/withdraw-run").body(Body::empty()).unwrap()).await.unwrap();
+        let before = body_json(get).await;
+        let bad_id = before["state"]["history"][1]["id"].as_str().unwrap().to_string();
+        assert_eq!(before["state"]["history"][1]["iteration"], 2);
+
+        let withdraw = app
+            .clone()
+            .oneshot(gate_request(
+                "POST",
+                &format!("/api/runs/withdraw-run/history/{bad_id}/withdraw"),
+                "reviewer@example.com",
+                Some(serde_json::json!({"reason": "duplicate submission, same content as iteration 1"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(withdraw.status(), SC::OK);
+        let withdraw_body = body_json(withdraw).await;
+        assert_eq!(withdraw_body["iteration"], 2);
+
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/withdraw-run").body(Body::empty()).unwrap()).await.unwrap();
+        let after = body_json(get).await;
+        let history = after["state"]["history"].as_array().unwrap();
+        assert_eq!(history.len(), 3, "the record must stay in history, never be removed");
+        assert_eq!(history[0]["iteration"], 1, "an earlier record's ordinal must never move");
+        assert_eq!(history[1]["iteration"], 2, "the withdrawn record keeps its own original ordinal");
+        assert_eq!(history[1]["withdrawn"], true);
+        assert_eq!(history[1]["withdrawn_by"], "reviewer@example.com");
+        assert_eq!(history[1]["withdrawn_reason"], "duplicate submission, same content as iteration 1");
+        assert!(history[1]["withdrawn_at"].as_u64().unwrap() > 0);
+        assert_eq!(history[2]["iteration"], 3, "a later record's ordinal must never move either");
+        assert_eq!(history[2]["withdrawn"], false);
+    }
+
+    #[tokio::test]
+    async fn withdrawing_requires_a_real_non_empty_reason() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "withdraw-reason-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/withdraw-reason-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "real work", "succeeded": true})))
+            .await
+            .unwrap();
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/withdraw-reason-run").body(Body::empty()).unwrap()).await.unwrap();
+        let real_id = body_json(get).await["state"]["history"][0]["id"].as_str().unwrap().to_string();
+
+        let response = app
+            .oneshot(json_request("POST", &format!("/api/runs/withdraw-reason-run/history/{real_id}/withdraw"), serde_json::json!({"reason": "   "})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn withdrawing_an_unknown_id_returns_not_found() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "withdraw-unknown-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/withdraw-unknown-run/history/no-such-id/withdraw",
+                serde_json::json!({"reason": "real reason"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn withdrawing_the_same_record_twice_is_rejected_not_silently_reapplied() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "withdraw-twice-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/withdraw-twice-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "real work", "succeeded": true})))
+            .await
+            .unwrap();
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/withdraw-twice-run").body(Body::empty()).unwrap()).await.unwrap();
+        let real_id = body_json(get).await["state"]["history"][0]["id"].as_str().unwrap().to_string();
+
+        let first = app
+            .clone()
+            .oneshot(json_request("POST", &format!("/api/runs/withdraw-twice-run/history/{real_id}/withdraw"), serde_json::json!({"reason": "real reason"})))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), SC::OK);
+
+        let second = app
+            .oneshot(json_request("POST", &format!("/api/runs/withdraw-twice-run/history/{real_id}/withdraw"), serde_json::json!({"reason": "trying again"})))
+            .await
+            .unwrap();
+        assert_eq!(second.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn a_different_account_cannot_withdraw_someone_elses_history_record() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "owner@example.com", Some(serde_json::json!({"run_id": "withdraw-owned-run"}))))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(gate_request(
+                "POST",
+                "/api/runs/withdraw-owned-run/iterate",
+                "owner@example.com",
+                Some(serde_json::json!({"stage": "devsystem.implement", "feedback": "real work", "succeeded": true})),
+            ))
+            .await
+            .unwrap();
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/withdraw-owned-run").body(Body::empty()).unwrap()).await.unwrap();
+        let real_id = body_json(get).await["state"]["history"][0]["id"].as_str().unwrap().to_string();
+
+        let response = app
+            .oneshot(gate_request(
+                "POST",
+                &format!("/api/runs/withdraw-owned-run/history/{real_id}/withdraw"),
+                "someone-else@example.com",
+                Some(serde_json::json!({"reason": "real reason"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::FORBIDDEN);
     }
 
     #[tokio::test]

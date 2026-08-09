@@ -465,6 +465,48 @@ pub struct IterationRecord {
     /// all, which this field alone cannot capture.
     #[serde(default)]
     pub submitted_by: Option<String>,
+    /// Real evaluator finding, issue #42: a live incident (the #38 duplicate
+    /// repair) fixed a bad record by *compacting the history array* -- removing
+    /// it and shifting every later record's ordinal down by one. Ordinals are
+    /// this platform's only handle on an iteration in prose (backlog escalations,
+    /// frozen `feedback` text, the check-in document's own heading), so that one
+    /// compaction silently re-pointed every durable cross-reference in the
+    /// system, several of them (issues #34, #35, #36, #39, #41) already filed
+    /// against the old numbering.
+    ///
+    /// This field gives a supported alternative that doesn't do that: tombstone
+    /// a bad record in place via `POST /runs/{id}/history/{iteration_id}/withdraw`
+    /// (id-keyed, never positional) instead of hand-editing `state.json` to
+    /// remove it. `withdrawn` records stay in `history` at their original index
+    /// forever -- every other record's ordinal, and every existing cross-reference
+    /// to it, stays exactly as valid as it was before the withdrawal. `false` for
+    /// every real, non-withdrawn record, including all pre-existing history (the
+    /// only state this field could have had before this endpoint existed).
+    ///
+    /// Deliberately narrow for now: withdrawing a record does **not** yet exclude
+    /// it from `iterations_completed`, checkin cadence, or the `max_iterations`
+    /// ceiling (issue #42 suggestion #2's fuller ask) -- those all still count a
+    /// withdrawn record as consumed, real work, the same way a reverted commit
+    /// still consumed CI time. Making withdrawal *also* refund those budgets is a
+    /// separate, real design question (should a bad iteration get its slot back?)
+    /// deliberately not guessed at here; this slice closes the sharper, unambiguous
+    /// half -- there is now a safe way to mark a record wrong without destroying
+    /// the numbering everything else depends on.
+    #[serde(default)]
+    pub withdrawn: bool,
+    /// Unix seconds the withdrawal was recorded, `None` until `withdrawn` is set.
+    #[serde(default)]
+    pub withdrawn_at: Option<u64>,
+    /// Same real-identity convention as `submitted_by` -- the gate-verified
+    /// `X-Gate-Email` of whoever called the withdraw endpoint, honestly `None`
+    /// if no browser session was present.
+    #[serde(default)]
+    pub withdrawn_by: Option<String>,
+    /// Required, non-empty at the HTTP boundary (see `withdraw_history_record`) --
+    /// a tombstone with no stated reason would be exactly as opaque as the silent
+    /// compaction this field exists to replace.
+    #[serde(default)]
+    pub withdrawn_reason: Option<String>,
 }
 
 fn deserialize_id_or_empty_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -950,6 +992,36 @@ mod tests {
         let serialized = serde_json::to_value(&record).unwrap();
         assert!(serialized.get("submitted_by").is_some(), "must still be present, not omitted");
         assert!(serialized["submitted_by"].is_null());
+    }
+
+    #[test]
+    /// Every pre-existing history record (before this field existed, issue #42) has
+    /// no `withdrawn` key at all -- must load as `false`, not error, since the only
+    /// state such a record could honestly have had is "never withdrawn."
+    fn a_record_with_no_withdrawn_field_at_all_deserializes_as_not_withdrawn() {
+        let json = r#"{"run_id":"r","stage":"devsystem.plan","iteration":1,"feedback":"f",
+            "proposals":[],"succeeded":true,"requirement_indices":[]}"#;
+        let record: IterationRecord = serde_json::from_str(json).expect("pre-#42 record must still load");
+        assert!(!record.withdrawn);
+        assert_eq!(record.withdrawn_at, None);
+        assert_eq!(record.withdrawn_by, None);
+        assert_eq!(record.withdrawn_reason, None);
+    }
+
+    #[test]
+    fn a_real_withdrawal_round_trips_unchanged() {
+        let json = r#"{"run_id":"r","stage":"devsystem.plan","iteration":1,"feedback":"f",
+            "proposals":[],"succeeded":true,"requirement_indices":[],"withdrawn":true,
+            "withdrawn_at":1786000000,"withdrawn_by":"scimbe@gmail.com","withdrawn_reason":"duplicate of iteration 1"}"#;
+        let record: IterationRecord = serde_json::from_str(json).expect("withdrawn record must load");
+        assert!(record.withdrawn);
+        assert_eq!(record.withdrawn_at, Some(1786000000));
+        assert_eq!(record.withdrawn_by, Some("scimbe@gmail.com".to_string()));
+        assert_eq!(record.withdrawn_reason, Some("duplicate of iteration 1".to_string()));
+
+        let serialized = serde_json::to_value(&record).unwrap();
+        assert_eq!(serialized["withdrawn"], true);
+        assert_eq!(serialized["iteration"], 1, "withdrawing a record must never change its own ordinal");
     }
 
     #[test]

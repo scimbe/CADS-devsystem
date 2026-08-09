@@ -1844,7 +1844,7 @@ mod tests {
         // iteration and one with none at all used to be indistinguishable in the
         // export -- one covered requirement (index 0, iteration 7) and one
         // deliberately left uncovered (index 1) so both real branches assert.
-        let history = vec![IterationRecord { run_id: "real-run".into(), stage: "devsystem.review".into(), iteration: 7, feedback: "ok".into(), proposals: vec![], succeeded: true, requirement_indices: vec![0], id: None, submitted_at: None, submitted_by: None }];
+        let history = vec![IterationRecord { run_id: "real-run".into(), stage: "devsystem.review".into(), iteration: 7, feedback: "ok".into(), proposals: vec![], succeeded: true, requirement_indices: vec![0], id: None, submitted_at: None, submitted_by: None, ..Default::default() }];
         let md = render_requirements_markdown("real-run", &requirements, &history);
         assert!(md.contains("# Requirements: `real-run`"));
         assert!(md.contains("1/2 verified"));

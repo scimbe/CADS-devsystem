@@ -4892,13 +4892,24 @@ function renderHistoryPanel(data) {
   const submittedByHtml = (by) => by
     ? ` · submitted by ${escapeHtml(by)}`
     : ` · <span class="lede" style="font-size:.7rem">submitted by: not recorded (local CLI or M2M submission)</span>`;
+  // Real evaluator finding, issue #42 (suggestion #2): a bad record used to only
+  // ever be removable by hand-editing state.json and compacting the array --
+  // which silently re-pointed every later ordinal and every durable
+  // cross-reference to it (issues #34/#35/#36/#39/#41 all quoted numbers that
+  // incident broke). `withdrawn` records now stay right here, at their real
+  // original position, with a visible tombstone label instead of vanishing --
+  // nothing about this history is ever silently rewritten.
+  const withdrawnHtml = (h) => h.withdrawn
+    ? `<div class="lede" style="font-size:.72rem;margin-top:.2rem;color:#b45309">⊘ withdrawn${h.withdrawn_by ? ` by ${escapeHtml(h.withdrawn_by)}` : ''}: ${escapeHtml(h.withdrawn_reason || '(no reason recorded)')}</div>`
+    : '';
   const history = [...data.state.history].reverse().map(h => `
-    <div class="iter">
+    <div class="iter"${h.withdrawn ? ' style="opacity:.6"' : ''}>
       <div class="head"><span>iteration ${h.iteration} · ${h.stage}${submittedByHtml(h.submitted_by)}</span>
         <span class="${h.succeeded ? 'ok' : 'fail'}">${h.succeeded ? 'ok' : 'FAILED'}</span></div>
       <div>${escapeHtml(h.feedback)}</div>
       ${renderProposals(h.proposals)}
       ${requirementRefsHtml(h.requirement_indices)}
+      ${withdrawnHtml(h)}
     </div>`).join('') || '<span class="lede">No iterations yet.</span>';
   body.innerHTML = `<div class="history">${history}</div>`;
 }
