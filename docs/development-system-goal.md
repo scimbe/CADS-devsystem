@@ -7002,4 +7002,27 @@ the real deployed container: text-upload and sync (against `webconference-androi
 `repo_url`) both now show a real, visible, run-naming confirmation surviving the re-render -- zero
 console errors.
 
+**Goal-driven-loop firing, 2026-08-09 (ttt) -- closed issue #58 for real: a per-run URL,
+`#run=<id>`.** State check: `#382`'s three checkpoints still no new scimbe reply; issues #13/#14
+unchanged. Went back to issue #58's own original four-point list rather than the vaguer §7.1 "hide
+irrelevant panels" note (real but too loosely scoped to implement safely without risking a DAU-lens
+regression -- hiding the wrong thing is its own kind of bad outcome). Three of #58's four items were
+already shipped across earlier firings (panel titles, write-success confirmation, no arbitrary
+auto-select); only "give a run a real URL... so reload/bookmark/link work" remained, explicitly
+deferred each time as "real, separate, larger work."
+
+Implemented the minimal form the issue itself names as acceptable: `#run=<id>`, no server-side route
+needed since `GET /` already serves the SPA regardless of the fragment. `selectRun` writes it via
+`history.replaceState` (not `pushState` -- the ask is a bookmarkable URL and "the browser tells me
+where I am", not back/forward semantics; every run switch pushing a history entry would make the
+back button feel broken). `refreshRunsList`'s own auto-select now checks the hash before the
+remembered last-run choice -- a followed link/bookmark named a specific run on purpose, which should
+win. A `hashchange` listener covers the other real half: a link pasted into an already-open tab, or
+a hand-edited hash, changes `location.hash` without re-running any script, so nothing would
+otherwise notice (confirmed `replaceState` itself does not fire this event -- no loop risk).
+`CADS-devsystem@37c8642`. Live-verified three ways against the real deployed container: clicking a
+run updates the hash, a fresh load with a deep-link hash selects that exact run over the remembered
+last one, and a real `hashchange` event re-selects correctly -- zero console errors. Closed issue #58
+with the real commit citing all four fixes.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
