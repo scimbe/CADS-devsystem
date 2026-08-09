@@ -68,6 +68,18 @@
 //! whether the deployment actually provides it is a real deployment concern, and a
 //! missing binary surfaces as a real `Error`, never a fabricated `Extracted`.
 //!
+//! **Fifth real increment: scanned PDFs.** Once OCR existed, the PDF branch's old
+//! "no extractable text layer" dead end became solvable rather than terminal -- a
+//! scanned document is the single most common thing a RAG index is handed that this
+//! handler previously refused outright. `pdftotext` still runs first (a real text
+//! layer is faster and exact); only when it comes back empty does the document get
+//! rasterized with `pdftoppm` and OCR'd page by page through the same real
+//! `tesseract` pass images already use.
+//!
+//! Bounded on purpose at `MAX_OCR_PAGES`, and bounded by *erroring* rather than by
+//! truncating: the page count is read from real `pdfinfo` output before any rendering
+//! happens, so an over-cap document reports its real size instead of silently
+//! returning its first pages as though they were the whole text.
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -97,6 +109,17 @@ const MAX_CONTENT_BYTES: usize = 4 * 1024 * 1024;
 const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const DOC_MIME: &str = "application/msword";
 
+/// How many pages of a scanned PDF this handler will rasterize and OCR. A document
+/// with more pages is a real `Error` naming its real page count, NOT a silently
+/// truncated `Extracted` -- a partial extraction presented as a whole one is exactly
+/// the fabrication this handler exists to avoid, and the RAG index downstream has no
+/// way to tell the difference once the text lands there.
+const MAX_OCR_PAGES: usize = 20;
+
+/// Rasterization resolution for that OCR pass. 300 DPI is tesseract's own documented
+/// sweet spot; the `MAX_CONTENT_BYTES` cap already bounds how much work this can be.
+const OCR_RENDER_DPI: &str = "300";
+
 /// The real image types this handler OCRs, each one confirmed end to end against the
 /// real `tesseract` binary rather than inferred from its linked-library list. The
 /// extension matters because leptonica picks its decoder per format; a real one is
@@ -119,6 +142,7 @@ fn extract(
     run_pdftotext: impl FnOnce(&[u8]) -> Result<String, String>,
     run_libreoffice_convert: impl FnOnce(&[u8], &str) -> Result<String, String>,
     run_tesseract: impl FnOnce(&[u8], &str) -> Result<String, String>,
+    run_pdf_ocr: impl FnOnce(&[u8]) -> Result<String, String>,
 ) -> ExtractionResponse {
     let bytes = match base64::engine::general_purpose::STANDARD.decode(&req.content_base64) {
         Ok(b) => b,
@@ -132,10 +156,17 @@ fn extract(
     }
 
     match req.mime_type.as_str() {
+        // A PDF with no text layer is the classic scanned document, and until OCR
+        // existed this was where extraction gave up. It now falls back to
+        // rasterize-then-OCR rather than reporting the whole document unreadable.
         "application/pdf" => match run_pdftotext(&bytes) {
             Ok(text) if !text.trim().is_empty() => ExtractionResponse::Extracted { text },
-            Ok(_) => ExtractionResponse::Error {
-                error: format!("{}: pdftotext produced no extractable text -- likely a scanned/image-only PDF with no real text layer (OCR is a separate, not-yet-built increment)", req.filename),
+            Ok(_) => match run_pdf_ocr(&bytes) {
+                Ok(text) if !text.trim().is_empty() => ExtractionResponse::Extracted { text },
+                Ok(_) => ExtractionResponse::Error {
+                    error: format!("{}: no text layer, and OCR of the rasterized pages found no readable text either", req.filename),
+                },
+                Err(e) => ExtractionResponse::Error { error: format!("{}: no text layer, and OCR fallback failed: {e}", req.filename) },
             },
             Err(e) => ExtractionResponse::Error { error: format!("{}: pdftotext failed: {e}", req.filename) },
         },
@@ -269,6 +300,79 @@ fn run_tesseract_real(bytes: &[u8], ext: &str) -> Result<String, String> {
     String::from_utf8(output.stdout).map_err(|e| format!("tesseract produced non-UTF-8 output: {e}"))
 }
 
+/// The real scanned-PDF path: `pdfinfo` for a real page count, `pdftoppm` to
+/// rasterize, then the same real `tesseract` pass each image already gets, joined in
+/// real page order.
+///
+/// The page count is read BEFORE rendering so an over-cap document fails honestly
+/// instead of returning the first `MAX_OCR_PAGES` pages as if they were the whole
+/// thing. Page files are ordered by their real trailing page number rather than
+/// lexicographically: `pdftoppm` happens to zero-pad to the page-count width (checked
+/// directly -- a 12-page render produced `page-01`..`page-12`, so a plain sort would
+/// in fact be correct today), but that padding is a function of the document, and
+/// sorting on the real number cannot silently reorder a caller's pages if it changes.
+fn run_pdf_ocr_real(bytes: &[u8]) -> Result<String, String> {
+    let dir = std::env::temp_dir().join(format!("devsystem-extraction-pdfocr-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create temp dir: {e}"))?;
+    let pdf_path = dir.join("input.pdf");
+    let result = std::fs::write(&pdf_path, bytes)
+        .map_err(|e| format!("could not write temp PDF: {e}"))
+        .and_then(|()| ocr_rendered_pdf_pages(&dir, &pdf_path));
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
+fn ocr_rendered_pdf_pages(dir: &std::path::Path, pdf_path: &std::path::Path) -> Result<String, String> {
+    let info = Command::new("pdfinfo")
+        .arg(pdf_path)
+        .output()
+        .map_err(|e| format!("could not run pdfinfo: {e}"))?;
+    if !info.status.success() {
+        return Err(format!("pdfinfo exited with {}: {}", info.status, String::from_utf8_lossy(&info.stderr)));
+    }
+    let pages: usize = String::from_utf8_lossy(&info.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix("Pages:")?.trim().parse().ok())
+        .ok_or_else(|| "pdfinfo reported no page count".to_string())?;
+    if pages > MAX_OCR_PAGES {
+        return Err(format!("scanned PDF has {pages} pages, over the {MAX_OCR_PAGES}-page OCR limit"));
+    }
+
+    let render = Command::new("pdftoppm")
+        .arg("-r")
+        .arg(OCR_RENDER_DPI)
+        .arg("-png")
+        .arg(pdf_path)
+        .arg(dir.join("page"))
+        .output()
+        .map_err(|e| format!("could not run pdftoppm: {e}"))?;
+    if !render.status.success() {
+        return Err(format!("pdftoppm exited with {}: {}", render.status, String::from_utf8_lossy(&render.stderr)));
+    }
+
+    let mut rendered: Vec<(usize, std::path::PathBuf)> = std::fs::read_dir(dir)
+        .map_err(|e| format!("could not read rendered pages: {e}"))?
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            let stem = path.file_stem()?.to_str()?;
+            let number = stem.strip_prefix("page-")?.parse().ok()?;
+            Some((number, path))
+        })
+        .collect();
+    if rendered.is_empty() {
+        return Err("pdftoppm produced no page images".to_string());
+    }
+    rendered.sort_by_key(|(number, _)| *number);
+
+    let mut text = String::new();
+    for (number, path) in rendered {
+        let page_bytes = std::fs::read(&path).map_err(|e| format!("could not read rendered page {number}: {e}"))?;
+        text.push_str(&run_tesseract_real(&page_bytes, "png")?);
+        text.push('\n');
+    }
+    Ok(text)
+}
+
 /// Same real finding `github_issue_channel_handler.rs::main`'s own doc comment
 /// records (2026-08-04, live-verified over a real `ct-agent channel` call): a
 /// non-zero handler exit is a hard TRANSPORT-level error to `ct-agent` and its
@@ -283,7 +387,7 @@ fn main() -> std::process::ExitCode {
     }
 
     let response = match serde_json::from_str::<ExtractionRequest>(input.trim()) {
-        Ok(req) => extract(&req, run_pdftotext_real, run_libreoffice_convert_real, run_tesseract_real),
+        Ok(req) => extract(&req, run_pdftotext_real, run_libreoffice_convert_real, run_tesseract_real, run_pdf_ocr_real),
         Err(e) => ExtractionResponse::Error { error: format!("invalid request JSON: {e}") },
     };
 
@@ -312,6 +416,10 @@ mod tests {
         panic!("this effect must not run for this test's mime_type");
     }
 
+    fn unreachable_pdf_ocr_effect(_: &[u8]) -> Result<String, String> {
+        panic!("the OCR fallback must not run when pdftotext already produced real text");
+    }
+
     #[test]
     fn extract_returns_real_text_when_pdftotext_succeeds() {
         let response = extract(
@@ -322,28 +430,53 @@ mod tests {
             },
             unreachable_libreoffice_effect,
             unreachable_tesseract_effect,
+            unreachable_pdf_ocr_effect,
         );
         assert_eq!(response, ExtractionResponse::Extracted { text: "real extracted PDF text".to_string() });
     }
 
     #[test]
-    fn extract_reports_an_honest_error_when_pdftotext_finds_no_text_layer() {
-        let response = extract(&req("scan.pdf", "application/pdf", "cmVhbCBieXRlcw=="), |_| Ok("   \n  \n".to_string()), unreachable_libreoffice_effect, unreachable_tesseract_effect);
+    fn extract_falls_back_to_ocr_when_a_pdf_has_no_text_layer() {
+        let response = extract(
+            &req("scan.pdf", "application/pdf", "cmVhbCBieXRlcw=="),
+            |_| Ok("   \n  \n".to_string()),
+            unreachable_libreoffice_effect,
+            unreachable_tesseract_effect,
+            |bytes| {
+                assert_eq!(bytes, b"real bytes", "the real decoded PDF bytes must reach the OCR fallback");
+                Ok("real text OCR'd off the scanned pages".to_string())
+            },
+        );
+        assert_eq!(response, ExtractionResponse::Extracted { text: "real text OCR'd off the scanned pages".to_string() });
+    }
+
+    #[test]
+    fn extract_reports_an_honest_error_when_even_ocr_finds_nothing_in_a_pdf() {
+        let response = extract(&req("blank-scan.pdf", "application/pdf", "cmVhbCBieXRlcw=="), |_| Ok("".to_string()), unreachable_libreoffice_effect, unreachable_tesseract_effect, |_| Ok("  \n".to_string()));
         match response {
-            ExtractionResponse::Error { error } => assert!(error.contains("no extractable text"), "got: {error}"),
-            other => panic!("expected a real Error for an empty text layer, got {other:?}"),
+            ExtractionResponse::Error { error } => assert!(error.contains("no readable text"), "got: {error}"),
+            other => panic!("expected a real Error when OCR found nothing either, got {other:?}"),
         }
     }
 
     #[test]
+    fn extract_surfaces_a_real_pdf_ocr_failure_honestly() {
+        let response = extract(&req("huge-scan.pdf", "application/pdf", "cmVhbCBieXRlcw=="), |_| Ok("".to_string()), unreachable_libreoffice_effect, unreachable_tesseract_effect, |_| Err("scanned PDF has 94 pages, over the 20-page OCR limit".to_string()));
+        assert_eq!(
+            response,
+            ExtractionResponse::Error { error: "huge-scan.pdf: no text layer, and OCR fallback failed: scanned PDF has 94 pages, over the 20-page OCR limit".to_string() }
+        );
+    }
+
+    #[test]
     fn extract_surfaces_a_real_pdftotext_failure_honestly() {
-        let response = extract(&req("corrupt.pdf", "application/pdf", "cmVhbCBieXRlcw=="), |_| Err("not a real PDF".to_string()), unreachable_libreoffice_effect, unreachable_tesseract_effect);
+        let response = extract(&req("corrupt.pdf", "application/pdf", "cmVhbCBieXRlcw=="), |_| Err("not a real PDF".to_string()), unreachable_libreoffice_effect, unreachable_tesseract_effect, unreachable_pdf_ocr_effect);
         assert_eq!(response, ExtractionResponse::Error { error: "corrupt.pdf: pdftotext failed: not a real PDF".to_string() });
     }
 
     #[test]
     fn extract_rejects_invalid_base64_before_ever_touching_pdftotext() {
-        let response = extract(&req("f.pdf", "application/pdf", "not valid base64!!"), unreachable_effect, unreachable_libreoffice_effect, unreachable_tesseract_effect);
+        let response = extract(&req("f.pdf", "application/pdf", "not valid base64!!"), unreachable_effect, unreachable_libreoffice_effect, unreachable_tesseract_effect, unreachable_pdf_ocr_effect);
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("did not decode"), "got: {error}"),
             other => panic!("expected a real Error, got {other:?}"),
@@ -361,13 +494,14 @@ mod tests {
                 Ok("real extracted DOCX text".to_string())
             },
             unreachable_tesseract_effect,
+            unreachable_pdf_ocr_effect,
         );
         assert_eq!(response, ExtractionResponse::Extracted { text: "real extracted DOCX text".to_string() });
     }
 
     #[test]
     fn extract_reports_an_honest_error_when_libreoffice_finds_no_text() {
-        let response = extract(&req("blank.docx", DOCX_MIME, "cmVhbCBieXRlcw=="), unreachable_effect, |_, _| Ok("  \n ".to_string()), unreachable_tesseract_effect);
+        let response = extract(&req("blank.docx", DOCX_MIME, "cmVhbCBieXRlcw=="), unreachable_effect, |_, _| Ok("  \n ".to_string()), unreachable_tesseract_effect, unreachable_pdf_ocr_effect);
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("no extractable text"), "got: {error}"),
             other => panic!("expected a real Error for empty output, got {other:?}"),
@@ -376,7 +510,7 @@ mod tests {
 
     #[test]
     fn extract_surfaces_a_real_libreoffice_failure_honestly() {
-        let response = extract(&req("corrupt.docx", DOCX_MIME, "cmVhbCBieXRlcw=="), unreachable_effect, |_, _| Err("not a real DOCX".to_string()), unreachable_tesseract_effect);
+        let response = extract(&req("corrupt.docx", DOCX_MIME, "cmVhbCBieXRlcw=="), unreachable_effect, |_, _| Err("not a real DOCX".to_string()), unreachable_tesseract_effect, unreachable_pdf_ocr_effect);
         assert_eq!(response, ExtractionResponse::Error { error: "corrupt.docx: libreoffice conversion failed: not a real DOCX".to_string() });
     }
 
@@ -391,13 +525,14 @@ mod tests {
                 Ok("real extracted legacy DOC text".to_string())
             },
             unreachable_tesseract_effect,
+            unreachable_pdf_ocr_effect,
         );
         assert_eq!(response, ExtractionResponse::Extracted { text: "real extracted legacy DOC text".to_string() });
     }
 
     #[test]
     fn extract_surfaces_a_real_doc_libreoffice_failure_honestly() {
-        let response = extract(&req("corrupt.doc", DOC_MIME, "cmVhbCBieXRlcw=="), unreachable_effect, |_, _| Err("not a real DOC".to_string()), unreachable_tesseract_effect);
+        let response = extract(&req("corrupt.doc", DOC_MIME, "cmVhbCBieXRlcw=="), unreachable_effect, |_, _| Err("not a real DOC".to_string()), unreachable_tesseract_effect, unreachable_pdf_ocr_effect);
         assert_eq!(response, ExtractionResponse::Error { error: "corrupt.doc: libreoffice conversion failed: not a real DOC".to_string() });
     }
 
@@ -408,6 +543,7 @@ mod tests {
             unreachable_effect,
             unreachable_libreoffice_effect,
             unreachable_tesseract_effect,
+            unreachable_pdf_ocr_effect,
         );
         assert_eq!(response, ExtractionResponse::Extracted { text: "real plain text content".to_string() });
     }
@@ -419,6 +555,7 @@ mod tests {
             unreachable_effect,
             unreachable_libreoffice_effect,
             unreachable_tesseract_effect,
+            unreachable_pdf_ocr_effect,
         );
         assert_eq!(response, ExtractionResponse::Extracted { text: "# real markdown heading".to_string() });
     }
@@ -426,7 +563,7 @@ mod tests {
     #[test]
     fn extract_rejects_non_utf8_plain_text_honestly() {
         let non_utf8 = base64::engine::general_purpose::STANDARD.encode([0xff, 0xfe, 0x00, 0x41]);
-        let response = extract(&req("binary.txt", "text/plain", &non_utf8), unreachable_effect, unreachable_libreoffice_effect, unreachable_tesseract_effect);
+        let response = extract(&req("binary.txt", "text/plain", &non_utf8), unreachable_effect, unreachable_libreoffice_effect, unreachable_tesseract_effect, unreachable_pdf_ocr_effect);
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("not valid UTF-8"), "got: {error}"),
             other => panic!("expected a real Error, got {other:?}"),
@@ -440,6 +577,7 @@ mod tests {
             unreachable_effect,
             unreachable_libreoffice_effect,
             unreachable_tesseract_effect,
+            unreachable_pdf_ocr_effect,
         );
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("empty/whitespace-only"), "got: {error}"),
@@ -449,7 +587,7 @@ mod tests {
 
     #[test]
     fn extract_reports_an_unsupported_mime_type_honestly_not_fabricated() {
-        let response = extract(&req("archive.zip", "application/zip", "eA=="), unreachable_effect, unreachable_libreoffice_effect, unreachable_tesseract_effect);
+        let response = extract(&req("archive.zip", "application/zip", "eA=="), unreachable_effect, unreachable_libreoffice_effect, unreachable_tesseract_effect, unreachable_pdf_ocr_effect);
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("unsupported mime_type"), "got: {error}"),
             other => panic!("expected a real Error, got {other:?}"),
@@ -467,6 +605,7 @@ mod tests {
                 assert_eq!(ext, "png", "PNG must pass its real extension through to tesseract");
                 Ok("real OCR'd text".to_string())
             },
+            unreachable_pdf_ocr_effect,
         );
         assert_eq!(response, ExtractionResponse::Extracted { text: "real OCR'd text".to_string() });
     }
@@ -482,6 +621,7 @@ mod tests {
                     assert_eq!(&ext, expected_ext, "{mime} must map to the real extension tesseract was verified against");
                     Ok(format!("text from {ext}"))
                 },
+                unreachable_pdf_ocr_effect,
             );
             assert_eq!(response, ExtractionResponse::Extracted { text: format!("text from {expected_ext}") });
         }
@@ -489,7 +629,7 @@ mod tests {
 
     #[test]
     fn extract_reports_an_honest_error_when_an_image_holds_no_readable_text() {
-        let response = extract(&req("wall.jpg", "image/jpeg", "cmVhbCBieXRlcw=="), unreachable_effect, unreachable_libreoffice_effect, |_, _| Ok(" \n \n".to_string()));
+        let response = extract(&req("wall.jpg", "image/jpeg", "cmVhbCBieXRlcw=="), unreachable_effect, unreachable_libreoffice_effect, |_, _| Ok(" \n \n".to_string()), unreachable_pdf_ocr_effect);
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("no readable text"), "got: {error}"),
             other => panic!("expected a real Error for a text-free image, got {other:?}"),
@@ -498,7 +638,7 @@ mod tests {
 
     #[test]
     fn extract_surfaces_a_real_tesseract_failure_honestly() {
-        let response = extract(&req("corrupt.png", "image/png", "cmVhbCBieXRlcw=="), unreachable_effect, unreachable_libreoffice_effect, |_, _| Err("could not run tesseract: No such file or directory".to_string()));
+        let response = extract(&req("corrupt.png", "image/png", "cmVhbCBieXRlcw=="), unreachable_effect, unreachable_libreoffice_effect, |_, _| Err("could not run tesseract: No such file or directory".to_string()), unreachable_pdf_ocr_effect);
         assert_eq!(
             response,
             ExtractionResponse::Error { error: "corrupt.png: tesseract failed: could not run tesseract: No such file or directory".to_string() }
@@ -507,7 +647,7 @@ mod tests {
 
     #[test]
     fn extract_does_not_ocr_svg_which_leptonica_cannot_rasterize() {
-        let response = extract(&req("diagram.svg", "image/svg+xml", "eA=="), unreachable_effect, unreachable_libreoffice_effect, unreachable_tesseract_effect);
+        let response = extract(&req("diagram.svg", "image/svg+xml", "eA=="), unreachable_effect, unreachable_libreoffice_effect, unreachable_tesseract_effect, unreachable_pdf_ocr_effect);
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("unsupported mime_type"), "got: {error}"),
             other => panic!("expected a real Error for SVG, got {other:?}"),
@@ -517,7 +657,7 @@ mod tests {
     #[test]
     fn extract_rejects_an_oversized_document_before_running_pdftotext() {
         let huge = base64::engine::general_purpose::STANDARD.encode(vec![0u8; MAX_CONTENT_BYTES + 1]);
-        let response = extract(&req("huge.pdf", "application/pdf", &huge), unreachable_effect, unreachable_libreoffice_effect, unreachable_tesseract_effect);
+        let response = extract(&req("huge.pdf", "application/pdf", &huge), unreachable_effect, unreachable_libreoffice_effect, unreachable_tesseract_effect, unreachable_pdf_ocr_effect);
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("MAX_CONTENT_BYTES"), "got: {error}"),
             other => panic!("expected a real Error, got {other:?}"),
@@ -526,7 +666,7 @@ mod tests {
 
     #[test]
     fn extract_rejects_an_empty_document() {
-        let response = extract(&req("empty.pdf", "application/pdf", ""), unreachable_effect, unreachable_libreoffice_effect, unreachable_tesseract_effect);
+        let response = extract(&req("empty.pdf", "application/pdf", ""), unreachable_effect, unreachable_libreoffice_effect, unreachable_tesseract_effect, unreachable_pdf_ocr_effect);
         match response {
             ExtractionResponse::Error { error } => assert!(error.contains("empty"), "got: {error}"),
             other => panic!("expected a real Error, got {other:?}"),
