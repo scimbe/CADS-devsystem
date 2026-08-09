@@ -566,6 +566,20 @@ pub struct RunState {
     /// yet) still load.
     #[serde(default)]
     pub requirements: Vec<Requirement>,
+    /// Real, operator-directed feature request (CADS-devsystem issue #56):
+    /// "the assistant should proactively propose additional requirements
+    /// that round out coverage... user should be able to accept, edit, or
+    /// reject each proposal individually before anything is actually
+    /// added." First slice -- propose/approve/reject, same trust model as
+    /// every other `pending_*_proposals` queue in this file (a proposal
+    /// never appears in the real `requirements` list, never affects the
+    /// review gate or coverage, until a human approves it here). The
+    /// guided, interview-style dialog issue #56 also asks for is real,
+    /// separate, larger UI work, not attempted in this same increment.
+    /// `#[serde(default)]` so pre-existing `state.json` files (none
+    /// proposed yet) still load.
+    #[serde(default)]
+    pub pending_requirement_proposals: Vec<PendingRequirementProposal>,
     /// Real, running totals of `devsystem.assistant`'s own real token/cost usage
     /// (#382 goal doc §7.3, gap #5) -- every `/ask` call already parses this
     /// exact data from the LLM CLI's own JSON output (`devsystem_assistant.rs`'s
@@ -891,6 +905,21 @@ pub struct PendingDeleteRunProposal {
     pub proposed_at: u64,
 }
 
+/// See [`RunState::pending_requirement_proposals`]'s own doc comment. Shape
+/// mirrors [`Requirement`]'s own `statement`/`acceptance_criteria` pair
+/// exactly -- approving one becomes a real `Requirement` verbatim, no
+/// re-typing -- plus a `rationale` (why this requirement rounds out real
+/// coverage), the same "not just the what, the why" convention
+/// `StageProposal::rationale` already established for pipeline stages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingRequirementProposal {
+    pub id: String,
+    pub statement: String,
+    pub acceptance_criteria: Vec<String>,
+    pub rationale: String,
+    pub proposed_at: u64,
+}
+
 impl RunState {
     pub fn new(run_id: impl Into<String>) -> Self {
         RunState {
@@ -916,6 +945,7 @@ impl RunState {
             pending_next_step_drafts: Vec::new(),
             pending_delete_run_proposal: None,
             requirements: Vec::new(),
+            pending_requirement_proposals: Vec::new(),
             assistant_usage: AssistantUsageTotals::default(),
             chat_history: Vec::new(),
             checkin_acknowledged_through: 0,

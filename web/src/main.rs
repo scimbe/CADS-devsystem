@@ -22,8 +22,8 @@ use devsystem_pipeline::preflight::{preflight_annotations, process_annotations};
 use devsystem_pipeline::runner::{
     checkin_pending, duplicate_of_last_iteration, load_or_init_run, persist_run, push_chat_exchange, qualifying_review_evidence, render_requirements_markdown, run_iteration, toggle_acceptance_criterion,
     toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, valid_run_id, validate_requirement_indices, BacklogItem, CustomPanel,
-    Milestone, PendingDeleteRunProposal, PendingIssueProposal, PendingNextStepDraft, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingStageProposal,
-    PlanCanvasAnnotation, Requirement, RoleFillMode, RunOutcome, RunState,
+    Milestone, PendingDeleteRunProposal, PendingIssueProposal, PendingNextStepDraft, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingRequirementProposal,
+    PendingStageProposal, PlanCanvasAnnotation, Requirement, RoleFillMode, RunOutcome, RunState,
 };
 use devsystem_pipeline::{
     apply_proposal, contains_bidi_control_char, validate_feedback, validate_proposals, validate_stage, AbortCriteria, IterationRecord, ProposalOutcome,
@@ -258,6 +258,9 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/milestones", post(add_milestone))
         .route("/api/runs/{id}/milestones/{index}/toggle", post(toggle_milestone_handler))
         .route("/api/runs/{id}/requirements", post(add_requirement))
+        .route("/api/runs/{id}/requirements/propose", post(propose_requirement))
+        .route("/api/runs/{id}/requirements/proposals/{proposal_id}/approve", post(approve_requirement_proposal))
+        .route("/api/runs/{id}/requirements/proposals/{proposal_id}/reject", post(reject_requirement_proposal))
         .route("/api/runs/{id}/requirements/{index}/update", post(update_requirement_handler))
         .route("/api/runs/{id}/requirements/{index}/toggle", post(toggle_requirement_handler))
         .route("/api/runs/{id}/requirements/{index}/auto-judge/toggle", post(toggle_requirement_auto_judge_handler))
@@ -929,6 +932,18 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
     // the five queues above.
     if let Some(p) = &run_state.pending_delete_run_proposal {
         points.push(OpenPoint { kind: "delete_run_proposal", id: p.id.clone(), summary: format!("delete this run: {}", p.rationale), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None });
+    }
+    // Issue #56's first slice (2026-08-09): same "real pending-proposal queue,
+    // surfaced here so a human sees it without hunting" treatment as every
+    // other proposal kind above.
+    for p in &run_state.pending_requirement_proposals {
+        points.push(OpenPoint {
+            kind: "requirement_proposal",
+            id: p.id.clone(),
+            summary: format!("new requirement: {}", truncate_for_summary(&p.statement, 120)),
+            proposed_at: Some(p.proposed_at),
+            approve_destroys_panel_title: None,
+        });
     }
     // Real gap found live 2026-08-07, the same firing after the check-in-pending
     // gate itself shipped: this endpoint's own stated purpose ("every real item
@@ -2059,6 +2074,172 @@ async fn add_requirement(
     });
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct ProposeRequirementRequest {
+    statement: String,
+    acceptance_criteria: Vec<String>,
+    rationale: String,
+}
+
+/// `POST /api/runs/{id}/requirements/propose` -- issue #56's first real slice
+/// (#382 goal doc §7): "the assistant should proactively propose additional
+/// requirements that round out coverage... user should be able to accept,
+/// edit, or reject each proposal individually." Same trust model as every
+/// other assistant-facing propose endpoint (`propose_stage`, `propose_custom_panel`):
+/// a proposal never touches the real `requirements` list, the review gate, or
+/// coverage until a human approves it below. Reuses `validate_requirement_fields`
+/// verbatim -- a proposal a human approves must clear the exact same real
+/// EARS/criteria rules a hand-typed requirement does, not a looser bar just
+/// because an LLM drafted it.
+async fn propose_requirement(
+    State(state): State<AppState>,
+    AxPath(id): AxPath<String>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ProposeRequirementRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let (statement, acceptance_criteria) = match validate_requirement_fields(&body.statement, &body.acceptance_criteria) {
+        Ok(v) => v,
+        Err((status, msg)) => return (status, msg).into_response(),
+    };
+    let rationale = body.rationale.trim().to_string();
+    if rationale.is_empty() {
+        return (StatusCode::BAD_REQUEST, "rationale must not be empty").into_response();
+    }
+    if rationale.len() > MAX_SHORT_TEXT_LEN {
+        return (StatusCode::BAD_REQUEST, format!("rationale must be under {MAX_SHORT_TEXT_LEN} characters")).into_response();
+    }
+    // Same real gap `validate_requirement_fields` closes for statement/criteria
+    // -- see its own doc comment. This is the assistant-facing pending-review
+    // path: a human approving from the queue trusts exactly this rationale to
+    // justify the proposal at face value.
+    if contains_bidi_control_char(&rationale) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "rationale contains a Unicode bidi control character (e.g. a right-to-left override) \
+             -- these can make the visually displayed text not match what's actually stored"
+                .to_string(),
+        )
+            .into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    // Same real defensive cap as every other pending-proposal queue.
+    if run_state.pending_requirement_proposals.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("pending_requirement_proposals is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
+    }
+    let proposal = PendingRequirementProposal {
+        id: format!("{:016x}", rand::random::<u64>()),
+        statement,
+        acceptance_criteria,
+        rationale,
+        proposed_at: unix_now(),
+    };
+    run_state.pending_requirement_proposals.push(proposal.clone());
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(proposal).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/requirements/proposals/{proposal_id}/approve` -- moves
+/// a pending proposal into the real `requirements` list, `proposed_by:
+/// "devsystem.assistant"` (matching `propose_stage`'s own accountability
+/// convention: never client-supplied, always this fixed value, since a
+/// proposal only ever reaches this queue via the assistant path) and
+/// `created_by` from the real approving human's own `X-Gate-Email` session
+/// header (issue #55's same provenance convention -- the human who clicked
+/// Approve is who actually put this on the record, honestly `None` for a
+/// header-less approval).
+async fn approve_requirement_proposal(
+    State(state): State<AppState>,
+    AxPath((id, proposal_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let Some(pos) = run_state.pending_requirement_proposals.iter().position(|p| p.id == proposal_id) else {
+        return (StatusCode::NOT_FOUND, format!("no pending requirement proposal with id {proposal_id:?}")).into_response();
+    };
+    if run_state.requirements.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("requirements is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
+    }
+    let proposal = run_state.pending_requirement_proposals.remove(pos);
+    let requirement = Requirement {
+        statement: proposal.statement,
+        acceptance_criteria: proposal.acceptance_criteria,
+        verified: false,
+        verified_criteria: Vec::new(),
+        auto_judge: false,
+        proposed_by: Some("devsystem.assistant".to_string()),
+        created_by: headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string()),
+    };
+    run_state.requirements.push(requirement.clone());
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/requirements/proposals/{proposal_id}/reject` --
+/// discards a pending proposal outright; nothing was ever a real requirement,
+/// so there's nothing to undo beyond removing it from the pending list.
+async fn reject_requirement_proposal(
+    State(state): State<AppState>,
+    AxPath((id, proposal_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let before = run_state.pending_requirement_proposals.len();
+    run_state.pending_requirement_proposals.retain(|p| p.id != proposal_id);
+    if run_state.pending_requirement_proposals.len() == before {
+        return (StatusCode::NOT_FOUND, format!("no pending requirement proposal with id {proposal_id:?}")).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"rejected": proposal_id})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
     }
 }
@@ -7689,6 +7870,9 @@ mod tests {
         run_state.pending_issue_proposals = (0..MAX_LIST_ITEMS)
             .map(|i| PendingIssueProposal { id: format!("issue-{i}"), repo: "scimbe/CADS-webconference-demo".into(), title: format!("T{i}"), body: "real body".into(), proposed_at: 0 })
             .collect();
+        run_state.pending_requirement_proposals = (0..MAX_LIST_ITEMS)
+            .map(|i| PendingRequirementProposal { id: format!("req-{i}"), statement: format!("WHEN X{i}, THE SYSTEM SHALL Y"), acceptance_criteria: vec!["real criterion".into()], rationale: "real reason".into(), proposed_at: 0 })
+            .collect();
         persist_run(&dir.path().join("cap-run"), &spec, &run_state).expect("seed the run directly, same real persist_run the handlers use");
 
         let app = api_router(state);
@@ -7729,6 +7913,7 @@ mod tests {
         assert_eq!(response.status(), SC::BAD_REQUEST, "the (MAX_LIST_ITEMS + 1)th stage proposal must be rejected");
 
         let response = app
+            .clone()
             .oneshot(json_request(
                 "POST",
                 "/api/runs/cap-run/issues/propose",
@@ -7737,6 +7922,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::BAD_REQUEST, "the (MAX_LIST_ITEMS + 1)th issue proposal must be rejected");
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/cap-run/requirements/propose",
+                serde_json::json!({"statement": "WHEN X, THE SYSTEM SHALL Y", "acceptance_criteria": ["real criterion"], "rationale": "one too many"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "the (MAX_LIST_ITEMS + 1)th requirement proposal must be rejected");
     }
 
     #[tokio::test]
@@ -7951,6 +8146,152 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    /// Issue #56's first real slice: same real "proposes, human clicks install"
+    /// trust model as custom panels/pipeline stages, applied to requirements.
+    async fn proposed_requirement_never_appears_in_requirements_until_a_human_approves_it() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "propose-req-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/propose-req-run/requirements/propose",
+                serde_json::json!({
+                    "statement": "WHEN the app is backgrounded, THE SYSTEM SHALL preserve unsent draft text",
+                    "acceptance_criteria": ["draft survives a real backgrounding"],
+                    "rationale": "rounds out the drafting requirement just discussed",
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let proposed = body_json(response).await;
+        let proposal_id = proposed["id"].as_str().unwrap().to_string();
+        assert_eq!(proposed["rationale"], "rounds out the drafting requirement just discussed");
+
+        // The whole point: proposing must NOT make it a real requirement.
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/propose-req-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["requirements"].as_array().unwrap().len(), 0, "a proposal must never appear in requirements before approval");
+        assert_eq!(run["state"]["pending_requirement_proposals"].as_array().unwrap().len(), 1);
+
+        // Approving moves it, for real, into requirements with real provenance.
+        let approve = app
+            .clone()
+            .oneshot(gate_request("POST", &format!("/api/runs/propose-req-run/requirements/proposals/{proposal_id}/approve"), "reviewer@example.com", None))
+            .await
+            .unwrap();
+        assert_eq!(approve.status(), SC::OK);
+        let approved = body_json(approve).await;
+        let requirements = approved["requirements"].as_array().unwrap();
+        assert_eq!(requirements.len(), 1, "approval must make it a real requirement");
+        assert_eq!(requirements[0]["statement"], "WHEN the app is backgrounded, THE SYSTEM SHALL preserve unsent draft text");
+        assert_eq!(requirements[0]["proposed_by"], "devsystem.assistant", "an approved proposal must be honestly attributed as LLM-proposed");
+        assert_eq!(requirements[0]["created_by"], "reviewer@example.com", "created_by must be the real approving human, not the assistant");
+        assert_eq!(requirements[0]["verified"], false);
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/propose-req-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["pending_requirement_proposals"].as_array().unwrap().len(), 0, "approval must remove it from pending");
+    }
+
+    #[tokio::test]
+    async fn rejecting_a_requirement_proposal_discards_it_without_ever_going_live() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "reject-req-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/reject-req-run/requirements/propose",
+                serde_json::json!({
+                    "statement": "WHEN the user does anything, THE SYSTEM SHALL work correctly",
+                    "acceptance_criteria": ["ok"],
+                    "rationale": "a bad, vague idea"
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "propose must reuse the exact same real EARS/criteria validation add_requirement does");
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/reject-req-run/requirements/propose",
+                serde_json::json!({
+                    "statement": "WHEN the user taps delete, THE SYSTEM SHALL remove the message",
+                    "acceptance_criteria": ["message no longer appears in the thread"],
+                    "rationale": "rounds out the delete-message flow"
+                }),
+            ))
+            .await
+            .unwrap();
+        let proposal_id = body_json(response).await["id"].as_str().unwrap().to_string();
+
+        let reject = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/reject-req-run/requirements/proposals/{proposal_id}/reject")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(reject.status(), SC::OK);
+
+        let get = app.clone().oneshot(Request::builder().uri("/api/runs/reject-req-run").body(Body::empty()).unwrap()).await.unwrap();
+        let run = body_json(get).await;
+        assert_eq!(run["state"]["pending_requirement_proposals"].as_array().unwrap().len(), 0);
+        assert_eq!(run["state"]["requirements"].as_array().unwrap().len(), 0, "a rejected proposal must never have gone live");
+
+        // Rejecting an id that no longer exists (already rejected) is a real 404, not silently OK.
+        let response = app
+            .oneshot(Request::builder().method("POST").uri(format!("/api/runs/reject-req-run/requirements/proposals/{proposal_id}/reject")).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn propose_requirement_rejects_an_empty_or_bidi_rationale() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-rationale-run"}))).await.unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-rationale-run/requirements/propose",
+                serde_json::json!({
+                    "statement": "WHEN the user taps delete, THE SYSTEM SHALL remove the message",
+                    "acceptance_criteria": ["message no longer appears in the thread"],
+                    "rationale": "   "
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "an empty rationale must be rejected -- a proposal a human is asked to trust needs a real reason");
+
+        let response = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-rationale-run/requirements/propose",
+                serde_json::json!({
+                    "statement": "WHEN the user taps delete, THE SYSTEM SHALL remove the message",
+                    "acceptance_criteria": ["message no longer appears in the thread"],
+                    "rationale": "looks fine\u{202E}but isn't"
+                }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "a bidi control character in the rationale a human reviews at face value must be rejected");
     }
 
     #[tokio::test]
@@ -11389,6 +11730,38 @@ exit 1"#);
         assert!(points[0]["summary"].as_str().unwrap().contains("a real reason"));
         // A stage proposal's Approve only ever ADDS a role -- nothing existing
         // to destroy, so the GUI's confirm-gate field must be absent.
+        assert!(points[0].get("approve_destroys_panel_title").is_none());
+    }
+
+    #[tokio::test]
+    /// Issue #56's first real slice: a pending requirement proposal must be a
+    /// real open point, the same "something needs your decision" surface
+    /// every other proposal kind already gets.
+    async fn open_points_lists_a_real_requirement_proposal() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "req-points-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/req-points-run/requirements/propose",
+                serde_json::json!({
+                    "statement": "WHEN the user taps delete, THE SYSTEM SHALL remove the message",
+                    "acceptance_criteria": ["message no longer appears in the thread"],
+                    "rationale": "rounds out the delete-message flow",
+                }),
+            ))
+            .await
+            .unwrap();
+
+        let response = app.oneshot(Request::builder().uri("/api/runs/req-points-run/open-points").body(Body::empty()).unwrap()).await.unwrap();
+        let points = body_json(response).await;
+        let points = points.as_array().unwrap();
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0]["kind"], "requirement_proposal");
+        assert!(points[0]["summary"].as_str().unwrap().contains("THE SYSTEM SHALL remove the message"));
+        // Approving a requirement proposal only ever ADDS a requirement -- nothing
+        // existing to destroy, so the GUI's confirm-gate field must be absent.
         assert!(points[0].get("approve_destroys_panel_title").is_none());
     }
 

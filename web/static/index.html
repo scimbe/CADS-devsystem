@@ -1700,7 +1700,10 @@ function pendingApprovalCountFor(id) {
     + (s.pending_panel_proposals || []).length
     + (s.pending_panel_removal_proposals || []).length
     + (s.pending_panel_edit_proposals || []).length
-    + (s.pending_issue_proposals || []).length;
+    + (s.pending_issue_proposals || []).length
+    // Issue #56's first slice (2026-08-09): same real "something needs your
+    // decision" signal as every other pending-proposal queue above.
+    + (s.pending_requirement_proposals || []).length;
 }
 
 function renderPanelToggleBar() {
@@ -3759,6 +3762,7 @@ const OPEN_POINT_KIND_LABELS = {
   next_step_draft: 'Draft next-step option (unresolved)',
   delete_run_proposal: 'Delete-run proposal',
   checkin_due: 'Check-in due, unacknowledged',
+  requirement_proposal: 'New requirement proposal',
 };
 const OPEN_POINT_APPROVE_PATHS = {
   panel_proposal: 'panels/proposals',
@@ -3767,6 +3771,7 @@ const OPEN_POINT_APPROVE_PATHS = {
   stage_proposal: 'stages/proposals',
   issue_proposal: 'issues/proposals',
   delete_run_proposal: 'delete-proposal',
+  requirement_proposal: 'requirements/proposals',
 };
 
 // "Stack mode" slice 3: devsystem.assistant's own real draft next-step
@@ -4158,6 +4163,28 @@ function validateRequirementFields(statement, acceptance_criteria) {
 function renderRequirementsPanel(id, data) {
   const body = document.getElementById('body-requirements');
   const requirements = data.state.requirements || [];
+  // Issue #56's first slice (2026-08-09): devsystem.assistant can propose a
+  // new requirement (statement + acceptance criteria + rationale) that rounds
+  // out coverage -- same "proposes, human clicks install" trust model as
+  // custom panels/pipeline stages, shown here too (not just Open Points) so a
+  // reviewer already in this panel sees it without switching context.
+  const requirementProposals = (data.state && data.state.pending_requirement_proposals) || [];
+  const requirementProposalsHtml = requirementProposals.length
+    ? `<div class="arch-note" style="margin-bottom:.4rem">Proposed by devsystem.assistant -- review before it's a real requirement:</div>`
+      + requirementProposals.map(p => `
+        <div class="role-card">
+          <div class="role-card-head"><span class="role">${escapeHtml(p.statement)}</span></div>
+          <div class="role-meta">proposed ${escapeHtml(new Date(p.proposed_at * 1000).toLocaleString())}</div>
+          <div style="margin:.3rem 0;font-size:.72rem" class="lede">rationale: ${escapeHtml(p.rationale)}</div>
+          <div style="display:flex;flex-direction:column;gap:.15rem;font-size:.75rem">
+            ${p.acceptance_criteria.map(c => `<div>&bull; ${escapeHtml(c)}</div>`).join('')}
+          </div>
+          <div style="margin-top:.4rem;display:flex;gap:.4rem">
+            <button type="button" class="requirement-proposal-approve-btn" data-id="${p.id}">Approve &amp; add</button>
+            <button type="button" class="secondary requirement-proposal-reject-btn" data-id="${p.id}">Reject</button>
+          </div>
+        </div>`).join('')
+    : '';
   // Real traceability, reverse direction from the History panel: which real
   // iterations (if any) actually claimed to address each requirement. Keeps the
   // full record, not just the iteration number, so the panel can show the real
@@ -4295,6 +4322,7 @@ function renderRequirementsPanel(id, data) {
       </div>
     </details>` : '';
   body.innerHTML = `
+    ${requirementProposalsHtml ? `<div style="margin-bottom:.6rem">${requirementProposalsHtml}</div>` : ''}
     ${startHere}
     <div class="backlog-list">${items}</div>
     <div class="lede" style="font-size:.72rem;margin-top:.4rem">EARS-style: "WHEN &lt;trigger&gt;, THE SYSTEM SHALL &lt;behavior&gt;". One acceptance criterion per line, at least one required.</div>
@@ -4324,6 +4352,39 @@ function renderRequirementsPanel(id, data) {
   if (!requirements.length && panelRect('requirements').visible) {
     const statementInput = document.getElementById('requirement-statement');
     if (statementInput) statementInput.focus();
+  }
+  for (const btn of body.querySelectorAll('.requirement-proposal-approve-btn')) {
+    btn.onclick = async () => {
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements/proposals/${encodeURIComponent(btn.dataset.id)}/approve`, { method: 'POST' });
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        if (id === currentRun) renderPanelToggleBar();
+        renderRequirementsPanel(id, fresh);
+        await refreshRunsList();
+      } catch (err) {
+        alert(`Could not approve proposal: ${err.message}`);
+      }
+    };
+  }
+  for (const btn of body.querySelectorAll('.requirement-proposal-reject-btn')) {
+    btn.onclick = async () => {
+      // Same real DAU-lens confirm() every other proposal-reject button in
+      // this codebase already has (custom panels, pipeline stages) -- a
+      // careless click here silently discards real, possibly valuable
+      // assistant work with zero warning otherwise.
+      if (!confirm('Reject this proposed requirement? This discards it for real -- there\'s no undo.')) return;
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements/proposals/${encodeURIComponent(btn.dataset.id)}/reject`, { method: 'POST' });
+        const fresh = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}`);
+        if (id === currentRun) currentRunData = fresh;
+        if (id === currentRun) renderPanelToggleBar();
+        renderRequirementsPanel(id, fresh);
+        await refreshRunsList();
+      } catch (err) {
+        alert(`Could not reject proposal: ${err.message}`);
+      }
+    };
   }
   for (const cb of body.querySelectorAll('.requirement-toggle')) {
     cb.onchange = () => {
