@@ -684,14 +684,18 @@ let currentRun = null;
 let currentRunData = null;
 // Real evaluator finding, issue #58's own remaining suggestion: a successful
 // write's own status element (e.g. #requirement-status) gets set, then the
-// very next line almost always calls `selectRun(id)` to refresh with fresh
-// server state -- which replaces the whole panel body wholesale, wiping the
-// message before a human can ever see it. "Success" and "silently wrote to
-// the wrong run" looked identical from the user's side (issue #58's own
-// words). Set right before that refresh call, naming the panel and the real
-// run the write landed in; the panel's own render function applies it to
-// the FRESH DOM once, then clears it -- survives exactly the one re-render
-// that used to erase it, never leaks into a later, unrelated render.
+// very next line almost always calls `selectRun(id)` (or, for a panel with
+// its own separate fetch like RAG, its own re-render function) to refresh
+// with fresh server state -- which replaces the whole panel body wholesale,
+// wiping the message before a human can ever see it. "Success" and
+// "silently wrote to the wrong run" looked identical from the user's side
+// (issue #58's own words). Set right before that refresh call, naming the
+// panel and the real run the write landed in; `targetId` names which real
+// element in the FRESH DOM gets it (a panel may have more than one distinct
+// status line -- RAG has three: sync, text-upload, file-upload). The
+// panel's own render function applies it once, then clears it -- survives
+// exactly the one re-render that used to erase it, never leaks into a
+// later, unrelated render.
 let pendingPanelStatus = null;
 let criteriaOpen = false;
 // Which custom panel (if any) the Custom Panels manager is currently showing an
@@ -2818,6 +2822,20 @@ async function renderRagPanel(id, data) {
         <span id="rag-file-upload-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></span>
       </form>
     </details>`;
+  // See `pendingPanelStatus`'s own doc comment: this panel's three real write
+  // actions (sync, text upload, file upload) each set their own status text
+  // then immediately call `renderRagPanel` again to refresh with fresh
+  // server state -- wiping the very element the message just landed on
+  // before anyone could see it (ggg firing's own flagged-but-not-fixed
+  // finding: "found live: the verification script's first attempt timed out
+  // waiting for the upload success message to become visible"). Applied to
+  // the FRESH element `targetId` names, once, right after this render
+  // creates it.
+  if (pendingPanelStatus && pendingPanelStatus.panelId === 'rag') {
+    const statusEl = document.getElementById(pendingPanelStatus.targetId);
+    if (statusEl) { statusEl.textContent = pendingPanelStatus.text; statusEl.className = `status-line ${pendingPanelStatus.cls}`; }
+    pendingPanelStatus = null;
+  }
 
   const resultsEl = document.getElementById('rag-results');
   const runSearch = async (q) => {
@@ -2849,8 +2867,7 @@ async function renderRagPanel(id, data) {
       statusEl.textContent = 'Fetching real content from GitHub…'; statusEl.className = 'status-line';
       try {
         const r = await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/rag/sync`, { method: 'POST' });
-        statusEl.textContent = `Synced: ${r.files_indexed}/${r.files_seen} file(s), ${r.chunks} chunk(s).`;
-        statusEl.className = 'status-line ok';
+        pendingPanelStatus = { panelId: 'rag', targetId: 'rag-sync-status', text: `Synced: ${r.files_indexed}/${r.files_seen} file(s), ${r.chunks} chunk(s), for ${id}.`, cls: 'ok' };
         await renderRagPanel(id, data);
       } catch (e) {
         statusEl.textContent = e.message; statusEl.className = 'status-line err';
@@ -2868,6 +2885,7 @@ async function renderRagPanel(id, data) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ path, text }),
       });
+      pendingPanelStatus = { panelId: 'rag', targetId: 'rag-upload-status', text: `Uploaded ${path} to ${id}.`, cls: 'ok' };
       await renderRagPanel(id, data);
     } catch (err) {
       statusEl.textContent = err.message; statusEl.className = 'status-line err';
@@ -2894,10 +2912,10 @@ async function renderRagPanel(id, data) {
       // through that path used to render the confusing "Extracted 0 element(s)."
       // as if something had gone wrong. extracted_via says honestly which real
       // path actually ran; only Unstructured's own element count is meaningful.
-      statusEl.textContent = r.extracted_via === 'unstructured'
-        ? `Extracted ${r.elements_extracted} element(s)${r.extracted_text_truncated ? ' (text truncated to the size cap)' : ''}.`
-        : `Extracted via ${r.extracted_via}.`;
-      statusEl.className = 'status-line ok';
+      const successText = r.extracted_via === 'unstructured'
+        ? `Extracted ${r.elements_extracted} element(s)${r.extracted_text_truncated ? ' (text truncated to the size cap)' : ''}, uploaded to ${id}.`
+        : `Extracted via ${r.extracted_via}, uploaded to ${id}.`;
+      pendingPanelStatus = { panelId: 'rag', targetId: 'rag-file-upload-status', text: successText, cls: 'ok' };
       fileInput.value = '';
       await renderRagPanel(id, data);
     } catch (err) {
@@ -4261,7 +4279,7 @@ function renderRequirementsPanel(id, data) {
   // the exact element the old code set text on, then immediately discarded.
   // Consumed once, not left to leak into a later, unrelated render.
   if (pendingPanelStatus && pendingPanelStatus.panelId === 'requirements') {
-    const statusEl = document.getElementById('requirement-status');
+    const statusEl = document.getElementById(pendingPanelStatus.targetId || 'requirement-status');
     if (statusEl) { statusEl.textContent = pendingPanelStatus.text; statusEl.className = `status-line ${pendingPanelStatus.cls}`; }
     pendingPanelStatus = null;
   }
