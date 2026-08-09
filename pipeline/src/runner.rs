@@ -615,6 +615,18 @@ pub struct RunState {
     /// reason.
     #[serde(default)]
     pub checkin_acknowledged_through: u32,
+    /// Real evaluator finding, issue #41 (suggestion #2, "small: give Acknowledge
+    /// check-in an optional free-text note, persisted next to the watermark"):
+    /// `checkin_acknowledged_through` alone recorded THAT a human looked, never
+    /// what they said -- and the check-in document's own `## Decision needed`
+    /// section explicitly asks the reader for "your answer/direction," with
+    /// nowhere in the web panel to give one. This is real, append-only history
+    /// (never overwritten), not a single latest-note field -- the same discipline
+    /// every other real record in this file already uses. `#[serde(default)]`
+    /// for the same reason `checkin_acknowledged_through` is: no pre-existing
+    /// `state.json` was ever written under a mechanism that didn't exist yet.
+    #[serde(default)]
+    pub checkin_notes: Vec<CheckinNote>,
     /// Real operator ask, verbatim intent, 2026-08-07: "ein echtes Plan Canvas
     /// panel: review plans by pointing, not retyping" -- the plan-stage
     /// human-review gate this project's own architecture has named since #382's
@@ -640,6 +652,20 @@ pub struct RunState {
     /// didn't exist yet) still load as empty.
     #[serde(default)]
     pub plan_canvas_annotations: Vec<PlanCanvasAnnotation>,
+}
+
+/// See [`RunState::checkin_notes`]'s own doc comment.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CheckinNote {
+    /// The real `checkin_acknowledged_through` value this note was recorded
+    /// against -- which check-in it's actually answering, not just a loose
+    /// timestamp next to unrelated history.
+    pub iteration: u32,
+    pub note: String,
+    /// Real, gate-verified identity (`X-Gate-Email`), honestly `None` for a
+    /// header-less acknowledgment -- same convention as `confirmed_by`/`created_by`.
+    pub acknowledged_by: Option<String>,
+    pub acknowledged_at: u64,
 }
 
 /// See [`RunState::plan_canvas_annotations`]'s own doc comment.
@@ -867,6 +893,7 @@ impl RunState {
             assistant_usage: AssistantUsageTotals::default(),
             chat_history: Vec::new(),
             checkin_acknowledged_through: 0,
+            checkin_notes: Vec::new(),
             plan_canvas_annotations: Vec::new(),
         }
     }

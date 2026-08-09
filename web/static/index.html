@@ -2551,17 +2551,43 @@ async function selectRun(id) {
     // one place it becomes visible and actionable, matching this project's own
     // "never let a real state change happen silently" discipline -- viewing the
     // markdown alone must never count as review.
+    // Real evaluator finding, issue #41 (suggestion #2): the check-in document's
+    // own "Decision needed" section asks the reader for "your answer/direction,"
+    // but acknowledging used to be content-free -- a real click with nowhere to
+    // actually say anything. This textarea is additive (still fine to leave
+    // blank and just acknowledge, matching the existing idempotent no-op),
+    // never a new requirement.
     const checkinBanner = data.health.checkin_pending
-      ? `<div class="risk-item" style="margin-bottom:.4rem"><b>⚠ Check-in due</b> -- this run crossed its own check-in cadence and hasn't been acknowledged yet. <button type="button" class="secondary" id="ack-checkin">Acknowledge check-in</button></div>`
+      ? `<div class="risk-item" style="margin-bottom:.4rem">
+          <b>⚠ Check-in due</b> -- this run crossed its own check-in cadence and hasn't been acknowledged yet.
+          <textarea id="checkin-note-input" rows="2" placeholder="your answer/direction (optional)" style="width:100%;margin:.3rem 0;font-family:var(--mono);font-size:.75rem"></textarea>
+          <button type="button" class="secondary" id="ack-checkin">Acknowledge check-in</button>
+        </div>`
       : '';
-    document.getElementById('body-checkin').innerHTML = `${checkinBanner}<button class="secondary" id="view-checkin">View check-in</button><div id="checkin-view"></div>`;
+    const pastNotes = (data.state.checkin_notes || []);
+    const notesHtml = pastNotes.length
+      ? `<details style="margin-top:.5rem"><summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Past answers (${pastNotes.length})</summary>
+          <div style="display:flex;flex-direction:column;gap:.3rem;margin-top:.4rem">
+            ${pastNotes.map(n => `<div class="role-card" style="padding:.4rem .5rem">
+              <div class="role-meta">iteration ${n.iteration}${n.acknowledged_by ? ` &middot; ${escapeHtml(n.acknowledged_by)}` : ''} &middot; ${escapeHtml(new Date(n.acknowledged_at * 1000).toLocaleString())}</div>
+              <div style="font-size:.78rem;margin-top:.2rem;white-space:pre-wrap">${escapeHtml(n.note)}</div>
+            </div>`).join('')}
+          </div>
+        </details>`
+      : '';
+    document.getElementById('body-checkin').innerHTML = `${checkinBanner}<button class="secondary" id="view-checkin">View check-in</button><div id="checkin-view"></div>${notesHtml}`;
     document.getElementById('view-checkin').onclick = () => viewCheckin(id);
     const ackBtn = document.getElementById('ack-checkin');
     if (ackBtn) {
       ackBtn.onclick = async () => {
         ackBtn.disabled = true;
+        const note = document.getElementById('checkin-note-input')?.value.trim() || undefined;
         try {
-          await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/checkin/acknowledge`, { method: 'POST' });
+          await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/checkin/acknowledge`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ note }),
+          });
           await selectRun(id);
         } catch (e) {
           ackBtn.disabled = false;

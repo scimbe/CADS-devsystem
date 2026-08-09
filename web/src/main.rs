@@ -1598,6 +1598,12 @@ async fn set_paused(state: AppState, id: String, paused: bool, headers: axum::ht
     }
 }
 
+#[derive(Deserialize)]
+struct AcknowledgeCheckinRequest {
+    #[serde(default)]
+    note: Option<String>,
+}
+
 /// Real, explicit acknowledgment that a human has actually reviewed this run's
 /// most recently fired check-in -- see [`RunState::checkin_acknowledged_through`]'s
 /// own doc comment for the real gap this closes. A visible, deliberate action
@@ -1606,12 +1612,30 @@ async fn set_paused(state: AppState, id: String, paused: bool, headers: axum::ht
 /// background refresh or an automated poll must never count as a real human
 /// review. Idempotent: acknowledging when nothing is pending is a real, cheap
 /// no-op, not an error -- a careless double-click must never fail.
-async fn acknowledge_checkin(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap) -> impl IntoResponse {
+///
+/// Real evaluator finding, issue #41 (suggestion #2): the check-in document's own
+/// `## Decision needed` section asks the reader for "your answer/direction," but
+/// the web panel had no field to give one in -- acknowledging only ever recorded
+/// THAT a human looked, never what they said. `body` is genuinely optional
+/// (`Option<Json<...>>`, not a required `Json<...>`) so a totally bodyless
+/// `POST` -- this endpoint's own real shape since it shipped, and every existing
+/// caller's own real request -- still works identically; a note is additive, not
+/// a new requirement.
+async fn acknowledge_checkin(State(state): State<AppState>, AxPath(id): AxPath<String>, headers: axum::http::HeaderMap, body: Option<Json<AcknowledgeCheckinRequest>>) -> impl IntoResponse {
     if !valid_run_id(&id) {
         return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
     }
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let note = body.and_then(|Json(b)| b.note).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    if let Some(note) = &note {
+        if note.len() > MAX_SHORT_TEXT_LEN {
+            return (StatusCode::BAD_REQUEST, format!("note must be under {MAX_SHORT_TEXT_LEN} characters")).into_response();
+        }
+        if contains_bidi_control_char(note) {
+            return (StatusCode::BAD_REQUEST, "note contains a Unicode bidi control character (e.g. a right-to-left override) -- these can make the visually displayed text not match what's actually stored").into_response();
+        }
     }
     let _guard = state.write_lock.lock().await;
     let dir = run_dir(&state, &id);
@@ -1623,6 +1647,14 @@ async fn acknowledge_checkin(State(state): State<AppState>, AxPath(id): AxPath<S
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
     }
     run_state.checkin_acknowledged_through = run_state.history.len() as u32;
+    if let Some(note) = note {
+        run_state.checkin_notes.push(devsystem_pipeline::runner::CheckinNote {
+            iteration: run_state.checkin_acknowledged_through,
+            note,
+            acknowledged_by: headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string()),
+            acknowledged_at: unix_now(),
+        });
+    }
     // Real gap found live by a non-technical evaluator, issue #48: `run_iteration`
     // now actually pauses the run when a check-in is due (it always should have --
     // see `RunOutcome::CheckinDue`'s own doc comment), reusing the same real
@@ -1640,7 +1672,11 @@ async fn acknowledge_checkin(State(state): State<AppState>, AxPath(id): AxPath<S
         run_state.pause_reason = None;
     }
     match persist_run(&dir, &spec, &run_state) {
-        Ok(()) => Json(serde_json::json!({"checkin_acknowledged_through": run_state.checkin_acknowledged_through})).into_response(),
+        Ok(()) => Json(serde_json::json!({
+            "checkin_acknowledged_through": run_state.checkin_acknowledged_through,
+            "checkin_notes": run_state.checkin_notes,
+        }))
+        .into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
     }
 }
@@ -8886,6 +8922,84 @@ exit 1"#);
         }
         let get = app.oneshot(Request::builder().uri("/api/runs/checkin-run").body(Body::empty()).unwrap()).await.unwrap();
         assert_eq!(body_json(get).await["health"]["checkin_pending"], true, "iteration 4's boundary is a real, new pending check-in, not covered by the earlier acknowledgment");
+    }
+
+    #[tokio::test]
+    async fn acknowledging_with_a_real_note_persists_it_with_real_provenance() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "checkin-note-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/checkin-note-run/iterate", serde_json::json!({"stage": "devsystem.plan", "feedback": "real work", "succeeded": true})))
+            .await
+            .unwrap();
+
+        let ack = app
+            .clone()
+            .oneshot(gate_request("POST", "/api/runs/checkin-note-run/checkin/acknowledge", "reviewer@example.com", Some(serde_json::json!({"note": "  go ahead with the offline-delivery approach  "}))))
+            .await
+            .unwrap();
+        assert_eq!(ack.status(), SC::OK);
+        let body = body_json(ack).await;
+        assert_eq!(body["checkin_notes"][0]["note"], "go ahead with the offline-delivery approach", "the note must be trimmed but otherwise stored verbatim");
+        assert_eq!(body["checkin_notes"][0]["acknowledged_by"], "reviewer@example.com");
+        assert_eq!(body["checkin_notes"][0]["iteration"], 1);
+
+        let get = app.oneshot(Request::builder().uri("/api/runs/checkin-note-run").body(Body::empty()).unwrap()).await.unwrap();
+        let state_body = body_json(get).await;
+        assert_eq!(state_body["state"]["checkin_notes"].as_array().unwrap().len(), 1, "the note must be real, persisted state, not just an echoed response");
+    }
+
+    #[tokio::test]
+    async fn acknowledging_with_no_body_still_works_and_records_no_note() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "checkin-nobody-run"}))).await.unwrap();
+
+        // The exact real shape a bodyless caller (every pre-existing test/client)
+        // sends -- must keep working identically, a note is additive only.
+        let ack = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/checkin-nobody-run/checkin/acknowledge").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(ack.status(), SC::OK);
+        let body = body_json(ack).await;
+        assert_eq!(body["checkin_notes"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn acknowledging_with_a_blank_note_is_treated_as_no_note() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "checkin-blank-note-run"}))).await.unwrap();
+
+        let ack = app
+            .oneshot(json_request("POST", "/api/runs/checkin-blank-note-run/checkin/acknowledge", serde_json::json!({"note": "   "})))
+            .await
+            .unwrap();
+        assert_eq!(ack.status(), SC::OK);
+        assert_eq!(body_json(ack).await["checkin_notes"].as_array().unwrap().len(), 0, "whitespace-only must not create a real record");
+    }
+
+    #[tokio::test]
+    async fn acknowledging_with_an_oversized_or_bidi_note_is_a_real_400() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "checkin-bad-note-run"}))).await.unwrap();
+
+        let oversized = "x".repeat(MAX_SHORT_TEXT_LEN + 1);
+        let response = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/checkin-bad-note-run/checkin/acknowledge", serde_json::json!({"note": oversized})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/checkin-bad-note-run/checkin/acknowledge", serde_json::json!({"note": "looks fine\u{202E}but isn't"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
     }
 
     #[tokio::test]
