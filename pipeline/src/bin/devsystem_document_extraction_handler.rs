@@ -52,9 +52,9 @@
 //! **Fourth real increment: image OCR** -- and a real correction to the second
 //! increment's claim that this was blocked, which was wrong about *why*, not merely
 //! out of date. Installing
-//! `tesseract-ocr` does need root, but *obtaining* it does not: `apt-get download`
-//! + `dpkg -x` into a userspace prefix needs no privileges at all, and
-//! `libtesseract5` was already present system-wide. Verified by actually doing it,
+//! `tesseract-ocr` does need root, but *obtaining* it does not: an `apt-get
+//! download` followed by `dpkg -x` into a userspace prefix needs no privileges at
+//! all, and `libtesseract5` was already present system-wide. Verified by doing it,
 //! then running the real binary (tesseract 5.3.4 / leptonica 1.82.0) against real
 //! generated images -- not by re-reading the earlier claim.
 //!
