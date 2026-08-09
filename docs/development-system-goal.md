@@ -6689,4 +6689,33 @@ for `devsystem.document_extraction`, issue #14) reviewed and merged
 image, independently re-verified rather than trusted from the PR's own claim, same discipline as
 every other external contribution reviewed here.
 
+**Goal-driven-loop firing, 2026-08-09 (iii) -- a real hygiene sweep, not a code change: 21 of 23
+open scimbe-authored issues were already genuinely fixed and never closed.** State check: `#382`'s
+three checkpoints still no new scimbe activity; issue #14 got a new comment (labor-setup.com's own
+writeup of PR #57, already reviewed and merged in the `hhh` firing -- confirms independently what
+was already verified, no new action needed). Before looking for a new increment, audited the full
+open-issue list against the actual current code (`grep`-ing for each issue's own citation comment,
+this codebase's established convention for a fix that references its own motivating report) rather
+than assuming "open on GitHub" meant "still broken."
+
+**21 issues closed, each individually verified against the real, cited fix before closing, not a
+blind bulk-close**: #18, #21, #28, #29, #34, #35, #36, #37, #38, #40, #43, #46, #47, #48, #49, #50,
+#51, #52, #53, #54, #55. Every close comment names the actual mechanism and, where the code alone
+wasn't sufficient (the two most safety-critical, #46/#47: `max_iterations`/`max_consecutive_failures`
+surviving a `Resume`), a fresh live round-trip against the redeployed container before closing --
+hit `max_iterations:1`, resumed, confirmed a second submission still got a real `409` rather than
+trusting the source alone.
+
+**Explicitly did NOT close** #41 (a real, honest, *partial* fix -- the check-in document's wording
+was corrected to stop telling a web-panel reader to use a CLI-only verb, but a real reply field in
+the web panel itself remains open, as the code's own comment says outright) or #39/#42/#56/#31/#20
+(genuinely zero matching fix found). Left #7/#14 open as-is -- both describe real, still-pending
+architecture/credential/OIDC decisions, not something a code search resolves.
+
+**Why this counts as a real, bounded increment and not busywork**: a stale "still open" list is
+itself a pipeline defect under this document's own governing principle -- every future firing that
+re-investigates an already-solved problem (which nearly happened this firing, on #44/#45's own
+successor items before that) is wasted work the process itself should have prevented. 8 genuinely
+open issues remain, down from 23 -- a future firing's own state-check now reflects reality.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
