@@ -7213,4 +7213,43 @@ remains genuinely open; `ConnectFlowInstrumentedTest` proves the app survives an
 but does not parse logcat, so criterion 4 is real, separate, still-unshipped work for a future
 firing, not double-counted here.
 
+**Self-optimizing-pipeline firing, 2026-08-09 (cccc) -- reviewed webconference-android#382's own
+CI-queue state and CADS-devsystem PR #11 (Dependabot), found a real, verified upstream-blocked
+incompatibility rather than rubber-stamping or fabricating a merge.** State check: `#382`'s three
+open checkpoints (M1 direction, OIDC credential, hard-block policy) still carry no new scimbe
+reply -- re-read the full 22-comment thread end to end, not just the tail, to be sure. The
+GitHub-Actions-wide outage flagged mid-session (`#382`, 2026-08-06T17:17:54Z) has genuinely
+cleared: `scimbe/CADS-devsystem` CI is running normally again (a fresh in-progress run, several
+prior queued runs correctly superseded/cancelled by later pushes, not stuck).
+
+Issue #13 (android emulator/device walkthrough) is closed and its deliverable is real and proven
+end to end (labor-setup.com's own screenshots, cross-checked against each other, M1 milestone
+toggled with real evidence) -- but `devsystem.android_emulator_test` still shows in
+`stalled_stages` because no iteration has actually been submitted *as* that role yet; the winning
+bid (`pixel3`, holder `aa4932e0`) is real and live, the remaining piece
+(`ct-agent channel --serve` wired to `devsystem_iterate --remote` under labor-setup.com's own M2M
+identity) is explicitly their own pending item, not something to fabricate or complete on their
+behalf -- an honest external block, not a bug. Issue #14 (document-extraction) unchanged since
+2026-08-09T16:53:17Z -- still correctly not competing with labor-setup.com's own in-flight work.
+Both open (non-blocked, non-decision-gated) backlog items on this run remain genuinely blocked:
+one on the same upstream `ct_common::a2a::a2a_respond` gap re-confirmed in firing `zzz`, one is
+itself an operator product decision (offline/store-and-forward support) already correctly
+escalated rather than guessed at.
+
+With every stalled stage and backlog item externally or operator-blocked, looked for the next
+real, bounded increment elsewhere and found one: CADS-devsystem PR #11 (Dependabot,
+`ed25519-dalek` 2.2.0 -> 3.0.0 in `web/`), CI red. Root-caused before touching anything --
+`web/Cargo.toml`'s own bump to `ed25519-dalek = "3"` collides with `ct-common` (CADS-Tunnel,
+pinned `tag = "v0.4.13"`) still requiring `ed25519-dalek = "2"` internally, producing two
+incompatible major versions of the crate in one dependency graph: `devsystem-web`'s own
+`SigningKey::generate` call now returns a 3.0.0 `SigningKey`, but
+`CapacityOffer::sign_new_with_services` (defined in `ct-common`) still expects the 2.2.0 type --
+a real `E0308` type mismatch, not a flaky failure, confirmed from the actual compiler output in
+the job log (`gh api .../actions/jobs/93269598122/logs`). `pipeline/Cargo.toml` pins the same
+`ed25519-dalek = "2"`, matching `ct-common`'s pin deliberately, not by oversight -- this can't be
+fixed from this repo alone; it needs CADS-Tunnel's own `crates/common/Cargo.toml` to move to
+`ed25519-dalek = "3"` first. Commented the real root cause on the PR rather than merging blind or
+silently closing it -- it's genuine future work, just upstream-blocked.
+([comment](https://github.com/scimbe/CADS-devsystem/pull/11#issuecomment-5233937881))
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
