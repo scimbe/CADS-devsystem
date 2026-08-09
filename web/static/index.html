@@ -824,6 +824,24 @@ const LAYOUT_KEY = 'devsystem-panel-layout-v1';
 // See issue #58: the real choice of which run to write into, remembered
 // across a reload instead of `refreshRunsList` guessing an arbitrary one.
 const LAST_RUN_KEY = 'devsystem-last-run-v1';
+// Issue #58's own last remaining suggestion, the one explicitly deferred as
+// "real, separate, larger work" when items 1/3/4 shipped: "give a run a real
+// URL... so reload/bookmark/link work and the browser tells me where I am."
+// A hash (`#run=<id>`, one of the two forms the issue itself names as
+// acceptable) needs no server-side route at all -- `GET /` already serves
+// this SPA regardless of the fragment, so this is purely client-side.
+// `history.replaceState`, not `pushState`: the issue asks for a real,
+// bookmarkable/linkable URL and "the browser tells me where I am", not full
+// back/forward semantics -- pushState on every run switch would make the
+// back button feel broken (many entries that all reload the same page).
+function getRunIdFromHash() {
+  const m = /^#run=(.+)$/.exec(location.hash);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+function setRunIdInHash(id) {
+  const target = `#run=${encodeURIComponent(id)}`;
+  if (location.hash !== target) history.replaceState(null, '', target);
+}
 let layout = {};
 try { layout = JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}'); } catch (e) { layout = {}; }
 // Seed from the highest z persisted across sessions, not a fixed 10 -- otherwise a
@@ -2400,9 +2418,18 @@ async function refreshRunsList() {
   // changed. Restore the real last selection instead, and only if it still
   // exists -- never guess a substitute.
   if (!currentRun && lastFetchedRuns.length) {
+    // A real URL beats remembered-last-choice: someone who followed a link or
+    // opened a bookmark named a specific run on purpose, which should win over
+    // whatever this browser happened to have open before (issue #58's own
+    // "reload/bookmark/link work" ask -- a bookmark that silently opened
+    // yesterday's run instead of the one it was actually bookmarked for would
+    // just be a slower version of the same bug).
+    const hashRunId = getRunIdFromHash();
     let lastRunId;
     try { lastRunId = localStorage.getItem(LAST_RUN_KEY); } catch (e) { /* private-browsing/storage-disabled */ }
-    if (lastRunId && lastFetchedRuns.some(r => r.run_id === lastRunId)) {
+    if (hashRunId && lastFetchedRuns.some(r => r.run_id === hashRunId)) {
+      await selectRun(hashRunId);
+    } else if (lastRunId && lastFetchedRuns.some(r => r.run_id === lastRunId)) {
       await selectRun(lastRunId);
     } else {
       // No real prior choice to restore (first-ever visit, or that run is
@@ -2571,6 +2598,7 @@ async function selectRun(id) {
   // 30 seconds earlier, with zero on-screen indication. Persisting the real
   // choice here is what `refreshRunsList` below reads back on a fresh load.
   try { localStorage.setItem(LAST_RUN_KEY, id); } catch (e) { /* private-browsing/storage-disabled -- degrades to no memory, not an error */ }
+  setRunIdInHash(id);
   // Real evaluator finding, issue #58's own remaining suggestion: name the
   // active run directly in every run-scoped panel's own title bar, not just
   // one highlighted row inside the separate Runs panel -- see
@@ -5946,6 +5974,19 @@ function initAssistantDockResize() {
     try { localStorage.setItem(ASSISTANT_DOCK_WIDTH_KEY, String(dock.getBoundingClientRect().width)); } catch (e) { /* storage unavailable */ }
   });
 }
+
+// Issue #58's own real-URL ask, the other half: a hash pasted into a new tab,
+// clicked from an external link, or edited by hand only ever changes
+// `location.hash` -- it never re-runs this script, so nothing above would
+// otherwise notice. `setRunIdInHash`'s own `replaceState` calls do NOT fire
+// this event (only a real navigation/user-driven hash change does), so this
+// can't loop back on our own writes.
+window.addEventListener('hashchange', () => {
+  const id = getRunIdFromHash();
+  if (id && id !== currentRun && lastFetchedRuns.some(r => r.run_id === id)) {
+    selectRun(id);
+  }
+});
 
 initPanels();
 initProcessPrompt();
