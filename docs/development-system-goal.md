@@ -7168,4 +7168,24 @@ UI or local FTS index anywhere in this scaffold, genuinely substantial unimpleme
 bounded slice; #21 depends on the same real upstream `CADS-Tunnel` gap just re-confirmed above.
 Correctly left open rather than forced into a firing they don't fit.
 
+**Goal-driven-loop firing, 2026-08-09 (aaaa) -- re-ran §7.2 gap #2's own audit, closed the real gap
+it found: `AcknowledgeCheckin` had no `note` field.** State check: `#382`'s three checkpoints still
+no new scimbe reply; issues #13/#14 unchanged. Rather than invent new work, took gap #2's own text
+literally -- "the next one will be whatever a future firing's own re-audit finds" -- and re-ran the
+real cross-check (every human-editable GUI control against `Action`'s own variants), rather than
+assuming the enum was still current.
+
+Found it: the check-in `note` field (issue #41 suggestion #2, a real, persisted, provenance-tracked
+reply) shipped as a *separate, later* fix after `AcknowledgeCheckin` itself was added the same day
+the check-in-pending gate shipped -- the two commits never met, so this enum went stale the moment
+the note field landed. Added `note: Option<String>`, wired it through `apply_action` to the real
+request body, fixed a genuinely stale JSON test fixture (the round-trip test's own input string
+still had the pre-note shape), and added a dedicated test proving a real note text reaches the real
+request body, not just that the field exists on the enum. 55/55 hermetic tests green, clippy clean.
+`CADS-devsystem@5d546c3`. No new action type (count stays twenty-one), so the system prompt's own
+self-reported count needed no update -- checked, not assumed.
+
+Deployed for real via `scripts/deploy-devsystem-assistant.sh`, git-SHA-verified against this exact
+commit on the running process, not just built.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
