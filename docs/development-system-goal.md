@@ -6915,4 +6915,42 @@ note naming the next genuine, already-scoped actionable step for a future firing
 build-metadata file (commit SHA + versionName + versionCode) added to `android-ci.yml`. Deliberately
 not started in this same firing -- this one was scoped to honest bookkeeping, not new build work.
 
+**Self-optimizing-pipeline firing, 2026-08-09 (qqq) -- picked up `ppp`'s own named next step: PR #14
+review, merge, and honest requirement #5 provenance.** State check: `#382`'s three checkpoints
+(M1, OIDC credential note, hard-block-`succeeded:true` policy) still no new scimbe reply on any of
+them; `webconference-android` CI unchanged. `webconference-android/#14`
+(`fix/req5-release-signing-checksum-metadata`) landed `android-ci.yml`'s `assembleRelease` +
+build-metadata (source_commit/versionName/versionCode via `aapt dump badging`, read back from the
+built APK, not echoed from source) + `sha256sum` + `apksigner verify --print-certs` steps, exactly
+the plan `ppp` named.
+
+Reviewed the same way as every prior external/handoff PR this session: checked out, confirmed the
+real CI run's `headSha` matched the PR's actual head commit (`fd9bb38`, not a stale prior push --
+the `iii`-firing lesson about not trusting `gh run list` at face value, applied again), downloaded
+the real `app-release` artifact, independently recomputed its SHA-256 by hand and matched it against
+the CI-recorded value before trusting either. Merged (squash, `349fa68`).
+
+**Did not stop at the PR-preview run's own evidence** -- its `source_commit` field read a
+non-fetchable value (`5c126d1...`), traced to real, unsurprising GitHub Actions behavior (`pull_request`
+events set `$GITHUB_SHA` to an ephemeral merge-preview commit, not the branch head) rather than a bug.
+Waited for the real post-merge `push`-triggered run on `main` instead, downloaded *that* artifact,
+and got a genuinely fetchable, permanent `source_commit=349fa68753a123e4799e3ddbb06b52a7c8769057` --
+confirmed to actually exist on `origin/main` before trusting it. Confirmed requirement #5 criteria 1
+(metadata) and 2 (checksum) against that real evidence via a real `devsystem.improve` iteration
+(iteration 34, `requirement_indices: [5]`) -- not a bare API toggle with no trace, matching this
+project's own "a real trace before the state change" discipline.
+
+**A real, honest finding, not rubber-stamped past**: the new CI step named "Confirm the signed
+release APK actually installs" only runs `apksigner verify --print-certs` -- a real, useful check,
+but one that proves signature validity, not that the APK actually installs on any device. Criterion
+3 ("installs on a clean Android emulator via `adb install`") is **not yet satisfied** by this PR,
+despite the step's own name claiming it is. Filed as `webconference-android#15` with a concrete
+proposed fix (`reactivecircus/android-emulator-runner`, a real GitHub-Actions-hosted emulator, no
+local SDK/NDK needed) rather than silently marking the criterion confirmed on a name alone --
+exactly the honesty-over-appearance standard this document holds the pipeline itself to. Requirement
+#5: 3/5 confirmed (up from 2/5), criteria 0 (downloadable from the run's own UI) and 3 (real
+emulator install) remain open. The check-in this iteration correctly triggered (`checkin_every: 1`)
+is left un-acknowledged here -- a real decision checkpoint for the operator, not something this
+firing should wave through on its own behalf.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
