@@ -6811,4 +6811,29 @@ suggestions -- a real per-run URL (bookmark/link/reload via actual routing, not 
 and naming the run in every write panel's own title bar -- are real, larger, separate work, not
 folded into this bounded increment.
 
+**Goal-driven-loop firing, 2026-08-09 (mmm) -- named the active run in every run-scoped panel's own
+title bar, closing the second of issue #58's own remaining suggestions.** State check: `#382`'s
+three checkpoints still no new scimbe activity; CI green. No new issues since `lll`. Picked the
+next real piece of #58 itself, already scoped in that firing's own closing note: every write
+panel's title was a bare noun ("REQUIREMENTS", "CHECK-IN") with the run it writes to stated nowhere
+in the panel -- the only place the active run was ever named was one highlighted row inside the
+separate, floating Runs panel.
+
+`createPanel` now gives each panel's title span a stable id; `updateRunScopedPanelTitles()` sets it
+to `<title> — <run_id>` whenever a run is selected (called from `selectRun`) and back to the bare
+title when none is (called from `placeholderAllRunScopedPanels`, the same real choke point the
+`lll` firing's own fix already established) -- one shared list drives both states so they can't
+drift apart. `CADS-devsystem@79ad229`. Real run ids run 50+ characters (this project's own
+stress-test scratch fixtures); added the actual CSS fix (`min-width:0`, without which
+`text-overflow:ellipsis` never engages inside a flex item) plus a native tooltip carrying the
+untruncated text.
+
+Live-verified via a real headless Playwright run against the redeployed container: bare title with
+no run selected; every panel's title updates live on selection, no reload needed; a genuinely long
+run id truncates with ellipsis without the header itself overflowing its own box (measured
+`scrollWidth` vs `clientWidth`, not eyeballed). Zero console errors.
+
+**Still open on issue #58, deliberately not folded in**: a real per-run URL via actual routing, and
+a success confirmation naming the run on write -- both real, separate, larger work.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
