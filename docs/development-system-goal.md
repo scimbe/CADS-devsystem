@@ -7385,4 +7385,27 @@ clean. Opened as
 `ChannelException` reaching Kotlin, a rejected frame not tearing down the channel) are real,
 separate, larger work, honestly not attempted in this same increment.
 
+**Self-optimizing-pipeline firing, 2026-08-09 (hhhh) -- requirement #22's PR #19 merged, real bindings
+gap found and fixed along the way.** State check: `#382`'s three checkpoints still no new scimbe
+reply; issue #14 unchanged.
+
+`verify-native-bridge` failed on PR #19's first CI run, exactly as a change to `MessageDecodeError`'s
+own shape should: the committed Kotlin bindings and `.so` predate the new `TooLarge` variant. Rather
+than assume or improvise a fix, read the real diff in the job's own log first -- confirmed the
+committed side was missing the whole `TooLarge` class, the fresh rebuild had it. Pulled the exact
+artifacts that job itself produced (`native-bridge-fresh-build`, `gh api .../actions/artifacts/.../zip`,
+since `gh run download` hit a real `path traversal` error against this artifact and had to be routed
+around) rather than attempting a local NDK cross-compile (no NDK on this dev host, the same standing
+constraint every prior native-bridge PR has hit) -- confirmed via `strings` on the fresh `.so` that
+the real new error message text was actually compiled in before committing anything. Pushed the
+refresh, a second real CI run went fully green (`verify-native-bridge` included this time).
+
+Merged as [`35467da`](https://github.com/scimbe/CADS-webconference-android/commit/35467da), confirmed
+on the real post-merge `push` run, not the pre-merge preview -- same discipline as every prior
+criterion confirmation this session. Requirement #22 now has real, working, tested enforcement of
+its own criterion 2 (an explicit, named maximum message size, rejected before the expensive
+UTF-8/JSON work); criteria 1 (the full hostile-frame test set, partially covered by this same PR's
+new tests, but not yet including a malformed-length-prefix case owned by `ct_common`'s own framing
+layer, out of this repo's scope), 3, and 4 remain real, separate, open work.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
