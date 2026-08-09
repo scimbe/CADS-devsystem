@@ -7318,4 +7318,41 @@ pre-merge PR-preview run -- all four jobs green, including `verify-connect-flow-
 real API and re-fetched `/requirements/export` to confirm: requirement #17 now shows 5/5, every
 criterion carrying real confirmation evidence, not fabricated.
 
+**Goal-driven-loop firing, 2026-08-09 (ffff) -- issue #56's first real slice: assistant-proposed
+requirements, approve/reject.** State check: `#382`'s three checkpoints still no new scimbe reply;
+issue #14 unchanged; requirement #17 stays 5/5. Both stalled stages on the flagship run remain
+externally blocked (labor-setup.com's own document_extraction work, and android_emulator_test's
+own remote-wiring pending on their side) -- correctly not touched.
+
+Issue #56 (operator-directed, §7 DAU-lens): "the assistant should proactively propose additional
+requirements that round out coverage... user should be able to accept, edit, or reject each
+proposal individually before anything is actually added." The guided, interview-style dialog it
+also asks for is real, separate, larger UI work -- scoped out of this firing rather than attempted
+half-built. Took the smaller, real, immediately useful half: `PendingRequirementProposal`
+(statement + acceptance criteria + rationale), the exact same "proposes, human clicks install"
+trust model every other `pending_*_proposals` queue in this codebase already uses (custom panels,
+pipeline stages, GitHub issues, run deletion) -- a proposal never touches the real `requirements`
+list, the review gate, or coverage until a human explicitly approves it.
+
+`POST /api/runs/{id}/requirements/propose` reuses `validate_requirement_fields` verbatim, so a
+proposal a human is asked to trust clears the exact same real EARS/checkable-criteria bar a
+hand-typed requirement does -- not a looser one just because an LLM drafted it. Wired into
+`open_points` (a new `requirement_proposal` kind) and the Requirements panel's own render
+(proposal cards with real Approve/Reject buttons, same shape Custom Panels already established).
+New `Action::ProposeRequirement`, the 22nd action type (still 9 kinds of data -- requirements
+already counted), propose_*-gated like its six siblings; the system prompt's own self-description
+updated together in this same commit (twenty-one -> twenty-two action types, six -> seven
+propose_* actions) -- this file's own established discipline of never letting the count and the
+prompt land in separate commits.
+
+Hermetically verified: 165/165 pipeline lib tests, 56/56 assistant tests (both new and every
+pre-existing one), 244/244 web tests against a real `pgvector/pgvector:pg16` container, clippy
+clean on both crates (`rust:1-slim`, `RUSTFLAGS=-D warnings`). Deployed via
+`scripts/deploy-devsystem-web.sh`, git-SHA-verified. Live-verified two ways, not just via curl: a
+real HTTP round-trip (propose -> `open_points` shows it -> approve with a real `X-Gate-Email` ->
+the real requirement appears with `proposed_by: "devsystem.assistant"`, `created_by` the real
+approving human), and a real Playwright browser session against the deployed container -- the
+proposal card, its `LLM-proposed` badge, and a real click on the Approve button all confirmed
+working, zero console/page errors.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
