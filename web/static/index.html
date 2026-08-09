@@ -682,6 +682,17 @@
 const API = '/api';
 let currentRun = null;
 let currentRunData = null;
+// Real evaluator finding, issue #58's own remaining suggestion: a successful
+// write's own status element (e.g. #requirement-status) gets set, then the
+// very next line almost always calls `selectRun(id)` to refresh with fresh
+// server state -- which replaces the whole panel body wholesale, wiping the
+// message before a human can ever see it. "Success" and "silently wrote to
+// the wrong run" looked identical from the user's side (issue #58's own
+// words). Set right before that refresh call, naming the panel and the real
+// run the write landed in; the panel's own render function applies it to
+// the FRESH DOM once, then clears it -- survives exactly the one re-render
+// that used to erase it, never leaks into a later, unrelated render.
+let pendingPanelStatus = null;
 let criteriaOpen = false;
 // Which custom panel (if any) the Custom Panels manager is currently showing an
 // inline edit form for -- gap #4's last real piece (#382 goal doc §7.2). Reset on
@@ -4244,6 +4255,16 @@ function renderRequirementsPanel(id, data) {
     ${requirements.length ? `<a class="btn secondary" style="margin-top:.6rem" href="${API}/runs/${encodeURIComponent(id)}/requirements/export" download="requirements.md">⬇ Download as Markdown</a>` : ''}
     ${chatHistorySection}
   `;
+  // See `pendingPanelStatus`'s own doc comment (issue #58): a success message
+  // set right before this render's own trigger (`selectRun`) is applied here,
+  // to the FRESH #requirement-status this innerHTML assignment just created --
+  // the exact element the old code set text on, then immediately discarded.
+  // Consumed once, not left to leak into a later, unrelated render.
+  if (pendingPanelStatus && pendingPanelStatus.panelId === 'requirements') {
+    const statusEl = document.getElementById('requirement-status');
+    if (statusEl) { statusEl.textContent = pendingPanelStatus.text; statusEl.className = `status-line ${pendingPanelStatus.cls}`; }
+    pendingPanelStatus = null;
+  }
   // Only steal focus into a visible panel the user can actually see -- this
   // panel is in the sensible default-visible set, but a user may have hidden
   // it, and an invisible input silently grabbing keystrokes would be its own
@@ -4300,6 +4321,7 @@ function renderRequirementsPanel(id, data) {
           method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ statement, acceptance_criteria })
         });
+        pendingPanelStatus = { panelId: 'requirements', text: `Requirement #${index} updated in ${id}.`, cls: 'ok' };
         await selectRun(id);
       } catch (err2) {
         status.textContent = err2.message; status.className = 'status-line err';
@@ -4318,6 +4340,14 @@ function renderRequirementsPanel(id, data) {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ statement, acceptance_criteria })
       });
+      // Real evaluator finding, issue #58: this used to leave
+      // #requirement-status genuinely empty on success -- the element only
+      // ever rendered for a rejection, never a success, because the very
+      // next line replaces the whole panel body before any success text
+      // could be seen. Naming the real run here is the point: "success" and
+      // "silently wrote to the wrong run" looked identical from the user's
+      // side.
+      pendingPanelStatus = { panelId: 'requirements', text: `Requirement added to ${id}.`, cls: 'ok' };
       await selectRun(id);
     } catch (err2) {
       status.textContent = err2.message; status.className = 'status-line err';
