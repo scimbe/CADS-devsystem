@@ -7292,4 +7292,30 @@ had real, already-reviewed accumulated changes from this session's own live API 
 Suggestion #2 (append-only history, tombstone instead of compact) remains real, open, larger
 structural work -- not attempted in this same bounded increment.
 
+**Self-optimizing-pipeline firing, 2026-08-09 (eeee) -- requirement #17 is now genuinely 5/5,
+closed for real.** State check: `#382`'s three checkpoints still no new scimbe reply; issue #14
+unchanged; CI on both repos running normally.
+
+Criterion 4 (the last one open: an automated emulator test asserting no Rust panic appears in
+`logcat`) was a real, distinct gap from criterion 0 -- `ConnectFlowInstrumentedTest`'s own KDoc
+already claimed this since PR #17, but the assertion never existed, only implicit survival.
+Closed it for real: `logcat -c` before the Connect interaction, `logcat -d` after, asserting none
+of three real markers appear (Rust's own default panic-hook output, the platform's `FATAL
+EXCEPTION` line any uncaught exception produces regardless of app-side logging setup, and
+UniFFI's own `Rust panic` `InternalException` message text).
+
+Hit and fixed a real, separate problem while shipping it: the local `webconference-android`
+checkout still had PR #17's pre-squash commits as its own `main`, so the new branch conflicted
+with the real `origin/main` (`00fb390`'s squash-merge). Root-caused rather than force-pushed
+blind: rebuilt the branch cleanly on the real `origin/main` plus just the one new commit, confirmed
+`mergeable: true` before pushing.
+
+Same discipline as every prior criterion confirmation this session: merged (`a00f9ed`, PR #18),
+then waited for the real post-merge `push` run (databaseId 31338299935) rather than trusting the
+pre-merge PR-preview run -- all four jobs green, including `verify-connect-flow-instrumented-test`
+(the real KVM-accelerated emulator run containing this exact assertion) and `verify-native-bridge`
+(the supply-chain check, ~8 minutes, not stuck, just genuinely slow). Toggled criterion 4 via the
+real API and re-fetched `/requirements/export` to confirm: requirement #17 now shows 5/5, every
+criterion carrying real confirmation evidence, not fabricated.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
