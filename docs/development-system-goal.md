@@ -7188,4 +7188,29 @@ self-reported count needed no update -- checked, not assumed.
 Deployed for real via `scripts/deploy-devsystem-assistant.sh`, git-SHA-verified against this exact
 commit on the running process, not just built.
 
+**Goal-driven-loop firing, 2026-08-09 (bbbb) -- confirmed requirement #17's criterion 0 for real,
+closing the loop `zzz` deliberately left open.** State check: `#382`'s three checkpoints still no
+new scimbe reply; issues #13/#14 unchanged.
+
+Waited for the real post-merge `push` run on `origin/main` (databaseId 31336212256) rather than
+trusting the `pull_request`-triggered preview run merged in `zzz` -- same discipline as every prior
+criterion confirmation this session. Confirmed green via `gh run view`:
+`verify-connect-flow-instrumented-test`, `build-and-test`, and `verify-release-install` all
+`completed success` (the unrelated `verify-native-bridge` NDK job finished separately, also green).
+Read the real job log, not just the conclusion field: `gh api
+repos/scimbe/CADS-webconference-android/actions/jobs/<id>/logs` shows `Starting emulator.` ->
+`Starting 1 tests on test(AVD) - 10` -> `Finished 1 tests on test(AVD) - 10` -> `BUILD SUCCESSFUL in
+2m 16s`, no `FAILED` line anywhere. Confirmed the merge commit `00fb390` genuinely exists on
+`origin/main` (`git fetch origin main && git log --oneline -1 origin/main`), not an ephemeral
+PR-preview SHA.
+
+Toggled requirement #17 criterion 0 via the real API
+(`POST /api/runs/webconference-android/requirements/17/criteria/0/toggle`) and re-fetched
+`/requirements/export` to verify the final state, not just trust the POST succeeded. Requirement
+#17 now stands at 4/5 -- criteria 0-3 confirmed, only criterion 4 (an automated emulator test
+asserting no Rust panic appears in `logcat` itself, distinct from criterion 0's UI-error assertion)
+remains genuinely open; `ConnectFlowInstrumentedTest` proves the app survives and shows the error
+but does not parse logcat, so criterion 4 is real, separate, still-unshipped work for a future
+firing, not double-counted here.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
