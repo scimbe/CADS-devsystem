@@ -6718,4 +6718,31 @@ re-investigates an already-solved problem (which nearly happened this firing, on
 successor items before that) is wasted work the process itself should have prevented. 8 genuinely
 open issues remain, down from 23 -- a future firing's own state-check now reflects reality.
 
+**Goal-driven-loop firing, 2026-08-09 (jjj) -- a real reply field for check-ins, closing issue
+#41's suggestion #2.** State check: `#382`'s three checkpoints still no new scimbe activity. Of
+the 8 genuinely-open issues left after `iii`'s cleanup, picked #41: a non-technical evaluator read
+the mandatory check-in's own `## Decision needed` section end to end, on a run one iteration from
+its own ceiling with a real product decision explicitly escalated to the operator, and found the
+web panel had nowhere to give the "answer/direction" the document itself asked for -- only a
+content-free Acknowledge.
+
+`POST /api/runs/{id}/checkin/acknowledge` now accepts an optional `{"note": "..."}` body
+(`CADS-devsystem@49eda37`) -- genuinely optional (`Option<Json<...>>`, not a required body), so
+every existing bodyless caller keeps working identically, verified both hermetically and live. A
+non-empty note becomes a new `RunState::checkin_notes` entry: real append-only history, never
+overwritten, with real provenance (`X-Gate-Email`, a real timestamp, which iteration it answers) --
+the same discipline `confirmed_by`/`created_by` already established elsewhere. Same length cap and
+bidi rejection every other free-text field in this codebase gets. GUI: an optional textarea next
+to Acknowledge, and a "Past answers" list so the note isn't write-only.
+
+4 new hermetic tests, 238/238 web tests green under `-D warnings`. Live-verified end to end against
+the redeployed container: a real note persisted with real provenance, and a bodyless acknowledge
+(the exact shape every pre-existing caller uses) still returned a clean `200` with zero notes
+recorded.
+
+**Deliberately not built in this same firing**: suggestion #3 (a full two-button Approve/Request-
+changes gate feeding a structured field an agent reads) stays open -- that's #39's own larger,
+separate ask (a real pipeline-side open-question channel, the *other* direction of the same loop
+this issue's own body distinguishes), not folded into this bounded increment.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
