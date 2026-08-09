@@ -7101,4 +7101,27 @@ zero console errors. Confirmed requirement #5's last remaining criterion (0) aga
 **Requirement #5: 5/5 confirmed** -- every acceptance criterion this requirement names is now
 genuinely, live-verifiably true, closing an item that was 0/5 at the start of this session.
 
+**Goal-driven-loop firing, 2026-08-09 (xxx) -- opened `webconference-android#17`, a real
+instrumented emulator test for requirement #17's own last remaining criterion.** State check:
+`#382`'s three checkpoints still no new scimbe reply; issues #13/#14 unchanged. With requirement #5
+now closed, scanned the rest of the flagship run's own requirements for the next well-scoped,
+already-named gap rather than inventing new work: requirement #17 (the `hex_decode_32` panic fix)
+sits at 3/5, and its own unconfirmed automated criterion asks for exactly the kind of real emulator
+test this session just built the CI infrastructure for (PR #16).
+
+`native-bridge/src/channel.rs`'s own unit test already proves the *native* function returns a real
+error instead of panicking on the exact repro (`\u{20ac}` + 61 `a`s -- 64 bytes, 62 characters); the
+gap was the other half, never verified: a real UniFFI/JNI call through the *actual running app*,
+on real device hardware. No `androidTest/` infrastructure existed on this project at all before
+this firing -- added `testInstrumentationRunner` + Espresso deps, a new
+`ConnectFlowInstrumentedTest` typing the identical repro string into the real peer-key field and
+asserting both that the app survives and that `R.string.invalid_peer_key` genuinely shows, and a
+new CI job (`verify-connect-flow-instrumented-test`) reusing PR #16's exact emulator-runner setup.
+`CADS-webconference-android@9f0b403`, PR #17.
+
+No local Android SDK on this dev host to verify hermetically (the same standing constraint noted
+for every prior Android-side PR) -- real CI run (databaseId 31331029217) was in flight when this
+entry was written. Not claiming requirement #17's last criterion confirmed here -- that's the next
+firing's job once the real run completes, same discipline as `rrr`/`sss` before it.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
