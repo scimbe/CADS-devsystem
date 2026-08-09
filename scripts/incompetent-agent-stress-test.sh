@@ -885,10 +885,41 @@ check "a second withdrawal of the same record is refused, not silently reapplied
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$withdraw_run"
 
 echo
+echo "[60] devsystem.assistant's real requirement-proposal queue -- a proposed requirement must never appear as a real requirement until a human approves it (the same propose-then-approve trust model every other proposal kind on this platform already follows), must be discardable outright with nothing left behind, and an approved one must carry real, honest provenance: proposed_by is always the fixed 'devsystem.assistant' label, never client-supplied, and created_by is the real gate-verified approving human, not a value the client claims in its own request body (issue #56 first slice, #382 goal doc §8, 2026-08-09)"
+propreq_run="propose-requirement-stress-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$propreq_run\"}"
+empty_rationale_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$propreq_run/requirements/propose" -H 'content-type: application/json' \
+  -d '{"statement":"WHEN a user uploads a file, THE SYSTEM SHALL index it for search.","acceptance_criteria":["a real checkable criterion"],"rationale":"   "}')
+check "an empty rationale is refused" "400" "$empty_rationale_status"
+propose_response=$(curl -s -X POST "$BASE/api/runs/$propreq_run/requirements/propose" -H 'content-type: application/json' \
+  -d '{"statement":"WHEN a user uploads a file, THE SYSTEM SHALL index it for search.","acceptance_criteria":["a real checkable criterion"],"rationale":"coverage gap found while reviewing the upload flow"}')
+proposal_id=$(echo "$propose_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' 2>/dev/null)
+pending_count=$(curl -s "$BASE/api/runs/$propreq_run" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["state"]["pending_requirement_proposals"]))' 2>/dev/null)
+check "a real proposal lands in the pending queue" "1" "$pending_count"
+real_count_before=$(curl -s "$BASE/api/runs/$propreq_run" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["state"]["requirements"]))' 2>/dev/null)
+check "a pending proposal is NOT yet a real requirement" "0" "$real_count_before"
+reject_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$propreq_run/requirements/proposals/$proposal_id/reject")
+check "rejecting a real pending proposal succeeds" "200" "$reject_status"
+after_reject=$(curl -s "$BASE/api/runs/$propreq_run")
+pending_after_reject=$(echo "$after_reject" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["state"]["pending_requirement_proposals"]))' 2>/dev/null)
+check "a rejected proposal is discarded outright, nothing left behind" "0" "$pending_after_reject"
+real_after_reject=$(echo "$after_reject" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["state"]["requirements"]))' 2>/dev/null)
+check "rejecting never lets a discarded proposal become a real requirement" "0" "$real_after_reject"
+unknown_approve_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$propreq_run/requirements/proposals/no-such-id/approve")
+check "approving an unknown proposal id is a real 404" "404" "$unknown_approve_status"
+propose_response2=$(curl -s -X POST "$BASE/api/runs/$propreq_run/requirements/propose" -H 'content-type: application/json' \
+  -d '{"statement":"WHEN a user deletes a document, THE SYSTEM SHALL remove it from the search index.","acceptance_criteria":["a real checkable criterion"],"rationale":"a second real coverage gap"}')
+proposal_id2=$(echo "$propose_response2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' 2>/dev/null)
+approve_response=$(curl -s -X POST "$BASE/api/runs/$propreq_run/requirements/proposals/$proposal_id2/approve" -H 'x-gate-email: real-reviewer@example.com')
+approved_provenance=$(echo "$approve_response" | python3 -c 'import json,sys; r=json.load(sys.stdin)["requirements"][0]; print(r["proposed_by"], "|", r["created_by"])' 2>/dev/null)
+check "an approved requirement carries real, honest provenance" "devsystem.assistant | real-reviewer@example.com" "$approved_provenance"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$propreq_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the fifty-nine gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the sixty gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
