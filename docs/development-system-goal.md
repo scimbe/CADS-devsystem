@@ -7478,4 +7478,43 @@ and only the targeted record carries `withdrawn: true` with its real reason.
 Issue #42 stays open for the accounting-exclusion half of suggestion #2. Commented on the issue
 with what shipped.
 
+**Goal-driven-loop firing, 2026-08-09 (kkkk) -- real post-merge review of PR #57, closing a real
+process gap (issue #14).** State check: issue #13 closed (labor-setup.com's emulator/walkthrough
+work genuinely done); `#382`'s three checkpoints still no new scimbe reply; no open PRs on either
+repo besides the pre-existing Dependabot one; CI queue delays from GitHub's earlier outage confirmed
+fully cleared.
+
+Issue #14's own standing instruction is explicit: review labor-setup.com's PRs "the same way PR #9
+was reviewed -- real verification, not a rubber stamp." PR #17 (on the same issue) got exactly that
+before merging. PR #57 (image OCR + scanned-PDF fallback, merged 2026-08-09T16:52:20Z) didn't --
+zero PR reviews, zero PR comments, checked directly via the GitHub API. A real, unreviewed merge
+sitting on a thread whose whole point is verification-over-trust is itself the kind of gap this
+loop exists to close, independent of whether the code turns out to be correct.
+
+Did the review for real, post-merge, rather than just retroactively rubber-stamping it: built a
+hermetic verification image (`rust:1-slim` + real `poppler-utils`/`tesseract-ocr`/`imagemagick`/
+`libreoffice-writer`/`ghostscript`), compiled the real release binary, and drove it directly via
+stdin/stdout with real generated files -- the actual subprocess integration, which CI itself never
+exercises (CI only runs the 23 unit tests, which inject fake `run_pdftotext`/`run_tesseract`
+closures by design). Confirmed for real: all 6 image formats OCR real text through the compiled
+binary; a real 2-page scanned PDF (control-verified to genuinely have zero text layer via
+`pdftotext` first) OCR-falls-back correctly, both pages, in order; a real 21-page scanned PDF is
+rejected naming its real page count, not silently truncated; a real text-layer PDF (via
+`libreoffice --convert-to pdf`) still takes the fast `pdftotext` path with `tesseract` genuinely
+absent from `PATH` -- proving the fast path never touches OCR when it doesn't need to.
+
+One real, minor, non-blocking finding along the way: a BMP with an alpha channel fails with an
+honest `pixReadMemBmp: cannot read compressed BMP files` error from leptonica -- reproduced
+identically invoking `tesseract` directly, outside the Rust binary, so it's a real leptonica format
+gap, not a bug this PR's code introduced; the handler's own behavior (an honest error, never a
+fabricated success) is still correct. Two apparent failures during verification (BMP, TIFF) turned
+out to be artifacts of my own test-image generation defaults (ImageMagick's default 16-bit TIFF and
+alpha-channel BMP), not handler bugs -- confirmed by reproducing outside the binary before writing
+any conclusion into the review.
+
+Posted the honest verdict on issue #14: real, matches its own claims, no fabrication found. Treating
+issue #14's handler-side format coverage as genuinely done, still blocked only on the real, already-
+tracked, separately-owned OIDC credential checkpoint on `#382` (needs the operator's own Keycloak
+admin action -- not self-provisioned).
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
