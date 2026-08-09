@@ -7252,4 +7252,44 @@ fixed from this repo alone; it needs CADS-Tunnel's own `crates/common/Cargo.toml
 silently closing it -- it's genuine future work, just upstream-blocked.
 ([comment](https://github.com/scimbe/CADS-devsystem/pull/11#issuecomment-5233937881))
 
+**Self-optimizing-pipeline firing, 2026-08-09 (dddd) -- issue #42 suggestion #1: id-keyed the
+check-in acknowledgment watermark, closing the real part of it that was still open.** State check:
+`#382`'s three checkpoints still no new scimbe reply; issues #13/#14 unchanged; every stalled
+stage and open backlog item on the flagship run still externally/operator-blocked, same as `cccc`.
+
+Issue #42 (open, real, well-evidenced: a history compaction silently re-pointed every ordinal
+cross-reference in the run, including `checkin_acknowledged_through`) had already had its
+smallest, most urgent piece fixed by an earlier firing (the dangling `backlog[7]` reference,
+`2881c68`) -- suggestions #1 (id-keyed cross-references) and #2 (append-only history) were left
+open as real, larger structural work. Took suggestion #1 for the one field the issue names by
+example: `IterationRecord::id` already exists (issue #38/#52) but `checkin_acknowledged_through`
+never used it, staying a bare position with no way to detect a future re-point.
+
+Added `checkin_acknowledged_through_id`/`CheckinNote.iteration_id`, populated with the real
+acknowledged record's id at `POST /checkin/acknowledge` time, alongside the existing position (the
+cadence math in `checkin_pending` genuinely needs a count, so this is additive, not a replacement).
+Built `preflight::checkin_watermark_identity_drift`, a new mechanical check: if the position and
+its recorded id ever disagree, that's now a real, surfaced risk finding instead of something only
+a careful human evaluator notices by hand -- the exact way issue #42 itself was originally found.
+Deliberately does not fire on a `None` id (every pre-existing acknowledgment, recorded before this
+field existed) -- a legacy gap, not fresh evidence of drift.
+
+5 new preflight unit tests (never-acknowledged, legacy-`None`, matching-id, position-holds-a-
+different-record, position-no-longer-exists) plus 1 new web integration test proving the real id
+is captured end to end through the actual HTTP handler, not just the pure function. Hermetically
+verified: 240/240 web tests green, 165/165 pipeline tests green, clippy clean on both crates
+against a real `pgvector/pgvector:pg16` container (`rust:1-slim`, `RUSTFLAGS=-D warnings`).
+`CADS-devsystem@6d43d8e`. Deployed via `scripts/deploy-devsystem-web.sh`, git-SHA-verified against
+this exact commit, then live-confirmed the new check behaves as designed against the real
+flagship run: its own `checkin_acknowledged_through` is 33 with `checkin_acknowledged_through_id:
+null` (a real legacy acknowledgment, predating this field) -- correctly produces zero drift
+findings, not a false positive on day one.
+
+Also committed a separate, honest catch-up: `runs/webconference-android/state.json`/`memory.jsonl`
+had real, already-reviewed accumulated changes from this session's own live API actions (requirement
+#17 criterion 0's confirmation among them) that had never been committed. `CADS-devsystem@7f282cc`.
+
+Suggestion #2 (append-only history, tombstone instead of compact) remains real, open, larger
+structural work -- not attempted in this same bounded increment.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
