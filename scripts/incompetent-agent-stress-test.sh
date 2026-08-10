@@ -986,13 +986,26 @@ print(len(untagged))" 2>/dev/null)
 else
   echo "  SKIP: no devsystem.assistant bridge reachable from this deployment (automode's own proposal call is fail-soft) -- nothing to check"
 fi
+
+echo
+echo "[65] the SAME automode-triggered proposal must ALSO carry its traceability tag through the guided Open Points queue projection (/open-points, kind requirement_proposal/next_step_draft) -- not just the raw pending_requirement_proposals list check [64] already covers. OpenPoint::triggered_by mirrors PendingRequirementProposal::triggered_by / PendingNextStepDraft::triggered_by but is a genuinely separate field assembled by open_points() in web/src/main.rs, not the same storage -- so a regression could silently drop the tag on this second real review surface (the guided queue a human uses via 'stack mode') while check [64] stays green. Closes check [64]'s own blind spot: the exact class of gap firing 'vvvv' found and fixed in the underlying feature (CADS-devsystem-docs@eda9773 / CADS-devsystem@217f51f) never gained regression coverage of its own until now (2026-08-10)."
+if [ "${proposal_count:-0}" -gt 0 ] 2>/dev/null; then
+  untagged_open_points=$(curl -s "$BASE/api/runs/$triggerby_run/open-points" | python3 -c "import json,sys
+points = json.load(sys.stdin)
+relevant = [p for p in points if p.get('kind') in ('requirement_proposal', 'next_step_draft')]
+untagged = [p for p in relevant if not (p.get('triggered_by') or '').startswith('automode:')]
+print(len(untagged))" 2>/dev/null)
+  check "every automode-triggered proposal is ALSO tagged traceable via /open-points, not just the raw proposal list" "0" "$untagged_open_points"
+else
+  echo "  SKIP: no devsystem.assistant bridge reachable from this deployment -- nothing to check (same skip reasoning as [64])"
+fi
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$triggerby_run"
 
 echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the sixty-four gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the sixty-five checks this session already added."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
