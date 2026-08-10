@@ -7591,4 +7591,28 @@ uses. Deployed and git-SHA-verified, then live-verified end to end via Playwrigh
 redeployed container, not just read from source: the dialog shows the real annotation text,
 dismissing it leaves the annotation genuinely untouched, confirming it actually removes it.
 
+**Goal-driven-loop firing, 2026-08-10 (oooo) -- a real bug in `CADS-webconference-android` found and
+fixed against requirement #22 criterion 3 (channel-frame decode robustness).** State check: no new
+scimbe reply on any of `#382`'s open checkpoints; no new open issues on either repo.
+
+Read requirement #22's own 4 acceptance criteria against the current code rather than assuming
+criteria 0/1 (already shipped: the hostile-frame test set, the named `MAX_MESSAGE_BYTES` bound) meant
+the whole requirement was on track. Criterion 3 -- "a rejected frame is dropped without tearing down
+the established channel or dropping subsequent well-formed messages from the same peer" -- traced
+straight into a real, live bug: `MainActivity.receiveLoop()` caught `ChannelException` around its
+whole `while(true)`, so a single malformed frame (`ChannelException.Decode`, exactly the hostile
+input `decode_text_message` is required to reject as a typed error, not a panic) ended the receive
+loop identically to a genuinely dead connection and reset the UI with a misleading "disconnected"
+status -- even though the TCP socket and Noise session were still perfectly healthy. One bad frame
+from a peer silently ended the whole conversation and demanded a full reconnect.
+
+Fixed (`CADS-webconference-android@b3d9bcb`, PR #20): the catch now scopes to one `recvText()` call,
+not the whole loop. A new, directly-testable `isFatalChannelError()` distinguishes `Decode` (drop the
+frame, keep listening for whatever the peer sends next) from every other `ChannelException` variant
+(`Io`, `Handshake`, ...), which do mean the channel is genuinely gone. New hermetic Robolectric test
+drives the real, production decision function against every real `ChannelException` variant --
+confirmed in the real CI test report artifact (not just "build succeeded"): the new test's own result
+row, `class="success"`, 1/1, 0 failures. Both the pre-merge PR run and the real post-merge push run
+went fully green (4/4 jobs each) before this was logged as done.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
