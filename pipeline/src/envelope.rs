@@ -184,6 +184,7 @@ mod tests {
             verified: false,
             verified_criteria: Vec::new(),
             auto_judge: false,
+            automode: false,
             proposed_by: None,
             created_by: None,
         }];

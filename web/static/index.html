@@ -4313,7 +4313,11 @@ function renderRequirementsPanel(id, data) {
           </details>` : ''}
           <label class="backlog-item" style="margin-top:.3rem;font-size:.72rem" title="A real, persisted marker for future automated-judgment logic that doesn't exist yet -- checking this does not change anything devsystem.assistant can do today. It can already be asked in chat to judge and verify any requirement's criteria regardless of this flag; toggling it here has zero effect on that.">
             <input type="checkbox" class="requirement-auto-judge-toggle" data-index="${i}" ${r.auto_judge ? 'checked' : ''}>
-            <span>automode flag (not wired to any real behavior yet -- see tooltip)</span>
+            <span>opt in to LLM judgment (not wired to any real behavior yet -- see tooltip)</span>
+          </label>
+          <label class="backlog-item" style="margin-top:.15rem;font-size:.72rem" title="Issue #31's own honest first slice: a real, separate flag for automatic proposal/bidding/role-fill/iteration progression, deliberately NOT the same as the judgment opt-in above (broader scope, a real open design question about the mandatory review gate still unanswered). Recorded and visible; does not yet drive any actual automatic behavior.">
+            <input type="checkbox" class="requirement-automode-toggle" data-index="${i}" ${r.automode ? 'checked' : ''}>
+            <span>automode (issue #31 -- unattended pipeline progression, not wired to any real behavior yet)</span>
           </label>
           <button type="button" class="btn secondary requirement-edit-toggle" data-index="${i}" style="margin-top:.3rem;font-size:.68rem;padding:.15rem .5rem">✎ Edit</button>
           <form class="requirement-edit-form inline" data-index="${i}" style="display:none;margin-top:.4rem;flex-direction:column;align-items:stretch;gap:.3rem;border-left:2px solid var(--accent);padding-left:.5rem">
@@ -4444,6 +4448,9 @@ function renderRequirementsPanel(id, data) {
   for (const cb of body.querySelectorAll('.requirement-auto-judge-toggle')) {
     cb.onchange = () => toggleRequirementAutoJudge(id, parseInt(cb.dataset.index, 10));
   }
+  for (const cb of body.querySelectorAll('.requirement-automode-toggle')) {
+    cb.onchange = () => toggleRequirementAutomode(id, parseInt(cb.dataset.index, 10));
+  }
   // Issue #37 (#382 goal doc): a wrong requirement used to be permanently
   // load-bearing -- no edit control anywhere in this panel. Real update-in-
   // place, same client-side validation as the Add form below (kept in sync
@@ -4508,6 +4515,16 @@ function renderRequirementsPanel(id, data) {
 async function toggleRequirementAutoJudge(id, index) {
   try {
     await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements/${index}/auto-judge/toggle`, { method: 'POST' });
+    await selectRun(id);
+  } catch (e) {
+    const status = document.getElementById('requirement-status');
+    if (status) { status.textContent = e.message; status.className = 'status-line err'; }
+  }
+}
+
+async function toggleRequirementAutomode(id, index) {
+  try {
+    await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/requirements/${index}/automode/toggle`, { method: 'POST' });
     await selectRun(id);
   } catch (e) {
     const status = document.getElementById('requirement-status');

@@ -21,7 +21,7 @@ use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::{preflight_annotations, process_annotations};
 use devsystem_pipeline::runner::{
     checkin_pending, duplicate_of_last_iteration, load_or_init_run, persist_run, push_chat_exchange, qualifying_review_evidence, render_requirements_markdown, run_iteration, toggle_acceptance_criterion,
-    toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, valid_run_id, validate_requirement_indices, BacklogItem, CustomPanel,
+    toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, toggle_requirement_automode, valid_run_id, validate_requirement_indices, BacklogItem, CustomPanel,
     Milestone, PendingDeleteRunProposal, PendingIssueProposal, PendingNextStepDraft, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingRequirementProposal,
     PendingStageProposal, PlanCanvasAnnotation, Requirement, RoleFillMode, RunOutcome, RunState,
 };
@@ -267,6 +267,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/requirements/{index}/update", post(update_requirement_handler))
         .route("/api/runs/{id}/requirements/{index}/toggle", post(toggle_requirement_handler))
         .route("/api/runs/{id}/requirements/{index}/auto-judge/toggle", post(toggle_requirement_auto_judge_handler))
+        .route("/api/runs/{id}/requirements/{index}/automode/toggle", post(toggle_requirement_automode_handler))
         .route("/api/runs/{id}/requirements/{index}/criteria/{criterion_index}/toggle", post(toggle_acceptance_criterion_handler))
         .route("/api/runs/{id}/requirements/export", get(export_requirements))
         .route("/api/runs/{id}/repo", post(set_repo_url))
@@ -2341,6 +2342,7 @@ async fn add_requirement(
         verified: false,
         verified_criteria: Vec::new(),
         auto_judge: false,
+        automode: false,
         proposed_by,
         created_by,
     });
@@ -2472,6 +2474,7 @@ async fn approve_requirement_proposal(
         verified: false,
         verified_criteria: Vec::new(),
         auto_judge: false,
+        automode: false,
         proposed_by: Some("devsystem.assistant".to_string()),
         created_by: headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string()),
     };
@@ -2686,6 +2689,39 @@ async fn toggle_requirement_auto_judge_handler(
         return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
     }
     if let Err(e) = toggle_requirement_auto_judge(&mut run_state, index) {
+        return (StatusCode::NOT_FOUND, e).into_response();
+    }
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+/// `POST /api/runs/{id}/requirements/{index}/automode/toggle` -- issue #31's honest first
+/// slice, mirroring `toggle_requirement_auto_judge_handler` above exactly. See
+/// `Requirement::automode`'s own doc comment: recorded and visible, does not yet drive
+/// any actual automatic proposal/bid/iteration behavior.
+async fn toggle_requirement_automode_handler(
+    State(state): State<AppState>,
+    AxPath((id, index)): AxPath<(String, usize)>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    if let Err(e) = toggle_requirement_automode(&mut run_state, index) {
         return (StatusCode::NOT_FOUND, e).into_response();
     }
     match persist_run(&dir, &spec, &run_state) {
@@ -8070,6 +8106,99 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    /// Issue #31's honest first slice, mirroring the `auto_judge` tests above exactly:
+    /// `automode` defaults off, toggles independently, and never itself touches
+    /// `verified`.
+    async fn requirement_automode_defaults_off_and_can_be_toggled_without_touching_verified() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "automode-run"})))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/automode-run/requirements",
+                serde_json::json!({
+                    "statement": "WHEN ..., THE SYSTEM SHALL ...",
+                    "acceptance_criteria": ["criterion A"],
+                }),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/automode-run/requirements/0/automode/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body["requirements"][0]["automode"], true);
+        assert_eq!(body["requirements"][0]["auto_judge"], false, "toggling automode must never itself flip the separate auto_judge flag");
+        assert_eq!(body["requirements"][0]["verified"], false, "toggling automode must never itself flip verified");
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/automode-run/requirements/0/automode/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body["requirements"][0]["automode"], false, "toggling twice must flip back off");
+    }
+
+    #[tokio::test]
+    async fn toggling_automode_on_an_out_of_range_requirement_404s() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "automode-oob-run"})))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/automode-oob-run/requirements/9/automode/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    /// The exact regression a naming collision would cause: `auto_judge` and `automode`
+    /// must be genuinely independent flags, not two labels on the same bit. Toggling one
+    /// must never move the other.
+    async fn auto_judge_and_automode_are_genuinely_independent_flags() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "independence-run"})))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/independence-run/requirements",
+                serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["criterion A"]}),
+            ))
+            .await
+            .unwrap();
+
+        app.clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/independence-run/requirements/0/auto-judge/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(Request::builder().method("GET").uri("/api/runs/independence-run").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+        let req = &body["state"]["requirements"][0];
+        assert_eq!(req["auto_judge"], true, "auto-judge toggle must set auto_judge");
+        assert_eq!(req["automode"], false, "auto-judge toggle must never touch the separate automode flag");
     }
 
     #[tokio::test]
