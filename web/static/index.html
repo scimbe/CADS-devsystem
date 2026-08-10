@@ -4090,7 +4090,7 @@ async function renderOpenPointsPanel(id, data) {
   // "next_step_draft" -- rendered here as the same editable draft card, no
   // separate Approve/Reject/Resume actions (Save/Delete live inside it).
   const isDraft = p.kind === 'next_step_draft';
-  const draft = isDraft ? { id: p.id, text: p.summary } : null;
+  const draft = isDraft ? { id: p.id, text: p.summary, triggered_by: p.triggered_by } : null;
 
   // Issue #39's real channel (`pending_decision`, see `open_points`'s own doc
   // comment in web/src/main.rs): a genuine open question a role-filler
@@ -4120,6 +4120,7 @@ async function renderOpenPointsPanel(id, data) {
          </div>`
       : `<div class="role-card">
          <div class="role-card-head"><span class="role">${escapeHtml(OPEN_POINT_KIND_LABELS[p.kind] || p.kind)}</span></div>
+         ${p.triggered_by ? `<div class="role-meta" style="color:var(--accent)">⚡ ${escapeHtml(p.triggered_by)}</div>` : ''}
          <div class="role-meta">${escapeHtml(p.summary)}</div>
        </div>`;
 

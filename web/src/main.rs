@@ -903,6 +903,18 @@ struct OpenPoint {
     /// `summary`.
     #[serde(skip_serializing_if = "Option::is_none")]
     options: Option<Vec<String>>,
+    /// Mirrors `PendingRequirementProposal::triggered_by` /
+    /// `PendingNextStepDraft::triggered_by` (issue #31's DAU-lens fix,
+    /// firings `ssss`/`tttt`) -- carried through so the guided Open Points
+    /// queue shows the same "⚡ automode: ..." traceability tag the
+    /// Requirements panel's own review list already renders. Without this,
+    /// a human reviewing an automode-triggered proposal through the *other*
+    /// real review surface this app has would see no connection back to the
+    /// toggle at all -- the exact gap `triggered_by` was built to close,
+    /// just re-opened at this second surface. `None` for every kind that
+    /// isn't `requirement_proposal`/`next_step_draft`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    triggered_by: Option<String>,
 }
 
 fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
@@ -915,10 +927,11 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
             proposed_at: None,
             approve_destroys_panel_title: None,
             options: None,
+            triggered_by: None,
         });
     }
     for p in &run_state.pending_panel_proposals {
-        points.push(OpenPoint { kind: "panel_proposal", id: p.id.clone(), summary: format!("new panel \"{}\"", p.title), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None, options: None });
+        points.push(OpenPoint { kind: "panel_proposal", id: p.id.clone(), summary: format!("new panel \"{}\"", p.title), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None, options: None, triggered_by: None });
     }
     for p in &run_state.pending_panel_removal_proposals {
         points.push(OpenPoint {
@@ -928,6 +941,7 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
             proposed_at: Some(p.proposed_at),
             approve_destroys_panel_title: Some(p.panel_title.clone()),
             options: None,
+            triggered_by: None,
         });
     }
     for p in &run_state.pending_panel_edit_proposals {
@@ -938,6 +952,7 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
             proposed_at: Some(p.proposed_at),
             approve_destroys_panel_title: Some(p.old_title.clone()),
             options: None,
+            triggered_by: None,
         });
     }
     for p in &run_state.pending_stage_proposals {
@@ -948,16 +963,17 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
             proposed_at: Some(p.proposed_at),
             approve_destroys_panel_title: None,
             options: None,
+            triggered_by: None,
         });
     }
     for p in &run_state.pending_issue_proposals {
-        points.push(OpenPoint { kind: "issue_proposal", id: p.id.clone(), summary: format!("file issue on {}: {}", p.repo, p.title), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None, options: None });
+        points.push(OpenPoint { kind: "issue_proposal", id: p.id.clone(), summary: format!("file issue on {}: {}", p.repo, p.title), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None, options: None, triggered_by: None });
     }
     // §7.2 gap #2's newest instance (2026-08-07): same "real pending-proposal
     // queue, surfaced here so a human sees it without hunting" treatment as
     // the five queues above.
     if let Some(p) = &run_state.pending_delete_run_proposal {
-        points.push(OpenPoint { kind: "delete_run_proposal", id: p.id.clone(), summary: format!("delete this run: {}", p.rationale), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None, options: None });
+        points.push(OpenPoint { kind: "delete_run_proposal", id: p.id.clone(), summary: format!("delete this run: {}", p.rationale), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None, options: None, triggered_by: None });
     }
     // Issue #56's first slice (2026-08-09): same "real pending-proposal queue,
     // surfaced here so a human sees it without hunting" treatment as every
@@ -970,6 +986,7 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
             proposed_at: Some(p.proposed_at),
             approve_destroys_panel_title: None,
             options: None,
+            triggered_by: p.triggered_by.clone(),
         });
     }
     // Real gap found live 2026-08-07, the same firing after the check-in-pending
@@ -1000,6 +1017,7 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
             proposed_at: None,
             approve_destroys_panel_title: None,
             options: None,
+            triggered_by: None,
         });
     }
     // Real gap, live-found 2026-08-06: while paused, a next-step draft is
@@ -1018,7 +1036,7 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
     // also appearing as separate entries -- no duplication either way.
     if !run_state.paused {
         for d in &run_state.pending_next_step_drafts {
-            points.push(OpenPoint { kind: "next_step_draft", id: d.id.clone(), summary: d.text.clone(), proposed_at: Some(d.proposed_at), approve_destroys_panel_title: None, options: None });
+            points.push(OpenPoint { kind: "next_step_draft", id: d.id.clone(), summary: d.text.clone(), proposed_at: Some(d.proposed_at), approve_destroys_panel_title: None, options: None, triggered_by: d.triggered_by.clone() });
         }
     }
     // Issue #39's own real channel (`RunState::pending_decisions`, see its doc
@@ -1030,7 +1048,7 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
     // human.
     for d in &run_state.pending_decisions {
         if d.answer.is_none() {
-            points.push(OpenPoint { kind: "pending_decision", id: d.id.clone(), summary: d.question.clone(), proposed_at: Some(d.asked_at), approve_destroys_panel_title: None, options: d.options.clone() });
+            points.push(OpenPoint { kind: "pending_decision", id: d.id.clone(), summary: d.question.clone(), proposed_at: Some(d.asked_at), approve_destroys_panel_title: None, options: d.options.clone(), triggered_by: None });
         }
     }
     points
@@ -8525,6 +8543,7 @@ mod tests {
         assert_eq!(draft_response.status(), SC::OK, "the pre-existing draft setup call itself must succeed");
 
         let response = app
+            .clone()
             .oneshot(Request::builder().method("POST").uri("/api/runs/automode-tag-run/requirements/0/automode/toggle").body(Body::empty()).unwrap())
             .await
             .unwrap();
@@ -8550,6 +8569,30 @@ mod tests {
             Some("automode: WHEN offline, THE SYSTEM SHALL queue".to_string()),
             "the next-step draft that appeared as a result of the automode call must be traceable back to the real requirement that triggered it"
         );
+
+        // The Requirements panel isn't the only real review surface -- the guided
+        // Open Points queue ("stack mode") is the other, and until now `OpenPoint`
+        // dropped `triggered_by` entirely, so a human reviewing exactly the same
+        // proposals through THIS surface saw no automode traceability at all (#31
+        // DAU-lens gap, re-found at a second surface).
+        let response = app.clone().oneshot(Request::builder().uri("/api/runs/automode-tag-run/open-points").body(Body::empty()).unwrap()).await.unwrap();
+        let points = body_json(response).await;
+        let points = points.as_array().unwrap();
+        let req_point = points
+            .iter()
+            .find(|p| p["kind"] == "requirement_proposal" && p["id"] == "from-automode")
+            .expect("automode-triggered requirement proposal present in open-points");
+        assert_eq!(req_point["triggered_by"], "automode: WHEN offline, THE SYSTEM SHALL queue", "open-points must carry the same traceability tag the Requirements panel shows");
+        let req_point_pre = points
+            .iter()
+            .find(|p| p["kind"] == "requirement_proposal" && p["rationale"].is_null() && p["summary"].as_str().unwrap().contains("WHEN X"))
+            .expect("pre-existing requirement proposal present in open-points");
+        assert!(req_point_pre.get("triggered_by").is_none(), "a pre-existing (non-automode) proposal must not show a triggered_by tag");
+        let draft_point = points
+            .iter()
+            .find(|p| p["kind"] == "next_step_draft" && p["id"] == "step-from-automode")
+            .expect("automode-triggered next-step draft present in open-points (run isn't paused, so it surfaces as a standalone entry)");
+        assert_eq!(draft_point["triggered_by"], "automode: WHEN offline, THE SYSTEM SHALL queue", "open-points must carry the draft's own traceability tag too");
     }
 
     #[tokio::test]
