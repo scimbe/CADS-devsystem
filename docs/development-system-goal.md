@@ -8460,3 +8460,47 @@ test accounts afterward (`kcadm.sh delete`), confirmed back to the real 47-user 
 Next real increment queued: continue CADS-Tunnel automated-review triage into the #338-356
 efficiency batch, or pick up the next self-optimizing-pipeline role-filler iteration once a
 concrete next pipeline stage is actually needed rather than speculatively built ahead of need.
+
+**Goal-driven-loop firing, 2026-08-10 (ssss) -- issue #31's real DAU-lens gap closed: an
+automode-triggered proposal is now structurally traceable back to its own toggle, live-verified
+against the actual deployment with a real LLM call, no mock.** State check: `#382` unchanged at
+23 comments; labor-setup.com's last check-in on #13/#14 unchanged; `CADS-Tunnel#338`'s own CI
+backlog cleared (confirmed no longer stuck in GitHub's runner queue).
+
+Found by a real re-audit of §7's own standing note ("no further concrete instance currently
+known -- the next one will be whatever a future firing's own re-audit finds"), not
+speculatively: a proposal landing from automode's initial-proposals call looked structurally
+identical to any ordinary chat-triggered proposal -- the only thing tying it back to the toggle
+was whatever prose the LLM happened to include in its own free-text rationale. A user who
+toggles automode on, then off again before the async call completes (believing they'd cancelled
+it), would later see unexplained proposals appear with zero visible connection to an action they
+thought they'd already reversed -- exactly the class of unenforced-guidance gap the governing
+principle exists to harden into a real guarantee.
+
+Fixed server-side, kept self-contained on the web side (no new plumbing through
+devsystem_assistant.rs's Action/apply_action machinery):
+`PendingRequirementProposal` gained `triggered_by: Option<String>`;
+`trigger_automode_initial_proposals` snapshots pending-proposal IDs immediately before firing
+its `/ask` call, then tags whatever's new against that snapshot once the call returns --
+correct because `propose_requirement`'s own callback to this process already lands and persists
+synchronously, before `/ask`'s response ever reaches this caller. Shipped
+[CADS-devsystem@29cbdc2](https://github.com/scimbe/CADS-devsystem/commit/29cbdc2). Hermetic:
+pipeline 9/9, web 262/262 (4 Postgres-only ignored, unchanged) including a new test using a real
+mock assistant that inserts a proposal mid-`/ask` exactly like a genuine devsystem_assistant
+process would -- caught and fixed a real bug in the test's own first draft along the way (a
+4-character acceptance criterion silently failing the real 5-char validation floor, unnoticed
+because the setup call's own status code was never asserted). Both crates clippy-clean.
+
+Deployed live (`scripts/deploy-devsystem-web.sh`), git_sha verified running, then proved the
+real feature end to end against the actual deployment -- no mock, no assumption: created a real
+run, added a real requirement, toggled automode, and the real `devsystem.assistant` LLM
+proposed three genuinely distinct, substantive follow-ons (message-ordering/idempotency on
+reconnect, at-rest encryption + cross-account isolation, and a bounded queue with an explicit
+over-capacity error) -- all three correctly tagged with the real triggering requirement.
+Documented with a real screenshot of this exact live run
+([CADS-devsystem-docs@b9ea3b7](https://github.com/scimbe/CADS-devsystem-docs/commit/b9ea3b7)),
+then cleaned up the test run via the real API.
+
+Deliberately scoped to `PendingRequirementProposal` only, not `PendingNextStepDraft` -- the same
+automode instruction can also produce a `propose_next_step`, a real analogous gap noted but not
+expanded into this same increment; a follow-up should mirror this fix there.
