@@ -185,7 +185,7 @@ fn build_system_prompt(context: &str) -> String {
          you are actually taking action; omit it entirely otherwise -- never emit an \
          empty or placeholder block):\n\
          {ACTIONS_FENCE_OPEN}\n\
-         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"...\"}},{{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"...\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}},{{\"type\":\"propose_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"],\"rationale\":\"...\"}},{{\"type\":\"propose_next_step\",\"text\":\"...\"}},{{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"...\"}},{{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5}},{{\"type\":\"set_paused\",\"paused\":true}},{{\"type\":\"propose_delete_run\",\"rationale\":\"...\"}}]\n\
+         [{{\"type\":\"add_milestone\",\"description\":\"...\"}},{{\"type\":\"toggle_milestone\",\"index\":0}},{{\"type\":\"add_backlog_item\",\"text\":\"...\"}},{{\"type\":\"toggle_backlog_item\",\"index\":0}},{{\"type\":\"add_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"]}},{{\"type\":\"toggle_requirement\",\"index\":0}},{{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":0,\"criterion_index\":0}},{{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":0}},{{\"type\":\"toggle_requirement_automode\",\"requirement_index\":0}},{{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/owner/name\"}},{{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"}},{{\"type\":\"propose_custom_panel\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"...\"}},{{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"...\",\"title\":\"...\",\"html\":\"...\"}},{{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.foo\",\"tag\":\"foo\",\"rationale\":\"...\",\"use_existing_service\":null,\"units\":1,\"price_ceiling\":null}},{{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"...\",\"body\":\"...\"}},{{\"type\":\"propose_requirement\",\"statement\":\"WHEN ..., THE SYSTEM SHALL ...\",\"acceptance_criteria\":[\"...\"],\"rationale\":\"...\"}},{{\"type\":\"propose_next_step\",\"text\":\"...\"}},{{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"...\"}},{{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5}},{{\"type\":\"set_paused\",\"paused\":true}},{{\"type\":\"propose_delete_run\",\"rationale\":\"...\"}}]\n\
          {ACTIONS_FENCE_CLOSE}\n\
          Indices refer to the real state.milestones/state.backlog/state.requirements \
          arrays already shown to you below -- never guess an index you can't see \
@@ -300,9 +300,9 @@ fn build_system_prompt(context: &str) -> String {
          silently decide the run's direction yourself. Never emit this action on a run \
          that isn't paused -- there is no checkpoint to plan past yet. In summary, if \
          asked to describe your own real capabilities, state all THREE real categories, \
-         not just the first two: (1) direct actions on the fourteen milestone/backlog/ \
+         not just the first two: (1) direct actions on the fifteen milestone/backlog/ \
          requirement/repo_url/create_run/role-fill-mode/abort-criteria/pause-state/ \
-         checkin-acknowledgment \
+         checkin-acknowledgment/automode-toggle \
          action types, applied immediately; (2) the \
          seven propose_* actions (custom panel add/edit/remove, stage, issue, \
          requirement, run deletion), queued \
@@ -315,7 +315,7 @@ fn build_system_prompt(context: &str) -> String {
          real bidder sees, and a vague/speculative issue wastes a human reviewer's \
          time. If a request is ambiguous, or you're not confident it's safe to act on, \
          say so in prose and ask instead of emitting an action. You have NO other tool \
-         or system access in this version -- only these twenty-two action types against \
+         or system access in this version -- only these twenty-three action types against \
          these nine kinds of data (milestones, backlog items, requirements, repo_url, \
          runs, custom panels, stages, issues, next-step drafts); for anything else \
          (e.g. an actual code change, or \
@@ -366,6 +366,16 @@ enum Action {
     /// index-based toggle shape, same panel, no approval gate needed since
     /// toggling a checkbox is fully reversible either direction).
     ToggleRequirementAutoJudge { requirement_index: usize },
+    /// Real gap closed (#382 goal doc §7.2, gap #2 re-audit, 2026-08-10): a human can
+    /// already toggle a requirement's per-requirement `automode` flag directly
+    /// (`toggle_requirement_automode_handler`, the Requirements panel's own
+    /// per-requirement checkbox next to `auto_judge`'s) -- found by re-running the same
+    /// "cross-check every real human-editable field in the GUI against this enum" audit
+    /// this class of gap is always found by, not a new discipline. Directly analogous to
+    /// `ToggleRequirementAutoJudge` immediately above: same index-based toggle shape,
+    /// same panel, no approval gate needed since toggling a checkbox is fully reversible
+    /// either direction.
+    ToggleRequirementAutomode { requirement_index: usize },
     /// Sets (or clears, with an empty string) the CURRENT run's repo_url --
     /// the same field `set_repo_url`/the Code panel already manage. Not a
     /// proposal -- like the other direct actions, takes effect immediately,
@@ -638,6 +648,12 @@ fn apply_action(client: &reqwest::blocking::Client, api_base: &str, run_id: &str
             serde_json::json!({}),
             "done",
         ),
+        Action::ToggleRequirementAutomode { requirement_index } => (
+            format!("toggle requirement #{requirement_index}'s automode flag"),
+            format!("{base}/api/runs/{run_id}/requirements/{requirement_index}/automode/toggle"),
+            serde_json::json!({}),
+            "done",
+        ),
         Action::SetRepoUrl { repo_url } => (
             if repo_url.is_empty() { "clear the repo_url".to_string() } else { format!("set repo_url to \"{repo_url}\"") },
             format!("{base}/api/runs/{run_id}/repo"),
@@ -853,7 +869,7 @@ fn ask_llm(instruction: &str, system_prompt: &str) -> Result<LlmReply, String> {
 
 /// Real, honest per-requirement chat attribution (#382 goal doc §4.2, gap #6's
 /// own "still open" note, closed 2026-08-06). Only `ToggleRequirement`/
-/// `ToggleAcceptanceCriterion`/`ToggleRequirementAutoJudge` carry the real
+/// `ToggleAcceptanceCriterion`/`ToggleRequirementAutoJudge`/`ToggleRequirementAutomode` carry the real
 /// index of an *existing* requirement -- `AddRequirement` deliberately
 /// contributes nothing here,
 /// since its new requirement's final position is a server-assigned append
@@ -884,6 +900,7 @@ fn requirement_indices_touched(actions: &[Action], results: &[String]) -> Vec<us
             Action::ToggleRequirement { index } => Some(*index),
             Action::ToggleAcceptanceCriterion { requirement_index, .. } => Some(*requirement_index),
             Action::ToggleRequirementAutoJudge { requirement_index } => Some(*requirement_index),
+            Action::ToggleRequirementAutomode { requirement_index } => Some(*requirement_index),
             _ => None,
         })
         .collect();
@@ -1215,6 +1232,7 @@ mod tests {
                 && prompt.contains("toggle_requirement")
                 && prompt.contains("toggle_acceptance_criterion")
                 && prompt.contains("toggle_requirement_auto_judge")
+                && prompt.contains("toggle_requirement_automode")
                 && prompt.contains("set_repo_url")
                 && prompt.contains("create_run")
                 && prompt.contains("propose_custom_panel")
@@ -1229,7 +1247,7 @@ mod tests {
                 && prompt.contains("set_paused")
                 && prompt.contains("propose_delete_run")
                 && prompt.contains("checkin-acknowledgment"),
-            "all twenty-two real action types must be documented"
+            "all twenty-three real action types must be documented"
         );
         assert!(
             prompt.contains("state.paused is true") && prompt.contains("2-3 SEPARATE"),
@@ -1241,8 +1259,8 @@ mod tests {
         );
         assert!(prompt.contains("NO other tool or system access"), "the action capability must be explicitly bounded to just these nine data kinds");
         assert!(
-            prompt.contains("twenty-two action types") && prompt.contains("these nine kinds of data"),
-            "real gap found live 2026-08-06: propose_next_step's own addition (fifteenth action type, ninth kind of data -- next-step drafts) updated the action-type count but left the kinds-of-data count at the stale pre-next-step value of eight, so the live assistant's own self-description contradicted itself (\"Eight kinds of data\" followed by a table that itself summed to nine) -- must state nine, matching the real count. Same class of bug found again live 2026-08-06 (docs-loop firing): ToggleRequirementAutoJudge's own addition (sixteenth action type, still the same nine kinds of data -- no new kind, just a new action on the existing requirements kind) left this count stale at fifteen; the live assistant's own self-report ('15 total action types') was checked and found wrong before this fix, not assumed. SetRoleFillMode (seventeenth action type, still nine kinds of data -- roles aren't a new kind, this session already treats role/auction state as covered by the existing surface) grew the count again in the same firing this comment was written, updated together this time rather than in a later separate fix. UpdateCriteria (eighteenth action type, still nine kinds of data -- abort criteria are per-run metadata, already covered by the existing \"runs\" kind) closes the last of §7's own three previously-deferred gaps; count updated in this same commit, not a later separate fix. SetPaused (nineteenth action type, still nine kinds of data -- a run's paused/pause_reason are per-run metadata, the same \"runs\" kind update_criteria already covers) closes the §7.2 gap #2 audit's newest finding; count updated in this same commit, not a later separate fix. ProposeDeleteRun (twentieth action type, still nine kinds of data -- deleting a run is still about the \"runs\" kind, not a new one) closes the SAME audit's other real finding, found in the SAME firing that added SetPaused; count updated together, not split across two commits. This same audit also found (and fixed in this commit) a FIFTH, older instance of this exact bug class that predates this specific test's own history: a separate sentence describing category (1)'s own direct-action count had silently stayed at \"nine\" (the real count when ToggleRequirementAutoJudge/SetRoleFillMode/UpdateCriteria/SetPaused were still direct actions not yet added) instead of the real thirteen -- found by actually counting the enum's own direct-action variants, not trusted from the sentence itself. AcknowledgeCheckin (twenty-first action type, still nine kinds of data -- a run's checkin_acknowledged_through is per-run metadata, the same \"runs\" kind every other per-run-metadata action already covers) closes the check-in-pending gate's own action-set gap, found and fixed in the SAME firing the gate itself shipped in; count updated together here too, continuing this file's own established discipline of never letting the two numbers land in separate commits. ProposeRequirement (twenty-second action type, still nine kinds of data -- a proposed requirement is still the existing \"requirements\" kind, not a new one) closes issue #56's first real slice: the assistant could already add/toggle/edit a requirement directly, but had no propose_* path to suggest a NEW one for the operator to review, the exact \"proposes, human clicks install\" gate every other propose_* action already gets."
+            prompt.contains("twenty-three action types") && prompt.contains("these nine kinds of data"),
+            "real gap found live 2026-08-06: propose_next_step's own addition (fifteenth action type, ninth kind of data -- next-step drafts) updated the action-type count but left the kinds-of-data count at the stale pre-next-step value of eight, so the live assistant's own self-description contradicted itself (\"Eight kinds of data\" followed by a table that itself summed to nine) -- must state nine, matching the real count. Same class of bug found again live 2026-08-06 (docs-loop firing): ToggleRequirementAutoJudge's own addition (sixteenth action type, still the same nine kinds of data -- no new kind, just a new action on the existing requirements kind) left this count stale at fifteen; the live assistant's own self-report ('15 total action types') was checked and found wrong before this fix, not assumed. SetRoleFillMode (seventeenth action type, still nine kinds of data -- roles aren't a new kind, this session already treats role/auction state as covered by the existing surface) grew the count again in the same firing this comment was written, updated together this time rather than in a later separate fix. UpdateCriteria (eighteenth action type, still nine kinds of data -- abort criteria are per-run metadata, already covered by the existing \"runs\" kind) closes the last of §7's own three previously-deferred gaps; count updated in this same commit, not a later separate fix. SetPaused (nineteenth action type, still nine kinds of data -- a run's paused/pause_reason are per-run metadata, the same \"runs\" kind update_criteria already covers) closes the §7.2 gap #2 audit's newest finding; count updated in this same commit, not a later separate fix. ProposeDeleteRun (twentieth action type, still nine kinds of data -- deleting a run is still about the \"runs\" kind, not a new one) closes the SAME audit's other real finding, found in the SAME firing that added SetPaused; count updated together, not split across two commits. This same audit also found (and fixed in this commit) a FIFTH, older instance of this exact bug class that predates this specific test's own history: a separate sentence describing category (1)'s own direct-action count had silently stayed at \"nine\" (the real count when ToggleRequirementAutoJudge/SetRoleFillMode/UpdateCriteria/SetPaused were still direct actions not yet added) instead of the real thirteen -- found by actually counting the enum's own direct-action variants, not trusted from the sentence itself. AcknowledgeCheckin (twenty-first action type, still nine kinds of data -- a run's checkin_acknowledged_through is per-run metadata, the same \"runs\" kind every other per-run-metadata action already covers) closes the check-in-pending gate's own action-set gap, found and fixed in the SAME firing the gate itself shipped in; count updated together here too, continuing this file's own established discipline of never letting the two numbers land in separate commits. ProposeRequirement (twenty-second action type, still nine kinds of data -- a proposed requirement is still the existing \"requirements\" kind, not a new one) closes issue #56's first real slice: the assistant could already add/toggle/edit a requirement directly, but had no propose_* path to suggest a NEW one for the operator to review, the exact \"proposes, human clicks install\" gate every other propose_* action already gets. ToggleRequirementAutomode (twenty-third action type, still nine kinds of data -- a per-requirement automode flag is still the existing \"requirements\" kind, not a new one) closes this same §7.2 gap-2 audit\'s newest re-run: the assistant could already toggle auto_judge on a requirement but had no matching action for its sibling automode checkbox in the same panel, found by literally re-running the discipline this file\'s own comment says every future instance will be found by."
         );
         assert!(prompt.contains("none takes effect by itself"), "the panel/panel-removal/panel-edit/stage/issue-proposal approval gate must be explicit, not implied");
         assert!(
@@ -1351,8 +1369,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_actions_parses_all_twenty_two_real_action_types() {
-        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_requirement\",\"statement\":\"WHEN the app is backgrounded, THE SYSTEM SHALL preserve unsent draft text\",\"acceptance_criteria\":[\"draft survives a real backgrounding\"],\"rationale\":\"rounds out the drafting requirement just discussed\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"},{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"alice\"},{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5},{\"type\":\"set_paused\",\"paused\":true},{\"type\":\"propose_delete_run\",\"rationale\":\"testing only, real reason\"},{\"type\":\"acknowledge_checkin\",\"note\":\"looks good, proceed\"}]\n```";
+    fn extract_actions_parses_all_twenty_three_real_action_types() {
+        let text = "```devsystem-actions\n[{\"type\":\"add_milestone\",\"description\":\"M1\"},{\"type\":\"toggle_milestone\",\"index\":2},{\"type\":\"add_backlog_item\",\"text\":\"write tests\"},{\"type\":\"toggle_backlog_item\",\"index\":0},{\"type\":\"add_requirement\",\"statement\":\"WHEN a user sends a text, THE SYSTEM SHALL persist it locally\",\"acceptance_criteria\":[\"survives app restart\"]},{\"type\":\"toggle_requirement\",\"index\":1},{\"type\":\"toggle_acceptance_criterion\",\"requirement_index\":1,\"criterion_index\":0},{\"type\":\"toggle_requirement_auto_judge\",\"requirement_index\":1},{\"type\":\"toggle_requirement_automode\",\"requirement_index\":1},{\"type\":\"set_repo_url\",\"repo_url\":\"https://github.com/scimbe/CADS-webconference-android\"},{\"type\":\"create_run\",\"new_run_id\":\"my-new-project\"},{\"type\":\"propose_custom_panel\",\"title\":\"Burndown\",\"html\":\"<h2>hi</h2>\"},{\"type\":\"propose_remove_custom_panel\",\"panel_id\":\"0d1217b0\"},{\"type\":\"propose_edit_custom_panel\",\"panel_id\":\"0d1217b0\",\"title\":\"Burndown v2\",\"html\":\"<h2>bye</h2>\"},{\"type\":\"propose_stage\",\"stage_id\":\"devsystem.android_emulator_test\",\"tag\":\"android_emulator_test\",\"rationale\":\"need real emulator coverage\"},{\"type\":\"propose_issue\",\"repo\":\"scimbe/CADS-webconference-demo\",\"title\":\"Missing retry on flaky upload\",\"body\":\"Observed 3 consecutive timeouts.\"},{\"type\":\"propose_requirement\",\"statement\":\"WHEN the app is backgrounded, THE SYSTEM SHALL preserve unsent draft text\",\"acceptance_criteria\":[\"draft survives a real backgrounding\"],\"rationale\":\"rounds out the drafting requirement just discussed\"},{\"type\":\"propose_next_step\",\"text\":\"Resume and expand M1 with group chat support.\"},{\"type\":\"set_role_fill_mode\",\"tag\":\"plan\",\"mode\":\"dedicated\",\"label\":\"alice\"},{\"type\":\"update_criteria\",\"max_iterations\":20,\"max_consecutive_failures\":3,\"checkin_every\":5},{\"type\":\"set_paused\",\"paused\":true},{\"type\":\"propose_delete_run\",\"rationale\":\"testing only, real reason\"},{\"type\":\"acknowledge_checkin\",\"note\":\"looks good, proceed\"}]\n```";
         let (_, actions, err) = extract_actions(text);
         assert!(err.is_none());
         assert_eq!(
@@ -1369,6 +1387,7 @@ mod tests {
                 Action::ToggleRequirement { index: 1 },
                 Action::ToggleAcceptanceCriterion { requirement_index: 1, criterion_index: 0 },
                 Action::ToggleRequirementAutoJudge { requirement_index: 1 },
+                Action::ToggleRequirementAutomode { requirement_index: 1 },
                 Action::SetRepoUrl { repo_url: "https://github.com/scimbe/CADS-webconference-android".to_string() },
                 Action::CreateRun { new_run_id: "my-new-project".to_string() },
                 Action::ProposeCustomPanel { title: "Burndown".to_string(), html: "<h2>hi</h2>".to_string() },
@@ -1580,6 +1599,20 @@ mod tests {
         let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
         assert_eq!(method, "POST");
         assert_eq!(url, "/api/runs/my-run/requirements/3/auto-judge/toggle");
+    }
+
+    #[test]
+    /// Real gap closed (#382 goal doc §7.2, gap #2 re-audit, 2026-08-10): a human could
+    /// already toggle a requirement's automode flag directly in the Requirements panel
+    /// (the checkbox next to auto_judge's); the assistant had no matching action until now.
+    fn apply_action_posts_the_real_toggle_requirement_automode_request() {
+        let (addr, rx) = spawn_capturing_server();
+        let client = reqwest::blocking::Client::new();
+        let result = apply_action(&client, &addr, "my-run", &Action::ToggleRequirementAutomode { requirement_index: 3 });
+        assert!(result.starts_with("done:"));
+        let (method, url, _) = rx.recv_timeout(Duration::from_secs(2)).expect("server must have received a request");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "/api/runs/my-run/requirements/3/automode/toggle");
     }
 
     #[test]
@@ -1889,13 +1922,14 @@ mod tests {
             Action::ToggleRequirement { index: 0 },
             Action::ToggleAcceptanceCriterion { requirement_index: 2, criterion_index: 1 },
             Action::ToggleRequirementAutoJudge { requirement_index: 4 },
+            Action::ToggleRequirementAutomode { requirement_index: 5 },
             Action::AddRequirement { statement: "WHEN x, THE SYSTEM SHALL y".to_string(), acceptance_criteria: vec!["z".to_string()] },
         ];
-        let results = vec!["done: x".to_string(), "done: x".to_string(), "done: x".to_string(), "done: x".to_string(), "done: x".to_string(), "done: x".to_string()];
+        let results = vec!["done: x".to_string(); 7];
         assert_eq!(
             requirement_indices_touched(&actions, &results),
-            vec![0, 2, 4],
-            "must include only ToggleRequirement/ToggleAcceptanceCriterion/ToggleRequirementAutoJudge's real indices, deduped and sorted -- never a guessed index for AddRequirement's brand-new one"
+            vec![0, 2, 4, 5],
+            "must include only ToggleRequirement/ToggleAcceptanceCriterion/ToggleRequirementAutoJudge/ToggleRequirementAutomode's real indices, deduped and sorted -- never a guessed index for AddRequirement's brand-new one"
         );
     }
 

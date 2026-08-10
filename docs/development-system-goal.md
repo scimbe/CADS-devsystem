@@ -193,7 +193,13 @@ Extends §4's user-support goal with concrete GUI requirements:
    and the human's own button gets zero extra confirmation) and `propose_delete_run` (proposal-gated,
    since deletion is destructive/irreversible -- the same class `ProposeRemoveCustomPanel` already
    treats that way, closed 2026-08-07,
-   [`CADS-devsystem@f06b2ba`](https://github.com/scimbe/CADS-devsystem/commit/f06b2ba)). Twenty real
+   [`CADS-devsystem@f06b2ba`](https://github.com/scimbe/CADS-devsystem/commit/f06b2ba)). A third
+   real instance found by re-running the exact same audit, 2026-08-10: the Requirements panel's
+   per-requirement `automode` checkbox (the sibling of `auto_judge`'s, already closed above) had
+   no matching `Action` variant either -- `toggle_requirement_automode_handler` existed and was
+   human-reachable, but the assistant could not flip it. Closed the same way as `auto_judge`
+   (direct, fully reversible toggle, no approval gate needed):
+   [`CADS-devsystem@<pending>`](https://github.com/scimbe/CADS-devsystem). Twenty-three real
    action types as of this writing (see the ranked list's item 4 for the specific panels/fields
    already covered one at a time). No further concrete instance is currently known -- the next one
    will be whatever a future firing's own re-audit finds, same discipline as this one.
