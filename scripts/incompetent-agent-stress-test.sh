@@ -970,10 +970,29 @@ check "toggling auto-judge afterward sets it on too, without ever clearing the s
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$independence_run"
 
 echo
+echo "[64] a proposal (or next-step draft) that lands as a direct result of an automode toggle must be structurally traceable back to the real requirement that triggered it, not indistinguishable from an ordinary chat-triggered one -- the DAU-lens gap issue #31's automode slice left open (a person who toggles automode on then back off, believing they cancelled it, would otherwise see an unexplained item appear later with no visible link to their own action) (#382 goal doc §7/§8, 2026-08-10). Honestly skipped, not failed, if no devsystem.assistant bridge is reachable -- automode's proposal call is fail-soft by design, so a bridgeless deployment produces zero proposals to check, same as check [49]'s own skip reasoning."
+triggerby_run="automode-triggered-by-stress-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$triggerby_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$triggerby_run/requirements" -H 'content-type: application/json' \
+  -d '{"statement":"WHEN a real regression check runs, THE SYSTEM SHALL tag every automode-triggered proposal.","acceptance_criteria":["a real checkable criterion for the harness itself"]}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$triggerby_run/requirements/0/automode/toggle"
+proposal_count=$(curl -s "$BASE/api/runs/$triggerby_run" | python3 -c "import json,sys; print(len(json.load(sys.stdin)['state'].get('pending_requirement_proposals', [])))" 2>/dev/null)
+if [ "${proposal_count:-0}" -gt 0 ] 2>/dev/null; then
+  untagged_count=$(curl -s "$BASE/api/runs/$triggerby_run" | python3 -c "import json,sys
+props = json.load(sys.stdin)['state'].get('pending_requirement_proposals', [])
+untagged = [p for p in props if not (p.get('triggered_by') or '').startswith('automode:')]
+print(len(untagged))" 2>/dev/null)
+  check "every proposal produced by this automode toggle is tagged traceable to it (0 untagged)" "0" "$untagged_count"
+else
+  echo "  SKIP: no devsystem.assistant bridge reachable from this deployment (automode's own proposal call is fail-soft) -- nothing to check"
+fi
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$triggerby_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the sixty-three gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the sixty-four gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
