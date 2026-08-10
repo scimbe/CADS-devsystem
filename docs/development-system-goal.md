@@ -8382,3 +8382,46 @@ question) confirmed CI-green and handshaken; issue #260 (dormant `CredentialIssu
 re-investigated 3x with the same conclusion) relabeled `wontfix` rather than triaged a 4th time;
 issue #376's tini/STOPSIGNAL fix confirmed CI-green and handshaken (left open for its own
 separate graceful-shutdown-handler half).
+
+**Goal-driven-loop firing, 2026-08-10 (qqqq) -- CADS-Tunnel #307's real production-mode
+Keycloak migration, done live with real accounts at stake; #298 finalized as wontfix; #309
+scoped and surfaced as a real architecture decision.** State check: `#382` unchanged, OIDC
+blocker still the only open point; no labor-setup.com activity since the earlier check-in.
+
+Continuing CADS-Tunnel triage at the next lower-numbered automated-review issues (#298, #307,
+#309): #298 (DNS-mutations API missing per-tenant ownership scoping) had already been
+investigated 3x with the same "real but zero live exposure, `ct-dns` isn't deployed anywhere"
+conclusion -- relabeled `wontfix` (left open) rather than a 4th redundant pass, same treatment
+as #260 last firing.
+
+#307 and #309 both needed real operator input rather than another round of investigation --
+asked directly rather than guessing. **#307** (Keycloak still on `start-dev`, not production
+mode): approved. This was genuinely delicate -- 47 real registered accounts on the live
+deployment. Exported them from the running H2 instance, backed up the volume as a standalone
+tarball, imported into a freshly-provisioned Postgres via a one-off container, verified
+47/47 users and credentials matched exactly via direct SQL *before* touching the live service,
+then cut over. A naive `KC_DB=postgres` flip would have silently started empty -- exactly the
+data-loss class this issue existed to prevent, just via a different mechanism. Also found and
+fixed a real incident the cutover itself triggered: the edge's `:443` front door held a stale
+connection to the destroyed old Keycloak container, breaking `auth.<zone>` immediately after
+recreate -- restarted just the edge process, confirmed stable across repeated real requests
+afterward, including that this session's earlier `prompt=login` fix (devsystem#20) still held.
+Shipped [CADS-Tunnel@2948652](https://github.com/scimbe/CADS-Tunnel/commit/2948652), closed
+with live evidence.
+
+**#309** (k8s deploy path missing front-door/channel-broker parity): a real architecture fork,
+not a config gap -- reimplement the bespoke `:443` SNI/ALPN multiplexing k8s-side (keeps the
+"works from a `:443`-only network" property, more work) vs. per-port TCP/UDP LoadBalancer
+Services (simpler, k8s-idiomatic, loses that property). Operator picked option A
+(k8s-side multiplexing). Given the real scope (porting a bespoke demux implementation to a new
+deployment shape, not a same-session mechanical patch), queued for its own dedicated
+increment -- likely delegated to a fork given the architectural complexity, matching this
+session's established pattern for #366-368/#374 -- rather than rushed into this already-large
+firing.
+
+Also surfaced, deliberately not fabricated an answer for: whether `labor-setup.com`'s activity
+on #13/#14 was real. Every comment there shows GitHub login `scimbe` (shared write token),
+which briefly read as possible impersonation/fabrication of an external collaborator. Asked the
+operator directly rather than guessing either way -- confirmed real, a second AI maintainer by
+design sharing that credential. Corrected the tracking convention (content/signature, not
+login, identifies their replies) and saved it to memory so it isn't re-flagged.
