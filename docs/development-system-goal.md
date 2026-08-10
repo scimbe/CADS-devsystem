@@ -7717,4 +7717,41 @@ output content instead of trusting the background task notification's "exit code
 running each crate from its own directory with `set -eo pipefail` from here on -- the corrected
 invocation is now the one this firing's own hermetic verification actually used.
 
+**Goal-driven-loop firing, 2026-08-10 (ssss) -- the pending-proposal undercount bug class recurred a
+third time; closed and given a permanent regression check.** State check: no new scimbe reply on any
+of `#382`'s open checkpoints (comment count unchanged); no new open issues/PRs on either repo.
+
+While investigating issue #31 (automode) found it wasn't a real candidate for this firing -- a prior
+firing (posted as scimbe, this loop's own past output) already asked the operator three concrete
+design questions there and got no reply yet; per this project's own "surface it, don't guess" rule,
+that stays a genuine open checkpoint, not something to unilaterally decide. Looked for the next
+bounded increment via live investigation instead: with `pending_decisions` freshly shipped
+(firing rrrr), checked whether the two newest pending-something queues -- `pending_requirement_proposals`
+(issue #56, 2026-08-09) and `pending_decisions` (today) -- had been folded into every shared "is
+anything waiting on a human" tally, since this exact bug class (a new queue shipping without every
+call site being updated) had already recurred twice before (panel-removal/edit 2026-08-06, delete-run
+2026-08-07).
+
+Live-confirmed before touching anything: a real scratch run with one pending requirement proposal and
+one real unanswered decision -- two genuine open points -- showed `pending_reviews: 0`,
+`needs_attention: false` in the actual deployed Runs list. Both were missing from `list_runs`'s own
+tally in `web/src/main.rs` **and** from `checkin.rs`'s "Also awaiting your review" `pending_total`
+(the latter was *also* separately missing `pending_delete_run_proposal`, added 2026-08-07, never
+folded in either). Fixed both call sites -- `pending_decisions` deliberately excluded from
+`checkin.rs`'s own tally (it already gets a dedicated "Decision needed" section; counting it there too
+would double-list it), but included in the Runs-list tally, which has no separate decision-specific
+surface. 2 new hermetic tests, both crates green, clippy clean. Shipped as `CADS-devsystem@440724f`,
+CI-confirmed fully green (all 3 jobs, including the incompetent-agent stress-test container run)
+before redeploying.
+
+Added stress-harness check [61] for this exact regression class -- proper mutation-tested both ways
+this time: run against the still-deployed pre-fix container first (git_sha `ccb8f46`), it correctly
+caught 3 real failures matching the live bug; redeployed the fix (git_sha `440724f`) and re-ran --
+all 150 checks pass, 0 failures. (One real self-correction along the way: the new check's own first
+draft never submitted a real iteration on its scratch run before requesting its check-in document,
+so `GET .../checkin` honestly 404'd "no iteration history yet" and the assertion silently read as
+"0 hits" instead of testing anything real -- caught before committing, fixed by adding the missing
+`/iterate` call, matching every other check's own pattern.) Shipped as
+`CADS-devsystem@426c39b`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
