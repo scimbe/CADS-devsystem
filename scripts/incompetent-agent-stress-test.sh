@@ -916,6 +916,28 @@ check "an approved requirement carries real, honest provenance" "devsystem.assis
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$propreq_run"
 
 echo
+echo "[61] the Runs-list pending_reviews tally must count a real pending requirement proposal AND a real unanswered decision, not just the five original proposal queues -- the same undercounting shape already found and closed twice before (panel-removal/edit 2026-08-06, delete-run 2026-08-07) recurred a third time when pending_requirement_proposals (issue #56, 2026-08-09) and pending_decisions (issue #39/#41, 2026-08-10) shipped without this shared tally ever being updated -- live-confirmed before the fix: a run with both showed pending_reviews:0, needs_attention:false"
+undercount_run="pending-undercount-stress-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$undercount_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$undercount_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.implement","feedback":"real work, so the check-in doc below has real history to render against","succeeded":true}'
+list_before=$(curl -s "$BASE/api/runs" | python3 -c "import json,sys; r=[x for x in json.load(sys.stdin) if x['run_id']=='$undercount_run'][0]; print(r['pending_reviews'], r['needs_attention'])" 2>/dev/null)
+check "a fresh run with nothing pending starts at 0, not attention-worthy" "0 False" "$list_before"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$undercount_run/requirements/propose" -H 'content-type: application/json' \
+  -d '{"statement":"WHEN a real regression check runs, THE SYSTEM SHALL be counted.","acceptance_criteria":["a real checkable criterion"],"rationale":"proving the undercount fix holds"}'
+decision_response=$(curl -s -X POST "$BASE/api/runs/$undercount_run/decisions" -H 'content-type: application/json' -d '{"question":"a real open question for the regression check"}')
+decision_id=$(echo "$decision_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["decision"]["id"])' 2>/dev/null)
+list_with_both=$(curl -s "$BASE/api/runs" | python3 -c "import json,sys; r=[x for x in json.load(sys.stdin) if x['run_id']=='$undercount_run'][0]; print(r['pending_reviews'], r['needs_attention'])" 2>/dev/null)
+check "a real requirement proposal and a real unanswered decision both count toward pending_reviews" "2 True" "$list_with_both"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$undercount_run/decisions/$decision_id/answer" -H 'content-type: application/json' -d '{"answer":"a real answer"}'
+list_after_answer=$(curl -s "$BASE/api/runs" | python3 -c "import json,sys; r=[x for x in json.load(sys.stdin) if x['run_id']=='$undercount_run'][0]; print(r['pending_reviews'])" 2>/dev/null)
+check "answering a decision drops it back out of the count" "1" "$list_after_answer"
+checkin_md=$(curl -s "$BASE/api/runs/$undercount_run/checkin" | python3 -c 'import json,sys; print(json.load(sys.stdin)["markdown"])' 2>/dev/null)
+also_awaiting_hit=$(echo "$checkin_md" | grep -c "New requirement proposed" || true)
+check "the check-in doc's own 'Also awaiting your review' section also names the real pending requirement proposal" "1" "$also_awaiting_hit"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$undercount_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
