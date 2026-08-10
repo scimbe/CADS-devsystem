@@ -8550,3 +8550,62 @@ run stays correctly out of new scope (resumed per the operator's own M1 decision
 `pending_reviews: 0`, no pending proposals -- nothing to act on, and no new scope should be added
 regardless per that same decision) -- no genuine gap found there this firing, reported honestly
 rather than inventing one.
+
+**Goal-driven-loop firing, 2026-08-10 (vvvv) -- issue #31's automode traceability tag was only
+ever wired into ONE of its two real review surfaces; found by reading the actual `OpenPoint`
+struct, not assumed complete because the Requirements panel's own version already shipped.**
+State check: `#382` unchanged at 23 comments, OIDC blocker still the only open point;
+labor-setup.com's last check-in on #13/#14 (2026-08-10T09:08:24Z) unchanged -- confirmed nothing
+new to review, the standing blocker is still the same real credential decision; CI backlog on
+both `CADS-devsystem` and `CADS-webconference-android` confirmed clear (no runs stuck queued);
+no new scimbe-authored open PRs on any of the three repos.
+
+Firings `ssss`/`tttt` made an automode-triggered requirement proposal / next-step draft
+structurally traceable back to its own toggle, and the Requirements panel's review list renders
+the real "⚡ automode: ..." tag for it. Re-reading `open_points` (`web/src/main.rs`) -- the
+projection behind the OTHER real review surface, the guided Open Points queue ("stack mode") --
+found the `OpenPoint` struct never carried `triggered_by` at all, and the frontend's own
+`next_step_draft` branch reconstructed a stripped draft object that would have dropped it even
+if it had been added. A human reviewing the identical automode-triggered proposal through Open
+Points instead of the Requirements panel would see no connection back to the toggle -- the exact
+DAU-lens gap `triggered_by` was built to close, just re-opened one review surface over.
+
+Fixed at both ends: `OpenPoint` gained `triggered_by` (populated from the real
+`PendingRequirementProposal`/`PendingNextStepDraft` field, `None` for every other kind); the GUI
+renders the same "⚡ automode: ..." tag in the generic proposal-card branch and the standalone
+next-step-draft branch (fixed to pass `triggered_by` through instead of dropping it). Extended
+the existing automode-tagging test (`a_proposal_landing_from_the_automode_trigger_call_is_tagged_
+traceable_to_it`) with real assertions against `/open-points` rather than writing a new one --
+same real state already proves both the positive case (tag present) and negative case (a
+pre-existing, non-automode proposal shows no tag). Also fixed a real, unrelated compile bug the
+change surfaced in that same test (`app` moved without `.clone()` on an earlier call, only a
+problem once a later assertion needed it again). Shipped
+[CADS-devsystem@217f51f](https://github.com/scimbe/CADS-devsystem/commit/217f51f). Hermetic
+(single Docker container, web crate run from its own directory): 262/262 (0 new -- extended, not
+added), clippy-clean.
+
+Deployed live (`scripts/deploy-devsystem-web.sh`), git SHA verified running, then proved it end
+to end against the real deployment -- no mock: toggled automode on a real requirement, waited for
+the real `devsystem.assistant` call to land three genuine proposals, hit `/open-points` and
+confirmed `triggered_by` present via the real API, then drove the actual GUI (Playwright,
+`simulated-user.sh`) to open the Open Points panel for real and confirmed the ⚡ tag renders in
+the live DOM, zero console errors. Documented with a real screenshot of this exact live run
+([CADS-devsystem-docs@eda9773](https://github.com/scimbe/CADS-devsystem-docs/commit/eda9773)).
+Cleaned up the test run via the real API afterward.
+
+**Real, urgent side-finding, not fabricated busywork**: the host's only filesystem was at 100%
+(57MB free of 72G) when this firing's first hermetic build attempt failed with "No space left on
+device" -- not a code problem, root-caused via `docker system df -v` before touching anything.
+Found ~30GB across build-cache and target/registry volumes, most of it either genuinely orphaned
+(two anonymous 0-link volumes from a crashed/non-`--rm` run) or stale near-duplicate volumes
+under an older `ct-devsystem-*` naming prefix, superseded by the `cads-devsystem-*`/`devsystem-*`
+names this session's real commands actually use. Freed via `docker builder prune -f` (1.757GB,
+Docker's own computed-unused figure) plus removing exactly those orphaned/superseded volumes --
+deliberately did NOT touch `cads-tunnel-target` (the CADS-Tunnel triage thread's own active
+20GB+ build cache) or any image, including the 4.69GB `ct-playwright-runner` image this same
+firing's own live verification needed. Host back to ~1.7-3GB free after this firing's builds and
+deploy, enough to complete everything queued, but this is the SECOND time this session a target-
+volume-sprawl incident has eaten the disk (see the `oooo`-adjacent memory note on the first one)
+-- worth the operator's attention if the pattern keeps recurring, since neither incident was
+caused by a single runaway build, but by naming-convention drift across many sessions never
+cleaning up after itself.
