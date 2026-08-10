@@ -8173,4 +8173,64 @@ explicit instruction this session: "ask me about open points"):
 `#382` itself will get a real comment recording all three outcomes, matching the transparency this
 whole thread has kept throughout. Ranked-gap-list status otherwise unchanged since firing `hhhh`.
 
+**Goal-driven-loop firing, 2026-08-10 (jjjj) -- issue #56's remaining, structural half shipped: a
+deterministic, GUI-driven guided-interview requirement wizard.** State check: `#382` now at 23
+comments (was 22) -- confirmed firing `iiii`'s promised comment landed, recording all three real
+decision outcomes; no further new scimbe reply beyond that on any open point. No labor-setup.com
+activity on #14.
+
+Task tracker item #83 ("Issue #56 remainder: guided interview-style requirement authoring dialog")
+picked up directly: the prior firing on this issue live-tested a `devsystem_assistant.rs`
+prompt-engineering carve-out twice against the real deployed assistant, and both attempts failed
+the same way -- for a topic the LLM treats as "textbook" (e.g. "offline message delivery"), it
+guessed a full requirement and called `add_requirement` directly, 3/3 times, regardless of how
+explicitly the prompt said not to. That firing's own conclusion: this needs "something more
+structural than prompt tuning -- a real, deterministic mid-conversation state machine the GUI
+drives, not a single LLM call trusted to self-regulate."
+
+Built exactly that: a five-step wizard (trigger, behavior, acceptance criteria, rationale, review)
+with zero LLM calls anywhere in its own flow -- fixed questions, fixed order, assembled
+client-side into the real EARS form (`WHEN <trigger>, THE SYSTEM SHALL <behavior>`, or the
+ubiquitous `THE SYSTEM SHALL <behavior>` form if trigger is left blank), which by construction
+always contains "SHALL" as a real word, so it can never trip the server's own EARS-format
+rejection regardless of what the human types into either field. Submits via the existing
+`propose_requirement` endpoint (never `add_requirement` directly) -- a wizard-drafted requirement
+still lands in the same human-reviewed pending-proposal queue every other proposal in this app
+uses. Reused this app's own established conventions rather than inventing new ones: the
+`.modal-overlay`/`.modal` dialog chrome, focus-trap, and Escape-to-close pattern the New Project
+and Shortcuts dialogs already use; the same per-criterion validation rules
+(`MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS`/`MAX_ACCEPTANCE_CRITERION_LEN`)
+`validate_requirement_fields` already enforces server-side, mirrored client-side for immediate
+feedback instead of a round-trip.
+
+**Live-verified, not just read from the diff**: rebuilt and redeployed the real container (git SHA
+verified against the running binary, byte-identical-resubmission smoke test passed -- caught and
+corrected a real mistake along the way: three small `maxlength` safety edits made *after* the
+first `docker build` had already started were silently absent from that build, confirmed via
+`docker exec ... grep` before trusting it, not assumed; rebuilt a second time and reverified before
+proceeding). Ran a real Playwright walkthrough against the actually-deployed container -- 17/17
+checks: cancel mid-wizard leaves zero trace (no pending proposal); each step's own client-side
+validation blocks an empty/trivial answer with a real, specific message before any round-trip; the
+review step renders the exact composed EARS statement; on submit the server-side proposal's
+statement/criteria/rationale match exactly what was typed, no live requirement was created
+directly, and the proposal renders in the Requirements panel's own review queue after a real page
+reload; zero console/page errors throughout. Scratch run created and cleaned up via the real API,
+not left behind. Shipped as `CADS-devsystem@9310db3`.
+
+Found and named, not silently worked around: this app's panels are freely draggable, overlapping
+floating windows, and the live verification script had to explicitly bring the Requirements panel
+to front (the same `mousedown` -> `bringToFront` mechanism this app's own windows already use)
+before the wizard's trigger button was clickable, since the Architecture panel happened to be
+stacked on top by default. Not a regression from this change -- pre-existing panel-layout
+behavior -- but worth naming since a first-time user could hit the same thing.
+
+Issue #56 stays correctly open: this closes the "structural, non-prompt-tuned" gap the last firing
+identified, but the wizard's own scope is a first real slice (five fixed steps, free-text
+answers) -- it doesn't branch on answer content or offer inline EARS-phrasing help beyond the
+composed preview, and doesn't handle a requirement that genuinely doesn't fit the trigger/
+behavior/criteria/rationale shape. Posted the real evidence on the issue, then a real
+self-correction right after: the first comment claimed a screenshot was "attached below," which
+isn't something `gh` can actually do (the same gotcha this project already documented on issue
+#13) -- corrected rather than left stale.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
