@@ -956,10 +956,24 @@ check "a genuinely specific review of the same requirement is accepted" "200" "$
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$genreview_run"
 
 echo
+echo "[63] automode and auto_judge must be genuinely independent flags, not two labels on the same bit -- the exact regression class issue #31's automode slice deliberately guarded against, since the pre-existing auto_judge checkbox was already mislabeled 'automode flag' in the GUI before this issue's own real automode field existed (2026-08-10)"
+independence_run="automode-independence-stress-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$independence_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$independence_run/requirements" -H 'content-type: application/json' \
+  -d '{"statement":"WHEN a real regression check runs, THE SYSTEM SHALL keep automode and auto_judge separate.","acceptance_criteria":["a real checkable criterion"]}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$independence_run/requirements/0/automode/toggle"
+after_automode=$(curl -s "$BASE/api/runs/$independence_run" | python3 -c "import json,sys; r=json.load(sys.stdin)['state']['requirements'][0]; print(r['automode'], r['auto_judge'])" 2>/dev/null)
+check "toggling automode sets automode but must never touch the separate auto_judge flag" "True False" "$after_automode"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$independence_run/requirements/0/auto-judge/toggle"
+after_both=$(curl -s "$BASE/api/runs/$independence_run" | python3 -c "import json,sys; r=json.load(sys.stdin)['state']['requirements'][0]; print(r['automode'], r['auto_judge'])" 2>/dev/null)
+check "toggling auto-judge afterward sets it on too, without ever clearing the still-real automode flag" "True True" "$after_both"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$independence_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the sixty-two gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the sixty-three gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
