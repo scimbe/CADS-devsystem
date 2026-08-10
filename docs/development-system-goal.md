@@ -8425,3 +8425,38 @@ which briefly read as possible impersonation/fabrication of an external collabor
 operator directly rather than guessing either way -- confirmed real, a second AI maintainer by
 design sharing that credential. Corrected the tracking convention (content/signature, not
 login, identifies their replies) and saved it to memory so it isn't re-flagged.
+
+**Goal-driven-loop firing, 2026-08-10 (rrrr) -- #309 fork landed and independently verified;
+real live E2E regression check of the auth chain after this session's two Keycloak/gate
+changes came back clean.** State check: `#382` unchanged (OIDC blocker still the only open
+point); labor-setup.com's last check-in on #13/#14 unchanged, no new activity.
+
+The fork delegated last firing for CADS-Tunnel#309 (k8s front-door/channel-broker parity,
+option A) landed [CADS-Tunnel@6c41536](https://github.com/scimbe/CADS-Tunnel/commit/6c41536)
+and self-reported completion. Didn't trust the summary at face value: independently re-ran
+`kubectl kustomize docker/deploy/k8s` (clean render), cross-checked several of the new env
+vars (`CT_EDGE_HTTP_REDIRECT`, `CT_CP_PROXY_ADDR`, `CT_EDGE_CHANNEL_RELAY_LISTEN`,
+`CT_EDGE_ADMIN_LISTEN`) against the real `crates/edge/src/serve.rs` source directly, and read
+the actual diff for `edge-config.yaml`/`kustomization.yaml` -- all matched the fork's own
+claims exactly, including the real architecture call it made (removing
+`control-plane-ingress.yaml` from the default kustomization resource list, since it competed
+with the edge's own front door for the same public hostname, kept as a documented opt-in
+rather than deleted). `fix-ready` label applied, issue correctly left open (Keycloak/OIDC-in-k8s
+deliberately deferred, no manifest exists yet to wire against).
+
+Then, rather than inventing a new pipeline-stage increment, did the highest-value real check
+available: this session shipped two live changes to the exact same auth chain this whole
+system's login depends on (devsystem#20's `prompt=login` fix, and #307's Keycloak
+start-dev-to-production/H2-to-Postgres migration) -- worth proving the chain still works end
+to end, not assuming. Used the real Playwright `simulated-user.sh` tool (already built) to
+register a genuinely new account through the live self-registration form, accept the real
+Terms-and-Conditions required-action step, and complete the real OIDC authorization-code
+exchange at `/gate/callback`. Hit a real HTTP 403 mid-run -- investigated rather than assumed a
+regression, and confirmed it was `devsystem-demo`'s own access-list gate correctly rejecting an
+unauthorized test email ("Not on the access list"), not a bug: proof the access-control layer
+also survived the migration intact, not just the login mechanics. Cleaned up all 7 throwaway
+test accounts afterward (`kcadm.sh delete`), confirmed back to the real 47-user count.
+
+Next real increment queued: continue CADS-Tunnel automated-review triage into the #338-356
+efficiency batch, or pick up the next self-optimizing-pipeline role-filler iteration once a
+concrete next pipeline stage is actually needed rather than speculatively built ahead of need.
