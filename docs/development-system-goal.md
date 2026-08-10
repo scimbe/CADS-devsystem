@@ -7955,4 +7955,31 @@ hermetic tests**: created a real scratch run, toggled `automode` on for its one 
 bit read twice), `verified` stayed `false` (toggling automode never itself judges or verifies
 anything, exactly as documented). Scratch run deleted afterward.
 
+**Goal-driven-loop firing, 2026-08-10 (zzzz) -- self-inflicted disk-accumulation bug found and fixed
+in this session's own hermetic build habit, not in the target repos.** State check: `#382` still 22
+comments, no new scimbe reply on its open checkpoints; no labor-setup.com activity on #14; CI
+running normally on the prior firing's commit (docs-only, no code change).
+
+Real host disk (`prod_host_resource_limits`, this session's own standing constraint) had quietly
+dropped from 13GB free a few firings ago to 10GB free -- checked `df`/`docker system df` as routine
+hygiene before picking this firing's work, same as every prior firing that considered disk-heavy
+work. Found the actual cause: this session's own hermetic `cargo build`/`test` invocations this
+firing rotation used `-v "$PWD":/work` bind-mounting the *whole* repo directory into
+`rust:1-slim`, which meant `cargo`'s `target/` output landed directly on the host filesystem
+(`pipeline/target` 3.4GB, `web/target` 4.5GB, both root-owned since the container runs as root) --
+the exact incident class this project's own memory already names ("mount target/ as a named
+volume, not host bind-mount -- caused 46GB accumulation"). This session had been quietly recreating
+that same mistake, just not yet at the scale of the prior incident.
+
+Fixed for real, not just cleaned up once: removed the root-owned `pipeline/target`/`web/target`
+(via a throwaway `debian:bookworm-slim rm -rf`, the same pattern already used for Jekyll's
+root-owned `_site`) and two stale empty `target-clippy` dirs from an earlier firing, then ran
+`docker builder prune -f --filter until=1h` to reclaim stale build-cache layers. **10GB reclaimed**
+(`df`: 10GB -> 20GB free; `docker system df`: build cache 8.5GB -> 2.5GB). Verified the corrected
+pattern actually works before relying on it going forward: re-ran a real hermetic
+`cargo build --lib` for the pipeline crate with an explicit named volume for `target`
+(`-v cads-devsystem-pipeline-target:/work/target`) -- build succeeded, and confirmed live afterward
+that `pipeline/target` does not exist on the host at all, proving the fix, not just asserting it.
+Every hermetic build/test/clippy invocation from here forward in this session uses this pattern.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
