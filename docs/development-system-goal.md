@@ -8504,3 +8504,24 @@ then cleaned up the test run via the real API.
 Deliberately scoped to `PendingRequirementProposal` only, not `PendingNextStepDraft` -- the same
 automode instruction can also produce a `propose_next_step`, a real analogous gap noted but not
 expanded into this same increment; a follow-up should mirror this fix there.
+
+**Goal-driven-loop firing, 2026-08-10 (tttt) -- closed the explicitly-deferred half of the
+triggered_by fix (next-step drafts), and CADS-Tunnel#339's real allocation-free front-door
+classify shipped, CI-confirmed, handshaken.** State check: `#382` unchanged; labor-setup.com's
+last check-in on #13/#14 unchanged; CADS-devsystem's own CI backlog stayed clear.
+
+Mirrored the requirement-proposal `triggered_by` fix onto `PendingNextStepDraft` exactly as
+flagged in firing `ssss`'s own commit message -- `devsystem_assistant.rs`'s automode instruction
+steers toward EITHER `propose_requirement` or `propose_next_step`, so leaving next-step drafts
+untagged was the same real DAU-lens gap, just for the other of the two real outcomes the same
+call can produce. `trigger_automode_initial_proposals` now snapshots both queues before firing
+and tags whatever's new in either. Extended the existing test (mock now inserts both a proposal
+AND a draft) rather than duplicating it. Shipped
+[CADS-devsystem@e4a8f82](https://github.com/scimbe/CADS-devsystem/commit/e4a8f82). Hermetic:
+pipeline 9/9, web 262/262 unchanged, both crates clippy-clean. Deployed live, git_sha verified
+running.
+
+Also completed this firing: the CADS-Tunnel triage thread's own #339 (front-door SNI/ALPN
+allocation-free `classify_front_door`) finished its CI run green and got its fix-ready handshake
+-- see the CADS-Tunnel issue-triage thread's own log for the real technical detail (this doc
+tracks devsystem/goal-driven work, not every CADS-Tunnel triage increment individually).
