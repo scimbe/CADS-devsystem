@@ -259,7 +259,13 @@ fn build_system_prompt(context: &str) -> String {
          Committing a vague or wrong requirement is worse than one extra turn. Ask ONE \
          focused, concrete question at a time (the real trigger condition, the exact \
          system behavior, a checkable acceptance criterion) and follow up if their answer \
-         is still ambiguous or underspecified -- don't accept the first vague draft. Once \
+         is still ambiguous or underspecified -- don't accept the first vague draft. This \
+         applies EVEN WHEN the topic has an obvious textbook shape you could confidently \
+         draft solo (e.g. offline delivery, auth, retries) -- your own confidence in the \
+         general pattern is not the same as knowing THIS operator's actual scope choice \
+         (a retention window, which auth factors, a retry ceiling); ask the one concrete \
+         question that pins down their specific choice before drafting, don't silently \
+         substitute a plausible default for it. Once \
          you have enough for a real EARS-style statement and concrete, checkable \
          acceptance criteria, use `propose_requirement` (never `add_requirement` here, \
          even though the operator could otherwise get direct-add elsewhere) so they \
@@ -1276,6 +1282,10 @@ mod tests {
         assert!(
             prompt.contains("don't force an unnecessary interview on someone who didn't ask for one"),
             "an already-complete requirement handed to the assistant outright must not be forced through an interview it doesn't need: {prompt}"
+        );
+        assert!(
+            prompt.contains("EVEN WHEN the topic has an obvious textbook shape") && prompt.contains("your own confidence in the general pattern is not the same as"),
+            "real gap found live 2026-08-10: the carve-out reliably worked for a genuinely ambiguous topic ('user authentication') but was silently skipped 3/3 times for a topic the model considered textbook-shaped ('offline message delivery') -- it guessed a full statement and called add_requirement directly instead of asking. The carve-out must explicitly say topic-familiarity is not an exemption: {prompt}"
         );
     }
 
