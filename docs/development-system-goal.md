@@ -8120,4 +8120,14 @@ native-bridge crate build and APK install checks) were still in progress at the 
 check; the test's own real pass/fail is what this firing needed to confirm honestly, and it's now
 real, not inferred.
 
+**Goal-driven-loop firing, 2026-08-10 (gggg) -- `CADS-webconference-android@7a3c073` CI fully green,
+all 4 jobs, closing out requirement #22 with no loose ends.** State check: `#382` still 22 comments,
+no new scimbe reply; no labor-setup.com activity on #14.
+
+`verify-native-bridge` (the one job still running at firing `ffff`'s check) completed successfully.
+Combined with the real per-test report evidence already confirmed in that firing, requirement #22
+is closed on every axis this project's own discipline checks: real hermetic tests (native crate),
+real CI (all 4 jobs), and real on-device evidence (the actual instrumented-test-report artifact),
+not just an inferred green checkmark. Nothing further to verify here.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
