@@ -8330,4 +8330,17 @@ Not attempted here, deliberately: question 2 (price_ceiling interaction under au
 full auto-bid/role-fill/auto-verify chain remain explicitly out of scope -- still the first real
 slice per the operator's own scoping, not the whole issue.
 
+**Goal-driven-loop firing, 2026-08-10 (oooo) -- regression sweep against the freshly-redeployed
+container, clean.** State check: no new scimbe reply on `#382`'s open OIDC-credential point (the
+other two were resolved live this session); no labor-setup.com activity on #13/#14.
+
+Earlier this session a real production-staleness gap was found and fixed: the live
+`devsystem-web` container had been running `ccbc8d4` since before the guided-interview wizard,
+the M1 checkpoint closure, all three wizard audits, and automode's real first behavior
+(`b8cdda3`) ever landed on `main` -- redeployed, git_sha confirmed live. That redeploy hadn't yet
+had its own regression check against the real stress harness. Ran it cold: **154/154 passing, zero
+regressions** -- every gate this session's own work depends on (the mandatory review gate, the
+generic-but-varied filter, automode/auto_judge independence, the pending-proposal queues) still
+holds against the binary real users actually get.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
