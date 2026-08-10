@@ -8270,4 +8270,23 @@ same as clicking Cancel; (3) focus lands inside the wizard overlay on open, not 
 was focused behind it. All three real, no gap found -- the claim was accurate. No code change; a
 verified claim is itself the real outcome of this firing, not a null result.
 
+**Goal-driven-loop firing, 2026-08-10 (mmmm) -- third and final wizard audit pass: criterion
+add/remove and its client-side validation mirror the server exactly, no gap.** State check: `#382`
+unchanged, no new scimbe reply; no labor-setup.com activity on #13/#14.
+
+Checked the one interaction the fork's own 17/17 Playwright pass never exercised: removing
+acceptance criteria, not just adding them. Read the real code rather than guessing: the remove (✕)
+button is deliberately hidden while exactly one criterion remains (`wizardState.criteria.length >
+1 ? ... : ''`), so the GUI itself can never be driven down to zero criteria fields -- and
+`wizardValidateCurrentStep`'s own client-side rule (`nonEmpty.length` must be >= 1, each with >= 5
+real alnum characters, <= 500 chars) matches the server's `MAX_ACCEPTANCE_CRITERIA=20`/
+`MAX_ACCEPTANCE_CRITERION_LEN=500`/`MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS=5` exactly (`grep`-checked
+the real constants, not assumed in sync). No drift, no gap.
+
+Combined with firings `kkkk` (shared-validator, no new server surface) and `llll` (Escape/focus-trap
+holds live), this wizard has now had three independent, real audit passes -- DAU-lens keyboard
+behavior, server-validation parity, and this firing's add/remove-criterion edge case -- and all
+three came back clean. Considering this feature's own audit thread closed for now; a future firing
+should look elsewhere for the next genuine gap rather than a fourth pass over the same surface.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
