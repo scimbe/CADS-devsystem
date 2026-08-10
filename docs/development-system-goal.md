@@ -8707,3 +8707,37 @@ free after this firing's own cleanup -- the fourth time disk pressure has been n
 (`vvvv`, `xxxx`, and now here); flagging again rather than fixing it a fourth time ad hoc, since
 the pattern (naming-convention drift leaving detached target/registry volumes across repos) is now
 clearly recurring and worth the operator's own attention for a real periodic-cleanup fix.
+
+**Goal-driven-loop firing, 2026-08-10 (zzzz) -- state re-confirmed unchanged from firing `yyyy`;
+held off on a new hermetic build/deploy this firing for a real host-resource-safety reason rather
+than force one.** State check: `#382` unchanged at 23 comments, last comment still the operator's
+own `iiii`-firing resolution of checkpoints 1/2, only the OIDC blocker (checkpoint 3) genuinely
+open with no new preference given; CADS-devsystem #13 stays closed, #14's last labor-setup.com
+check-in (2026-08-10T09:08:24Z) unchanged, nothing new to review; CI backlogs confirmed clear on
+both `CADS-devsystem` and `CADS-webconference-android` (no runs stuck queued); the four open
+scimbe-authored issues across all three repos (`#56`, `#31` here, `#14`/`#7` document-extraction
+territory) all already have real, current-session progress logged above and no new operator
+comment since.
+
+Per the operator's explicit new standing instruction this session ("Achte auch in der loop auf
+System Hygiene" -- pay attention to system hygiene in the loop proactively, not just reactively),
+checked `df -h`/`docker system df -v` before attempting anything, as directed. Found the host at
+96% used, 3.5G free, AND a separate, already-in-flight hermetic Docker build from this same
+session's concurrent CADS-Tunnel triage thread (`peaceful_ptolemy`, a `rust:1-slim-bookworm`
+container actively compiling) still running. Per this session's own standing host-safety rule --
+never run more than one heavy `cargo build`/`test` container at a time on this 4-CPU/7.6GB/no-swap
+box -- did not start a second one. Ran the safe, build-independent half of the hygiene pass
+instead (`docker image prune -f`, `docker container prune -f`); found nothing safely reclaimable
+beyond what the concurrent thread had already done (0B freed both times -- no dangling
+images/stopped containers existed to prune). Waited 5 real minutes polling for the concurrent
+build to clear before concluding it would run longer than a single bounded firing should wait.
+
+No code shipped this firing -- correctly so: `#31`/`#56` (this thread's only two live-scope
+issues) both currently sit at real, deliberately-bounded stopping points (`#31`'s automode is
+scoped to initial-proposals-only per the operator's own live decision, not the full auto-bid
+chain; `#56`'s guided-interview wizard shipped its structural half, live-verified). Expanding
+either further without a fresh operator go-ahead or a newly-found concrete gap would be inventing
+scope, not closing one -- the governing principle is about the pipeline's own gates, not about
+firing something every cycle regardless of whether there's real work ready. Next firing: re-check
+whether the concurrent build has cleared, then either resume `#31`/`#56` re-audit discipline or
+pick up whatever real gap that re-audit finds.
