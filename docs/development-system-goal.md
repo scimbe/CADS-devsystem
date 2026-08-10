@@ -7570,4 +7570,25 @@ coverage, and can only be triggered by a history-array mutation no legitimate AP
 a live check for it would need to reach past the HTTP surface into the run's own `state.json`,
 unlike every other check in this harness. Noting it explicitly rather than silently dropping it.
 
+**Goal-driven-loop firing, 2026-08-10 (nnnn) -- a real DAU-lens confirm() gap found and closed in
+Plan Canvas (§7).** State check: no new commits on either repo since (mmmm); no new scimbe reply on
+any of `#382`'s open checkpoints; no new open PRs. Checked issue #31 (automode) -- already correctly
+investigated and parked by a prior firing pending the operator's steer on its own real open design
+question (does an automode-driven iteration still have to clear the mandatory review gate); nothing
+new to add without guessing at that, so left untouched.
+
+Went looking for the next genuine gap directly, matching the DAU lens's own established method: this
+project has closed several careless-click confirm() gaps this session (Open Points reject, custom
+panel remove/overwrite, RAG document remove, build artifact remove, next-step draft delete) --
+checked every remaining destructive button in the GUI against that same discipline. Found one real
+holdout: Plan Canvas's own annotation-remove button never confirmed, since the panel shipped
+(2026-08-07) -- a single careless click discarded a reviewer's real comment permanently, with zero
+warning, the exact same failure shape already fixed everywhere else.
+
+Fixed (`CADS-devsystem@26f56f3`): names the actual annotation text being removed (truncated to 80
+characters), same "this is real -- there's no undo" wording every other confirm() here already
+uses. Deployed and git-SHA-verified, then live-verified end to end via Playwright against the real
+redeployed container, not just read from source: the dialog shows the real annotation text,
+dismissing it leaves the annotation genuinely untouched, confirming it actually removes it.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
