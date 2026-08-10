@@ -914,6 +914,16 @@ pub struct PendingNextStepDraft {
     pub id: String,
     pub text: String,
     pub proposed_at: u64,
+    /// Mirrors [`PendingRequirementProposal::triggered_by`]'s own doc comment and
+    /// reasoning (#382 goal doc §7/§8 DAU-lens, 2026-08-10) -- automode's initial-
+    /// proposals instruction can produce a `propose_next_step` just as easily as a
+    /// `propose_requirement`, so this needed the same real traceability, not left
+    /// as a known analogous gap. `Some("automode: <requirement statement>")` when
+    /// this draft appeared as a direct result of an automode-trigger call; `None`
+    /// for an ordinary chat-triggered draft. `#[serde(default)]` for the same
+    /// backward-compat reason.
+    #[serde(default)]
+    pub triggered_by: Option<String>,
 }
 
 /// See [`RunState::pending_panel_proposals`]'s doc comment for why this is a

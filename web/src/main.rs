@@ -2777,19 +2777,24 @@ async fn trigger_automode_initial_proposals(state: &AppState, run_id: &str, requ
         return;
     };
     // #382 goal doc §7/§8 DAU-lens finding, 2026-08-10: snapshot which requirement
-    // proposals already exist BEFORE firing the assistant call, so any that appear
-    // afterward can be tagged as automode-triggered (see
+    // proposals AND next-step drafts already exist BEFORE firing the assistant
+    // call, so any that appear afterward can be tagged as automode-triggered (see
     // `PendingRequirementProposal::triggered_by`'s own doc comment for why this
-    // matters). Taken entirely on the web side, not threaded through
+    // matters -- `PendingNextStepDraft::triggered_by` mirrors it exactly, since
+    // the same instruction below steers toward EITHER `propose_requirement` or
+    // `propose_next_step`). Taken entirely on the web side, not threaded through
     // devsystem_assistant.rs's own Action/apply_action plumbing -- this handler
-    // already knows exactly which proposals existed right before its own call, no
-    // new cross-binary wiring needed.
-    let before_ids: std::collections::HashSet<String> = {
+    // already knows exactly what existed right before its own call, no new
+    // cross-binary wiring needed.
+    let (before_req_ids, before_step_ids): (std::collections::HashSet<String>, std::collections::HashSet<String>) = {
         let _guard = state.write_lock.lock().await;
         let dir = run_dir(state, run_id);
         match load_or_init_run(&dir, run_id) {
-            Ok((_, run_state)) => run_state.pending_requirement_proposals.iter().map(|p| p.id.clone()).collect(),
-            Err(_) => std::collections::HashSet::new(),
+            Ok((_, run_state)) => (
+                run_state.pending_requirement_proposals.iter().map(|p| p.id.clone()).collect(),
+                run_state.pending_next_step_drafts.iter().map(|d| d.id.clone()).collect(),
+            ),
+            Err(_) => (std::collections::HashSet::new(), std::collections::HashSet::new()),
         }
     };
     let criteria = if requirement.acceptance_criteria.is_empty() {
@@ -2834,8 +2839,14 @@ async fn trigger_automode_initial_proposals(state: &AppState, run_id: &str, requ
         if let Ok((spec, mut run_state)) = load_or_init_run(&dir, run_id) {
             let mut changed = false;
             for p in run_state.pending_requirement_proposals.iter_mut() {
-                if !before_ids.contains(&p.id) && p.triggered_by.is_none() {
+                if !before_req_ids.contains(&p.id) && p.triggered_by.is_none() {
                     p.triggered_by = Some(format!("automode: {}", requirement.statement));
+                    changed = true;
+                }
+            }
+            for d in run_state.pending_next_step_drafts.iter_mut() {
+                if !before_step_ids.contains(&d.id) && d.triggered_by.is_none() {
+                    d.triggered_by = Some(format!("automode: {}", requirement.statement));
                     changed = true;
                 }
             }
@@ -4264,7 +4275,10 @@ async fn propose_next_step(State(state): State<AppState>, AxPath(id): AxPath<Str
     if run_state.pending_next_step_drafts.len() >= MAX_LIST_ITEMS {
         return (StatusCode::BAD_REQUEST, format!("pending_next_step_drafts is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
     }
-    let draft = PendingNextStepDraft { id: format!("{:016x}", rand::random::<u64>()), text, proposed_at: unix_now() };
+    // Ordinary chat-triggered draft via this endpoint -- see
+    // `trigger_automode_initial_proposals`'s own doc comment for how an
+    // automode-triggered one gets tagged instead, after the fact.
+    let draft = PendingNextStepDraft { id: format!("{:016x}", rand::random::<u64>()), text, proposed_at: unix_now(), triggered_by: None };
     run_state.pending_next_step_drafts.push(draft.clone());
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(draft).into_response(),
@@ -8415,18 +8429,23 @@ mod tests {
     }
 
     #[tokio::test]
-    /// #382 goal doc §7/§8 DAU-lens finding, 2026-08-10: a proposal that appears as a
-    /// direct result of an automode toggle must be structurally traceable back to
-    /// that toggle (`triggered_by`), not left indistinguishable from an ordinary
-    /// chat-triggered proposal -- see `PendingRequirementProposal::triggered_by`'s own
-    /// doc comment for the real DAU confusion this closes (a user who toggles
-    /// automode on then quickly back off, then later sees an unexplained proposal
-    /// appear with no visible link to an action they believe they already cancelled).
-    /// The mock assistant here directly inserts a new proposal into the run's
-    /// persisted state before responding -- exactly what a real devsystem_assistant
-    /// process does synchronously while handling `/ask`, before it ever replies to
-    /// this caller -- so this proves the real snapshot-before/tag-after logic, not
-    /// just that the field exists.
+    /// #382 goal doc §7/§8 DAU-lens finding, 2026-08-10: a proposal or next-step
+    /// draft that appears as a direct result of an automode toggle must be
+    /// structurally traceable back to that toggle (`triggered_by`), not left
+    /// indistinguishable from an ordinary chat-triggered one -- see
+    /// `PendingRequirementProposal::triggered_by`'s own doc comment for the real
+    /// DAU confusion this closes (a user who toggles automode on then quickly
+    /// back off, then later sees an unexplained item appear with no visible link
+    /// to an action they believe they already cancelled). Covers BOTH real kinds
+    /// the same automode instruction can produce (`propose_requirement` and
+    /// `propose_next_step`, see the instruction text `trigger_automode_initial_
+    /// proposals` builds) -- `PendingNextStepDraft::triggered_by` mirrors the
+    /// requirement-proposal fix exactly, not left as a known analogous gap. The
+    /// mock assistant here directly inserts a new proposal AND a new draft into
+    /// the run's persisted state before responding -- exactly what a real
+    /// devsystem_assistant process does synchronously while handling `/ask`,
+    /// before it ever replies to this caller -- so this proves the real
+    /// snapshot-before/tag-after logic for both, not just that the fields exist.
     async fn a_proposal_landing_from_the_automode_trigger_call_is_tagged_traceable_to_it() {
         let dir = tempfile::tempdir().expect("tempdir");
         let runs_dir = dir.path().to_path_buf();
@@ -8447,8 +8466,14 @@ mod tests {
                         proposed_at: 1,
                         triggered_by: None,
                     });
-                    persist_run(&run_dir, &spec, &run_state).expect("persist the simulated propose_requirement action");
-                    (SC::OK, Json(serde_json::json!({"response": "proposed a follow-on requirement"})))
+                    run_state.pending_next_step_drafts.push(PendingNextStepDraft {
+                        id: "step-from-automode".into(),
+                        text: "Add a retry backoff test for the offline queue".into(),
+                        proposed_at: 1,
+                        triggered_by: None,
+                    });
+                    persist_run(&run_dir, &spec, &run_state).expect("persist the simulated propose_requirement/propose_next_step actions");
+                    (SC::OK, Json(serde_json::json!({"response": "proposed a follow-on requirement and a next-step draft"})))
                 }
             }),
         );
@@ -8486,6 +8511,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(propose_response.status(), SC::OK, "the pre-existing proposal setup call itself must succeed");
+        // Same pre-existing-before-the-toggle control case, for the next-step-draft
+        // queue.
+        let draft_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/automode-tag-run/next-steps/propose",
+                serde_json::json!({"text": "an earlier, unrelated draft"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(draft_response.status(), SC::OK, "the pre-existing draft setup call itself must succeed");
 
         let response = app
             .oneshot(Request::builder().method("POST").uri("/api/runs/automode-tag-run/requirements/0/automode/toggle").body(Body::empty()).unwrap())
@@ -8502,6 +8539,16 @@ mod tests {
             from_automode.triggered_by,
             Some("automode: WHEN offline, THE SYSTEM SHALL queue".to_string()),
             "the proposal that appeared as a result of the automode call must be traceable back to the real requirement that triggered it"
+        );
+
+        assert_eq!(run_state.pending_next_step_drafts.len(), 2, "the pre-existing draft plus the one the mock inserted");
+        let pre_existing_draft = run_state.pending_next_step_drafts.iter().find(|d| d.text == "an earlier, unrelated draft").expect("pre-existing draft present");
+        assert_eq!(pre_existing_draft.triggered_by, None, "a draft that existed BEFORE the toggle must never be retroactively tagged");
+        let draft_from_automode = run_state.pending_next_step_drafts.iter().find(|d| d.id == "step-from-automode").expect("automode-triggered draft present");
+        assert_eq!(
+            draft_from_automode.triggered_by,
+            Some("automode: WHEN offline, THE SYSTEM SHALL queue".to_string()),
+            "the next-step draft that appeared as a result of the automode call must be traceable back to the real requirement that triggered it"
         );
     }
 

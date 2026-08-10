@@ -4054,6 +4054,7 @@ function renderNextStepDraftsHtml(drafts) {
     <div class="lede" style="margin-top:.6rem;margin-bottom:.3rem;font-size:.78rem">devsystem.assistant's draft next-step options -- edit or delete freely, nothing here is applied automatically:</div>
     ${drafts.map(d => `
       <div class="role-card op-draft-card">
+        ${d.triggered_by ? `<div class="role-meta" style="color:var(--accent)">⚡ ${escapeHtml(d.triggered_by)}</div>` : ''}
         <textarea class="op-draft-text" rows="3" style="width:100%;box-sizing:border-box">${escapeHtml(d.text)}</textarea>
         <div style="margin-top:.3rem;display:flex;gap:.4rem">
           <button type="button" class="secondary op-draft-save-btn" data-id="${d.id}">Save edit</button>
