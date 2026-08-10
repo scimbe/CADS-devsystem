@@ -250,7 +250,25 @@ fn build_system_prompt(context: &str) -> String {
          added to state.requirements until the operator explicitly approves it. Use it \
          when the operator's own request implies a requirement they haven't stated \
          explicitly, or asks you to round out coverage after discussing one -- never \
-         speculatively on a run you haven't actually been asked about. `propose_delete_run` \
+         speculatively on a run you haven't actually been asked about. \
+         GUIDED REQUIREMENT AUTHORING (issue #56's own remaining ask, the interview half): \
+         when the operator asks for HELP DRAFTING a requirement rather than handing you one \
+         already fully formed -- \"help me write a requirement for X\", \"I want a \
+         requirement about Y\", or anything similarly open-ended -- this is the one case \
+         where the terseness instruction above does NOT mean guess-and-act immediately. \
+         Committing a vague or wrong requirement is worse than one extra turn. Ask ONE \
+         focused, concrete question at a time (the real trigger condition, the exact \
+         system behavior, a checkable acceptance criterion) and follow up if their answer \
+         is still ambiguous or underspecified -- don't accept the first vague draft. Once \
+         you have enough for a real EARS-style statement and concrete, checkable \
+         acceptance criteria, use `propose_requirement` (never `add_requirement` here, \
+         even though the operator could otherwise get direct-add elsewhere) so they \
+         explicitly confirm or edit it before anything is added, and mention you can also \
+         propose a related requirement afterward if a real adjacent gap (an error state, a \
+         security-relevant variant) came up in the conversation. If the operator instead \
+         hands you an already-complete statement + criteria outright, treat that as a \
+         normal `propose_requirement`/`add_requirement` request -- don't force an \
+         unnecessary interview on someone who didn't ask for one. `propose_delete_run` \
          is the most consequential of these -- it does not \
          remove a part of the run, it queues deleting the ENTIRE run, permanently, no \
          undo, and is NEVER applied until the operator explicitly approves it (the \
@@ -1231,6 +1249,33 @@ mod tests {
         assert!(
             prompt.contains("NOT the run you're currently discussing") && prompt.contains("no way to know that actually happened"),
             "the create_run scope limit and the deliberate iteration-fabrication guardrail must both be explicit, not assumed"
+        );
+    }
+
+    #[test]
+    /// Issue #56's remaining ask, the interview half (a prior firing already shipped the
+    /// smaller "propose_requirement rounds out coverage" slice and deliberately deferred
+    /// this): open-ended "help me write a requirement" must NOT immediately guess-and-act
+    /// under the general terseness instruction -- it needs an explicit carve-out to ask one
+    /// focused clarifying question at a time instead, and to land the result via
+    /// propose_requirement (operator confirms) rather than add_requirement (direct).
+    fn system_prompt_carves_out_a_guided_interview_for_open_ended_requirement_drafting() {
+        let prompt = build_system_prompt("{}");
+        assert!(
+            prompt.contains("GUIDED REQUIREMENT AUTHORING") && prompt.contains("issue #56's own remaining ask"),
+            "the guided-interview carve-out must be explicit and traceable to the real issue it closes: {prompt}"
+        );
+        assert!(
+            prompt.contains("does NOT mean guess-and-act immediately") && prompt.contains("Ask ONE focused, concrete question at a time"),
+            "the carve-out must explicitly override the general terseness/immediate-action instruction, not just add advice alongside it: {prompt}"
+        );
+        assert!(
+            prompt.contains("never `add_requirement` here"),
+            "an interview-drafted requirement must land via propose_requirement (operator confirms), never the direct add_requirement path: {prompt}"
+        );
+        assert!(
+            prompt.contains("don't force an unnecessary interview on someone who didn't ask for one"),
+            "an already-complete requirement handed to the assistant outright must not be forced through an interview it doesn't need: {prompt}"
         );
     }
 
