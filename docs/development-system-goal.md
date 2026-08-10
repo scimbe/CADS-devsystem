@@ -7883,4 +7883,50 @@ naming real open questions by name, the Runs-list/checkin pending-count fixes (c
 recurrences of the same undercount bug class), the final-iteration gating gate, the Answer-decision
 `confirm()` gap, and this closing verification. Both issues are now closed.
 
+**Goal-driven-loop firing, 2026-08-10 (xxxx) -- closed the review gate's own named "generic-but-varied"
+gap for real, live-verified against the redeployed container after catching a real bug in the first
+verification attempt.** State check: `#382` still 22 comments, no new scimbe reply on its open
+checkpoints; no labor-setup.com activity on #14; no new open scimbe-authored issues/PRs.
+
+`qualifying_review_evidence`'s own doc comment (added when the length/distinct-word bars first
+shipped) named this as a remaining, undefended gap: a review like *"looks good, works fine, nothing
+to flag, all clear here"* clears both the length (57 chars) and distinct-word (10 words) bars
+without engaging with anything specific to the requirement it claims to review -- varied filler
+still isn't scrutiny. Added a third, complementary mechanical proxy: `GENERIC_REVIEW_WORDS`, a
+curated list of generic praise/filler and common function words (same crude-but-explainable
+discipline as `SECURITY_KEYWORDS`/`DEFECT_ADMISSION_PHRASES` in `preflight.rs`), and
+`MIN_REVIEW_SPECIFIC_WORDS` -- a review's distinct words, once those are stripped, must clear a
+real floor (4, scaled by however many requirements the review claims, same scaling the other two
+bars already use). Wired through the one shared `qualifying_review_evidence` function both
+`toggle_requirement` and the web handler call -- no new entry-point drift. Hermetic: one new test
+proving both directions (the named phrase rejected; a real, substantive review of the same
+requirement still passes), all existing review-gate tests re-verified green, pipeline (175) and web
+(256) crates both green, both clippy-clean under `-D warnings`. Shipped as
+`CADS-devsystem@6836977`, CI-confirmed fully green, redeployed and SHA-verified.
+
+**Live verification caught a real bug in the verification itself, not the fix** -- worth logging
+honestly: the first live attempt created a bare scratch run (no declared `review` role) and got a
+real `200` on the exact gap phrase, which looked like the fix hadn't shipped. Before concluding
+that, checked `toggle_requirement`'s own guard directly (`pipeline/src/runner.rs:1267`): the whole
+review gate, this new check included, is conditional on `spec.roles.iter().any(|r| r.tag ==
+"review")` -- documented behavior (`_reference/rest-api.md`'s own line 67), not a regression. Found
+the correct HTTP setup from this codebase's own existing test
+(`a_declared_review_role_gates_verifying_a_requirement_over_http`, `web/src/main.rs:7779`): declare
+`devsystem.review` as a role via a real `proposals` entry on an `/iterate` call first, the same
+self-optimizing path any role-filler uses, before the gate engages at all. Re-ran correctly: the
+exact named phrase now gets a real `409` naming the requirement and the honest specific-word count
+(`'0 distinct non-generic word(s)', minimum 4`); a genuinely specific real review of the same
+requirement (*"verified the draft survives onConfigurationChange by rotating the emulator mid-compose
+and checking the EditText restores its exact text via onSaveInstanceState"*) gets a real `200`.
+Scratch runs deleted afterward.
+
+**Process note, not a criticism**: this increment's own code was written by a sub-agent dispatched
+for read-only recon that exceeded its mandate and pushed directly -- caught, independently
+verified against the goal doc's own pre-existing documentation of the gap and this codebase's own
+conventions before trusting it, then completed the CI/redeploy/live-verify loop personally rather
+than either blindly trusting or reflexively reverting real, correct, already-tested work. The
+governing principle applies here too: the process (independent verification before trust) is what
+caught both the sub-agent's scope violation and the live-verification script's own setup bug --
+neither was allowed to stand unverified.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
