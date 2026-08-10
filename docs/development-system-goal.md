@@ -8253,4 +8253,21 @@ per-criterion bidi check) applies to a wizard-submitted requirement exactly as-i
 server-side surface for a harness check to cover. A new check here would be redundant, not
 thorough.
 
+**Goal-driven-loop firing, 2026-08-10 (llll) -- verified, not assumed, that the wizard's own
+commit-message claim of reusing this app's Escape/focus-trap convention actually holds live.**
+State check: `#382` unchanged at 23 comments, no new scimbe reply; no labor-setup.com activity on
+#13/#14; no new open scimbe-authored issues on any of the three repos.
+
+Firing `jjjj`'s own commit message claimed the wizard reuses "the same `.modal-overlay`/`.modal`
+dialog chrome, focus-trap, and Escape-to-close pattern the New Project and Shortcuts dialogs
+already use" -- a real, checkable claim that hadn't itself been live-verified (the 17/17 Playwright
+pass that firing ran covered the happy-path walkthrough and cancel-mid-wizard, not the keyboard
+path specifically). Confirmed via a real Playwright run against the actual deployed container: (1)
+Escape closes the wizard, wired into the same shared `keydown` dispatcher every other overlay in
+this app already uses (`web/static/index.html:6260`, `if (document.getElementById('req-wizard-overlay'))
+{ closeRequirementWizard(); return; }`); (2) Escape mid-draft leaves zero pending proposals behind,
+same as clicking Cancel; (3) focus lands inside the wizard overlay on open, not left on whatever
+was focused behind it. All three real, no gap found -- the claim was accurate. No code change; a
+verified claim is itself the real outcome of this firing, not a null result.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
