@@ -7850,4 +7850,37 @@ Also confirmed this firing: the earlier `rrrr`-line docs work for the final-iter
 had already shipped and pushed to `CADS-devsystem-docs` in a prior firing (`b33040b`, `2731f59`) --
 verified via `git log`, not assumed from memory, before treating it as done.
 
+**Goal-driven-loop firing, 2026-08-10 (wwww) -- issue #41 closed: all three suggested fixes are
+real, shipped, and live-verified together against the actual redeployed container.** State check:
+`#382` comment count still unchanged (22), no new scimbe reply on its open checkpoints; no other
+new open scimbe-authored issues/PRs in either repo.
+
+#41 was the *operator → pipeline* half of the #39/#41 pair (#39 was the pipeline → operator
+direction): a non-technical evaluator found the mandatory check-in telling every reader, web
+included, to `reply approve / request-changes`, verbs that only exist in the `ecc-plan-canvas`
+CLI, while the GUI's only check-in action was a bodyless integer-watermark acknowledge. All three
+of the issue's own suggestions, in cost order, were shipped across earlier firings this session
+(suggestion #1 -- stop telling GUI readers to do a CLI-only action, name both real channels
+instead; suggestion #2 -- optional free-text note on `checkin/acknowledge`, `49eda37`; suggestion
+#3 -- a real structured field an agent reads, the `pending_decisions` channel shared with #39,
+`a16be2d`) but the issue itself was never closed with evidence tying all three together against
+what's actually deployed.
+
+This firing did no new code -- the checkin.rs text and its hermetic test already existed and
+covered this exactly (`checkin_markdown_names_a_real_unanswered_decision_and_stops_once_answered`).
+Instead: created a real scratch run against the now-redeployed `4a0e204` container, raised a real
+`pending_decisions` question, submitted a real seed iteration, and fetched the actual served
+check-in markdown. It correctly split into a CLI-scoped `ecc-plan-canvas` paragraph and a
+web-control-panel paragraph naming the real note field and, since a decision was open, the real
+Open Points answer path -- not hypothetical, not from memory, the literal bytes the deployed
+service returns right now. Posted this evidence as a closing comment (mapped point-by-point
+against all three suggestions, plus noted the `e216290` final-iteration gating gate as the direct
+fix for the exact deadlock scenario the original report hit on iteration 19) and closed #41.
+
+Six real, fully-shipped, fully-verified increments now trace back to this single evaluator report
+across #39 and #41: the structured `pending_decisions` channel itself, the check-in document
+naming real open questions by name, the Runs-list/checkin pending-count fixes (closing 3
+recurrences of the same undercount bug class), the final-iteration gating gate, the Answer-decision
+`confirm()` gap, and this closing verification. Both issues are now closed.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
