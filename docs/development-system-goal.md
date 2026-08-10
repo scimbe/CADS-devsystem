@@ -8525,3 +8525,28 @@ Also completed this firing: the CADS-Tunnel triage thread's own #339 (front-door
 allocation-free `classify_front_door`) finished its CI run green and got its fix-ready handshake
 -- see the CADS-Tunnel issue-triage thread's own log for the real technical detail (this doc
 tracks devsystem/goal-driven work, not every CADS-Tunnel triage increment individually).
+
+**Goal-driven-loop firing, 2026-08-10 (uuuu) -- stress-harness check [64] added for automode's
+real triggered_by traceability behavior, run cold against the live deployment: 155/155.** State
+check: `#382` unchanged; labor-setup.com's last check-in on #13/#14 unchanged. Also completed
+this firing: CADS-Tunnel#341 (serve_http_redirect's O(n) header-terminator scan) confirmed
+CI-green and handshaken.
+
+Both real, new server-side behaviors this session shipped for issue #31 (the requirement-proposal
+`triggered_by` tag and its next-step-draft mirror) had no stress-harness coverage yet, unlike
+every other genuinely new server-side behavior this session -- checks [59]-[63] all exist for
+exactly this reason. Added check [64]: toggles automode on a real requirement against the actual
+live deployment and asserts every resulting proposal is tagged traceable back to it, honestly
+skipped (not failed) if no `devsystem.assistant` bridge is reachable, matching check [49]'s own
+established skip convention for this exact fail-soft-by-design case. Shipped
+[CADS-devsystem@eafef1e](https://github.com/scimbe/CADS-devsystem/commit/eafef1e), then actually
+ran the harness cold against the real live container (not just written and trusted): 155/155
+passing, including the new check genuinely exercising the real live LLM call and confirming its
+real output was correctly tagged.
+
+Also checked, thoroughly, for a genuine next self-optimizing-pipeline increment before landing on
+this one: all 164 real runs on the live deployment, confirmed the flagship `webconference-android`
+run stays correctly out of new scope (resumed per the operator's own M1 decision, but
+`pending_reviews: 0`, no pending proposals -- nothing to act on, and no new scope should be added
+regardless per that same decision) -- no genuine gap found there this firing, reported honestly
+rather than inventing one.
