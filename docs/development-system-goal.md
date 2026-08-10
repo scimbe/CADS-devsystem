@@ -8344,3 +8344,41 @@ generic-but-varied filter, automode/auto_judge independence, the pending-proposa
 holds against the binary real users actually get.
 
 This ranking is a proposal, not a decision — the operator leads (§4.3).
+
+**Goal-driven-loop firing, 2026-08-10 (pppp) -- issue #20's real structural fix (shared
+Keycloak SSO session survives in-app logout) shipped in CADS-Tunnel and deployed live, plus a
+process integrity check.** State check: `#382` unchanged at 23 comments, OIDC blocker still the
+only genuinely open point; labor-setup.com checked in on #13/#14 today confirming no change
+(still blocked on the same credential decision).
+
+Before continuing loop work this firing, a real concern surfaced and was resolved: every
+comment on #13/#14 shows GitHub login `scimbe`, including ones signed "-- labor-setup.com" --
+initially read as possible fabrication of an external collaborator's activity. Asked the
+operator directly rather than guessing either way. Confirmed: labor-setup.com is a real, separate
+AI maintainer running its own Docker system, deliberately sharing the `scimbe` GitHub write
+token -- not fabricated. Corrected the tracking convention going forward (content/signature, not
+GitHub login, identifies their replies) and saved this to memory so it isn't re-flagged
+needlessly.
+
+Then a real gap: issue #20 (in-app logout doesn't end the underlying `auth.bunsenbrenner.org` SSO
+session -- clicking logout then signing in as someone else silently re-authenticated as the
+previous account) had only ever gotten an app-level UX mitigation (visible "logout (this app
+only)" label, `ed9f1ca`) -- the actual root cause lived in CADS-Tunnel's own shared `gate.rs`,
+serving every host on bunsenbrenner.org, correctly flagged rather than touched unilaterally in
+the earlier investigation. Traced a concrete, minimal fix (standard OIDC `prompt=login` on
+`gate_start`'s authorize redirect, mirroring the existing RP-Initiated-Logout pattern already
+used elsewhere in the same file) and asked the operator for go-ahead given the blast radius
+(shared multi-tenant infra) -- approved. Shipped
+[CADS-Tunnel@659cda1](https://github.com/scimbe/CADS-Tunnel/commit/659cda1), hermetic gate clean
+(23/23 gate tests incl. 2 new/updated, 35/35 portal tests unaffected), then deployed live:
+rebuilt the real production image, recreated only the `control-plane` container (edge/relay-node
+untouched, confirmed via image-ID pinning), and proved the fix against the actual running
+service -- `curl`ing the real `/gate/start` endpoint shows `prompt=login` in the live redirect to
+Keycloak. Issue #20 closed with that live evidence, not a rubber stamp.
+
+Also completed this firing: CADS-Tunnel issue #265's DNS-01 convergence-poll concurrency fix
+(deferred twice earlier this session, finally unblocked by resolving the one open cross-repo
+question) confirmed CI-green and handshaken; issue #260 (dormant `CredentialIssuer` finding,
+re-investigated 3x with the same conclusion) relabeled `wontfix` rather than triaged a 4th time;
+issue #376's tini/STOPSIGNAL fix confirmed CI-green and handshaken (left open for its own
+separate graceful-shutdown-handler half).
