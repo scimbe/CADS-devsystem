@@ -8016,4 +8016,28 @@ before/after curl evidence from firing `xxxx` (real `200` pre-fix, real `409` po
 phrase) already establishes the check's teeth without that real, disproportionate production risk.
 Shipped as `CADS-devsystem@d628726`.
 
+**Goal-driven-loop firing, 2026-08-10 (bbbb) -- requirement #22 criterion 2's on-device blocker
+closed: the missing UniFFI API surface now exists, hermetically proven.** State check: `#382` still
+22 comments, no new scimbe reply; no labor-setup.com activity on #14; no new open scimbe-authored
+issues/PRs on either repo.
+
+The last update on requirement #22 (firing `pppp`/`self-optimizing-pipeline.md`) left criterion 2
+at "native-session half real and tested, its on-device emulator half remains open -- no UniFFI API
+exists yet to send deliberately malformed bytes from Kotlin." Rather than attempt the full
+instrumented-test infrastructure in one shot, scoped this firing to the actual blocker named there:
+added `ChannelSession::send_raw_bytes_for_testing`, a UniFFI-exported, test-only method that sends
+raw bytes through the exact same real `a2a_send` framing+encryption `send_text` uses internally --
+the identical authenticated-hostile-peer mechanism this crate's own existing hermetic test already
+proved by reaching into private fields, now a real public surface a Kotlin instrumented test can
+actually call. New hermetic test (`send_raw_bytes_for_testing_reproduces_the_real_malformed_frame_
+scenario_through_the_public_api`) proves the public API reproduces the identical scenario end to
+end through a real handshake, not just the internals -- de-risking the follow-up before it's
+attempted. 25/25 native-bridge tests green (was 24), clippy clean under `-D warnings`. Shipped as
+`CADS-webconference-android@5239adb`, CI running.
+
+**Deliberately deferred, correctly scoped as the next slice, not attempted here**: the actual Kotlin
+instrumented test that calls this new API on two real sessions inside a running emulator and
+inspects `logcat` for a Rust panic marker. Requirement #22 now stands at 3.5/4 with the real blocker
+on its last half removed, not yet fully closed.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
