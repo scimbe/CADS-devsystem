@@ -379,9 +379,27 @@
  .modal h3{margin:0 0 .3rem;font-size:1rem}
  .modal .lede{margin-bottom:.9rem}
  .modal label{display:block;margin-bottom:.8rem;font-family:var(--mono);font-size:.75rem;color:var(--muted)}
- .modal input{width:100%;margin-top:.3rem;background:#0d1117;border:1px solid var(--border);
+ .modal input,.modal textarea{width:100%;margin-top:.3rem;background:#0d1117;border:1px solid var(--border);
               color:var(--text);border-radius:6px;padding:.45rem .6rem;font-family:var(--mono);font-size:.85rem}
+ .modal textarea{resize:vertical;font-family:inherit}
  .modal-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:.4rem}
+ /* Issue #56's structural (non-prompt-tuned) half: a deterministic, GUI-driven
+    guided-interview wizard for authoring a requirement, since two live-tested
+    prompt-only attempts (see docs/development-system-goal.md, issue #56) both
+    proved unreliable -- the LLM overrides its own "ask, don't guess"
+    instruction for topics it treats as textbook. This wizard asks fixed
+    questions in fixed order; no LLM call is in the loop at all. */
+ .wizard-progress{display:flex;gap:.35rem;margin-bottom:.9rem}
+ .wizard-progress .dot{flex:1;height:4px;border-radius:2px;background:var(--border)}
+ .wizard-progress .dot.done{background:var(--accent2)}
+ .wizard-progress .dot.current{background:var(--accent)}
+ .wizard-step-label{font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.2rem}
+ .wizard-criteria-list{display:flex;flex-direction:column;gap:.35rem;margin:.4rem 0}
+ .wizard-criteria-list .wizard-criterion-row{display:flex;gap:.4rem;align-items:center}
+ .wizard-criteria-list .wizard-criterion-row input{margin-top:0}
+ .wizard-criteria-list .wizard-criterion-remove{flex-shrink:0;padding:.2rem .5rem;font-size:.7rem}
+ .wizard-review-block{background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:.7rem .8rem;font-size:.82rem;margin:.4rem 0}
+ .wizard-review-block .lede{margin-bottom:.3rem}
  .shortcut-section-head{margin:.7rem 0 .3rem;font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
  .shortcut-row{display:flex;align-items:baseline;gap:.7rem;padding:.35rem 0;border-bottom:1px solid var(--border);font-size:.8rem}
  .shortcut-row:last-child{border-bottom:none}
@@ -2395,6 +2413,255 @@ function openShortcutsDialog() {
   }
 }
 
+// Issue #56's structural half: a deterministic, GUI-driven guided-interview
+// wizard for authoring a requirement. Two live-tested attempts at a
+// prompt-engineering carve-out in devsystem_assistant.rs both proved
+// unreliable -- for a topic the model treats as "textbook" (e.g. "offline
+// message delivery"), it guessed a full requirement and called
+// add_requirement directly, 3/3 times, regardless of how explicitly the
+// system prompt said not to. That's LLM sampling behavior, not a
+// deterministic code path -- so this wizard has NO LLM call anywhere in its
+// own flow. Fixed questions, fixed order, assembled client-side, submitted
+// via the same propose_requirement path the assistant's own proposals use
+// (never add_requirement directly) -- a wizard-drafted requirement still
+// needs a human's real review-queue confirmation before it's real, same
+// trust model as every other proposal in this app.
+let wizardState = null;
+let wizardTriggerEl = null;
+const WIZARD_STEPS = ['trigger', 'behavior', 'criteria', 'rationale', 'review'];
+
+function trapWizardFocus(e) {
+  if (e.key !== 'Tab') return;
+  const overlay = document.getElementById('req-wizard-overlay');
+  if (!overlay) return;
+  const focusable = Array.from(overlay.querySelectorAll('input, button, [href], select, textarea, [tabindex]:not([tabindex="-1"])')).filter(
+    (el) => !el.disabled && el.offsetParent !== null,
+  );
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (e.shiftKey) {
+    if (active === first || !overlay.contains(active)) {
+      e.preventDefault();
+      last.focus();
+    }
+  } else if (active === last || !overlay.contains(active)) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+function closeRequirementWizard() {
+  const overlay = document.getElementById('req-wizard-overlay');
+  if (overlay) overlay.remove();
+  document.removeEventListener('keydown', trapWizardFocus);
+  wizardState = null;
+  if (wizardTriggerEl) {
+    wizardTriggerEl.focus();
+    wizardTriggerEl = null;
+  }
+}
+
+function openRequirementWizard(runId) {
+  const trigger = document.activeElement;
+  closeRequirementWizard();
+  wizardTriggerEl = trigger;
+  wizardState = { runId, step: 0, trigger: '', behavior: '', criteria: [''], rationale: '', error: '' };
+  const overlay = document.createElement('div');
+  overlay.id = 'req-wizard-overlay';
+  overlay.className = 'modal-overlay';
+  document.body.appendChild(overlay);
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeRequirementWizard(); });
+  document.addEventListener('keydown', trapWizardFocus);
+  renderWizardStep();
+}
+
+// The exact statement this wizard's own composed answer produces -- always
+// contains "SHALL" as a real word by construction, so it can never hit the
+// server's own EARS-format rejection (validate_requirement_fields in
+// web/src/main.rs) regardless of what the human types into either field.
+function wizardComposedStatement() {
+  const trigger = wizardState.trigger.trim();
+  const behavior = wizardState.behavior.trim();
+  return trigger ? `WHEN ${trigger}, THE SYSTEM SHALL ${behavior}` : `THE SYSTEM SHALL ${behavior}`;
+}
+
+function renderWizardStep() {
+  const overlay = document.getElementById('req-wizard-overlay');
+  if (!overlay || !wizardState) return;
+  const { step, error } = wizardState;
+  const stepName = WIZARD_STEPS[step];
+  const progress = WIZARD_STEPS.map((_, i) => `<div class="dot ${i < step ? 'done' : i === step ? 'current' : ''}"></div>`).join('');
+  let body = '';
+  let title = '';
+  if (stepName === 'trigger') {
+    title = 'Step 1 of 5: When does this apply?';
+    body = `
+      <div class="wizard-step-label">Trigger / condition (optional)</div>
+      <p class="lede" style="font-size:.78rem">What has to happen first, if anything? Leave this blank for a requirement that should always hold true, not just under one condition.</p>
+      <textarea id="wiz-trigger" rows="2" maxlength="900" placeholder="e.g. the user sends a message while the device is offline">${escapeHtml(wizardState.trigger)}</textarea>`;
+  } else if (stepName === 'behavior') {
+    title = 'Step 2 of 5: What must the system do?';
+    body = `
+      <div class="wizard-step-label">Expected behavior</div>
+      <p class="lede" style="font-size:.78rem">Describe the one concrete thing the system must do -- this becomes the "THE SYSTEM SHALL ..." part; don't retype "shall" yourself, the wizard adds it.</p>
+      <textarea id="wiz-behavior" rows="2" maxlength="1050" placeholder="e.g. queue the message locally and redeliver it once connectivity returns" autofocus>${escapeHtml(wizardState.behavior)}</textarea>`;
+  } else if (stepName === 'criteria') {
+    title = 'Step 3 of 5: How would you check it actually works?';
+    body = `
+      <div class="wizard-step-label">Acceptance criteria</div>
+      <p class="lede" style="font-size:.78rem">At least one, each concrete enough to actually check (not "it works" -- what would you look at to confirm it?).</p>
+      <div class="wizard-criteria-list">
+        ${wizardState.criteria.map((c, i) => `
+          <div class="wizard-criterion-row">
+            <input class="wiz-criterion-input" data-i="${i}" maxlength="500" value="${escapeHtml(c)}" placeholder="e.g. a queued message is delivered within 10s of reconnecting" ${i === 0 ? 'autofocus' : ''}>
+            ${wizardState.criteria.length > 1 ? `<button type="button" class="secondary wizard-criterion-remove" data-i="${i}">✕</button>` : ''}
+          </div>`).join('')}
+      </div>
+      <button type="button" class="secondary" id="wiz-add-criterion" style="font-size:.72rem">+ Add another criterion</button>`;
+  } else if (stepName === 'rationale') {
+    title = 'Step 4 of 5: Why does this matter?';
+    body = `
+      <div class="wizard-step-label">Rationale</div>
+      <p class="lede" style="font-size:.78rem">One or two sentences a reviewer can use to judge whether this proposal is actually worth adding.</p>
+      <textarea id="wiz-rationale" rows="2" maxlength="2000" placeholder="e.g. offline devices currently drop messages silently, which real users have reported as data loss" autofocus>${escapeHtml(wizardState.rationale)}</textarea>`;
+  } else {
+    title = 'Step 5 of 5: Review before submitting';
+    const criteriaHtml = wizardState.criteria.filter(c => c.trim()).map(c => `<div>&bull; ${escapeHtml(c.trim())}</div>`).join('');
+    body = `
+      <div class="wizard-review-block">
+        <div class="lede" style="font-size:.72rem">Statement</div>
+        <div style="margin-bottom:.6rem">${escapeHtml(wizardComposedStatement())}</div>
+        <div class="lede" style="font-size:.72rem">Acceptance criteria</div>
+        <div style="margin-bottom:.6rem;font-size:.8rem">${criteriaHtml}</div>
+        <div class="lede" style="font-size:.72rem">Rationale</div>
+        <div style="font-size:.8rem">${escapeHtml(wizardState.rationale.trim())}</div>
+      </div>
+      <p class="lede" style="font-size:.72rem">This lands as a real proposal in the Requirements panel's own pending-review queue -- it does not become a real requirement until you (or another reviewer) approve it there, same as every assistant-drafted proposal.</p>`;
+  }
+  overlay.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="req-wizard-title" style="width:min(34rem,92vw)">
+      <div class="wizard-progress">${progress}</div>
+      <h3 id="req-wizard-title">${escapeHtml(title)}</h3>
+      ${body}
+      <div id="wiz-status" class="status-line ${error ? 'err' : ''}" role="status" aria-live="polite" aria-atomic="true">${escapeHtml(error || '')}</div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" id="wiz-cancel">Cancel</button>
+        ${step > 0 ? '<button type="button" class="secondary" id="wiz-back">Back</button>' : ''}
+        <button type="button" id="wiz-next">${stepName === 'review' ? 'Submit proposal' : 'Next'}</button>
+      </div>
+    </div>`;
+  document.getElementById('wiz-cancel').onclick = closeRequirementWizard;
+  const backBtn = document.getElementById('wiz-back');
+  if (backBtn) backBtn.onclick = () => { wizardStepBack(); };
+  document.getElementById('wiz-next').onclick = () => { wizardStepNext(); };
+  if (stepName === 'criteria') {
+    for (const inp of overlay.querySelectorAll('.wiz-criterion-input')) {
+      inp.oninput = (e) => { wizardState.criteria[Number(e.target.dataset.i)] = e.target.value; };
+    }
+    for (const btn of overlay.querySelectorAll('.wizard-criterion-remove')) {
+      btn.onclick = (e) => {
+        wizardState.criteria.splice(Number(e.target.dataset.i), 1);
+        renderWizardStep();
+      };
+    }
+    document.getElementById('wiz-add-criterion').onclick = () => {
+      if (wizardState.criteria.length >= 20) return; // MAX_ACCEPTANCE_CRITERIA, matches the server's own real cap
+      wizardState.criteria.push('');
+      renderWizardStep();
+    };
+  }
+  const firstFocusable = overlay.querySelector('[autofocus]') || overlay.querySelector('textarea, input');
+  if (firstFocusable) firstFocusable.focus();
+}
+
+// Persists whatever's currently typed on this step into wizardState without
+// validating it -- shared by Back (which must not silently discard an edit
+// just because the user didn't click Next) and the real validation pass
+// below (which reads the same freshly-saved value).
+function wizardSaveCurrentStepInputs() {
+  const stepName = WIZARD_STEPS[wizardState.step];
+  if (stepName === 'trigger') wizardState.trigger = document.getElementById('wiz-trigger').value;
+  else if (stepName === 'behavior') wizardState.behavior = document.getElementById('wiz-behavior').value;
+  else if (stepName === 'rationale') wizardState.rationale = document.getElementById('wiz-rationale').value;
+  // 'criteria' inputs are already live-bound via oninput as they're typed;
+  // 'review' has no inputs of its own.
+}
+
+function wizardStepBack() {
+  wizardSaveCurrentStepInputs();
+  wizardState.error = '';
+  wizardState.step = Math.max(0, wizardState.step - 1);
+  renderWizardStep();
+}
+
+// Real, client-side pre-check per step -- mirrors validateRequirementFields'
+// own per-criterion rules (5 real alphanumeric characters minimum, matching
+// MIN_ACCEPTANCE_CRITERION_ALNUM_CHARS in web/src/main.rs) so a DAU gets an
+// immediate, specific "why" instead of a round-trip to the server for
+// something checkable right here.
+function wizardValidateCurrentStep() {
+  wizardSaveCurrentStepInputs();
+  const stepName = WIZARD_STEPS[wizardState.step];
+  if (stepName === 'trigger') {
+    return null;
+  }
+  if (stepName === 'behavior') {
+    if (!wizardState.behavior.trim()) return 'Describe what the system must do -- this step can\'t be left blank.';
+    return null;
+  }
+  if (stepName === 'criteria') {
+    const nonEmpty = wizardState.criteria.map(c => c.trim()).filter(Boolean);
+    if (!nonEmpty.length) return 'At least one acceptance criterion is required.';
+    const tooTrivial = nonEmpty.find(c => (c.match(/[\p{L}\p{N}]/gu) || []).length < 5);
+    if (tooTrivial) return `"${tooTrivial}" doesn't have enough real content to be checkable (minimum 5 letters/digits).`;
+    const tooLong = nonEmpty.find(c => c.length > 500);
+    if (tooLong) return `"${tooLong.slice(0, 40)}…" is over 500 characters.`;
+    return null;
+  }
+  if (stepName === 'rationale') {
+    if (!wizardState.rationale.trim()) return 'A short rationale is required -- it\'s what a reviewer judges this proposal by.';
+    return null;
+  }
+  return null;
+}
+
+async function wizardStepNext() {
+  const err = wizardValidateCurrentStep();
+  if (err) {
+    wizardState.error = err;
+    renderWizardStep();
+    return;
+  }
+  wizardState.error = '';
+  if (WIZARD_STEPS[wizardState.step] !== 'review') {
+    wizardState.step += 1;
+    renderWizardStep();
+    return;
+  }
+  const status = document.getElementById('wiz-status');
+  status.textContent = 'Submitting…'; status.className = 'status-line';
+  const runId = wizardState.runId;
+  try {
+    await fetchJSON(`${API}/runs/${encodeURIComponent(runId)}/requirements/propose`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        statement: wizardComposedStatement(),
+        acceptance_criteria: wizardState.criteria.map(c => c.trim()).filter(Boolean),
+        rationale: wizardState.rationale.trim(),
+      }),
+    });
+    closeRequirementWizard();
+    pendingPanelStatus = { panelId: 'requirements', text: `Guided requirement proposal added to ${runId}'s review queue.`, cls: 'ok' };
+    await selectRun(runId);
+  } catch (e) {
+    wizardState.error = e.message;
+    renderWizardStep();
+  }
+}
+
 // The one real fetch -- cached so the filter input can re-render instantly
 // on every keystroke without refetching the whole list each time.
 let lastFetchedRuns = null;
@@ -4370,7 +4637,10 @@ function renderRequirementsPanel(id, data) {
     <form class="inline" id="requirement-form" style="margin-top:.6rem;flex-direction:column;align-items:stretch;gap:.3rem">
       <input id="requirement-statement" maxlength="2000" placeholder="WHEN ..., THE SYSTEM SHALL ...">
       <textarea id="requirement-criteria" rows="2" placeholder="acceptance criterion (one per line)" style="font-family:var(--mono);font-size:.8rem"></textarea>
-      <button type="submit">Add requirement</button>
+      <div style="display:flex;gap:.4rem;align-items:center">
+        <button type="submit">Add requirement</button>
+        <button type="button" class="secondary" id="requirement-wizard-open-btn" title="A fixed, step-by-step interview that assembles a well-formed requirement for you -- no EARS/SHALL knowledge needed up front (issue #56)">🧭 Guided (walk me through it)</button>
+      </div>
     </form>
     <div id="requirement-status" class="status-line" role="status" aria-live="polite" aria-atomic="true"></div>
     ${requirements.length ? `<a class="btn secondary" style="margin-top:.6rem" href="${API}/runs/${encodeURIComponent(id)}/requirements/export" download="requirements.md">⬇ Download as Markdown</a>` : ''}
@@ -4510,6 +4780,7 @@ function renderRequirementsPanel(id, data) {
       status.textContent = err2.message; status.className = 'status-line err';
     }
   });
+  document.getElementById('requirement-wizard-open-btn').onclick = () => openRequirementWizard(id);
 }
 
 async function toggleRequirementAutoJudge(id, index) {
@@ -5534,7 +5805,7 @@ function saveShortcuts() {
 // for that list -- add a real entry here whenever a new fixed keyboard
 // behavior ships, same discipline COMMANDS already keeps for ./ commands.
 const FIXED_SHORTCUTS = [
-  { combo: 'Escape', description: 'Closes whichever real overlay is currently open -- a popover (refresh interval, fill mode), the New Project dialog, this Shortcuts dialog, or the panel launcher -- always the topmost one, context-aware.' },
+  { combo: 'Escape', description: 'Closes whichever real overlay is currently open -- a popover (refresh interval, fill mode), the New Project dialog, this Shortcuts dialog, the guided requirement wizard, or the panel launcher -- always the topmost one, context-aware.' },
   { combo: 'Ctrl+C', description: 'Closes the panel launcher (the round dot, bottom-left), only while it is actually open -- never intercepts a real copy anywhere else in the app.' },
   { combo: 'Enter', description: 'Submits the Process Prompt / autocomplete selection, advances focus through the New Project dialog\'s fields, or applies a fill-mode popover\'s dedicated label -- deliberately never "submit the whole form" in a multi-field context, to avoid a premature-submit footgun.' },
   { combo: 'Tab / Shift+Tab', description: 'Cycles focus within whichever real modal is currently open (New Project, this Shortcuts dialog) -- a real accessible focus trap, never escapes to the page behind it.' },
@@ -5986,6 +6257,7 @@ function initProcessPrompt() {
     if (document.getElementById('refresh-popover')) { closeRefreshPopover(); return; }
     if (document.getElementById('new-project-overlay')) { closeNewProjectDialog(); return; }
     if (document.getElementById('shortcuts-overlay')) { closeShortcutsDialog(); return; }
+    if (document.getElementById('req-wizard-overlay')) { closeRequirementWizard(); return; }
     const orb = document.getElementById('orb-overlay');
     if (orb && orb.classList.contains('open')) { closeOrbLauncher(); }
   });
