@@ -938,10 +938,28 @@ check "the check-in doc's own 'Also awaiting your review' section also names the
 curl -s -o /dev/null -X DELETE "$BASE/api/runs/$undercount_run"
 
 echo
+echo "[62] the mandatory review gate's own worked example of a lazy shortcut -- a generic-but-varied review ('looks good, works fine, nothing to flag, all clear here') that clears the length and distinct-word bars purely on filler -- must still be refused; a genuinely specific review of the same requirement must still pass (2026-08-10, closing a gap this gate's own doc comment had named as still open)"
+genreview_run="generic-review-stress-$(date +%s 2>/dev/null || echo fallback)-$$"
+curl -s -o /dev/null -X POST "$BASE/api/runs" -H 'content-type: application/json' -d "{\"run_id\":\"$genreview_run\"}"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$genreview_run/requirements" -H 'content-type: application/json' \
+  -d '{"statement":"WHEN the app rotates on an incoming call, THE SYSTEM SHALL preserve the active channel session.","acceptance_criteria":["channel handle survives a real configuration change without a reconnect"]}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$genreview_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.improve","feedback":"this run needs a real review gate","succeeded":true,"proposals":[{"proposed_by":"devsystem.improve","stage_id":"devsystem.review","tag":"review","rationale":"quality gate","use_existing_service":null,"units":1,"price_ceiling":null}]}'
+curl -s -o /dev/null -X POST "$BASE/api/runs/$genreview_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.review","feedback":"looks good, works fine, nothing to flag, all clear here","succeeded":true,"requirement_indices":[0]}'
+generic_toggle_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$genreview_run/requirements/0/toggle")
+check "a varied-but-entirely-generic review is still refused, not accepted for being long enough" "409" "$generic_toggle_status"
+curl -s -o /dev/null -X POST "$BASE/api/runs/$genreview_run/iterate" -H 'content-type: application/json' \
+  -d '{"stage":"devsystem.review","feedback":"verified the draft survives onConfigurationChange by rotating the emulator mid-compose and checking the EditText restores its exact text via onSaveInstanceState","succeeded":true,"requirement_indices":[0]}'
+specific_toggle_status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/runs/$genreview_run/requirements/0/toggle")
+check "a genuinely specific review of the same requirement is accepted" "200" "$specific_toggle_status"
+curl -s -o /dev/null -X DELETE "$BASE/api/runs/$genreview_run"
+
+echo
 echo "======================================================================"
 echo "Incompetent-agent stress test: $PASS passed, $FAIL failed."
 if [ "$FAIL" -gt 0 ]; then
-  echo "A REAL REGRESSION was found in one of the sixty gaps this session already closed."
+  echo "A REAL REGRESSION was found in one of the sixty-two gaps this session already closed."
   exit 1
 fi
 echo "All known lazy-shortcut gates still hold."
