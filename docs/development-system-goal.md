@@ -199,7 +199,7 @@ Extends §4's user-support goal with concrete GUI requirements:
    no matching `Action` variant either -- `toggle_requirement_automode_handler` existed and was
    human-reachable, but the assistant could not flip it. Closed the same way as `auto_judge`
    (direct, fully reversible toggle, no approval gate needed):
-   [`CADS-devsystem@<pending>`](https://github.com/scimbe/CADS-devsystem). Twenty-three real
+   [`CADS-devsystem@80f4389`](https://github.com/scimbe/CADS-devsystem/commit/80f4389). Twenty-three real
    action types as of this writing (see the ranked list's item 4 for the specific panels/fields
    already covered one at a time). No further concrete instance is currently known -- the next one
    will be whatever a future firing's own re-audit finds, same discipline as this one.
@@ -8615,3 +8615,34 @@ volume-sprawl incident has eaten the disk (see the `oooo`-adjacent memory note o
 -- worth the operator's attention if the pattern keeps recurring, since neither incident was
 caused by a single runaway build, but by naming-convention drift across many sessions never
 cleaning up after itself.
+
+**Goal-driven-loop firing, 2026-08-10 (wwww) -- §7.2 gap #2's third real instance found and
+closed: devsystem.assistant could toggle a requirement's auto_judge flag but not its sibling
+automode flag.** State check: `#382` unchanged at 23 comments, only the OIDC blocker still open;
+labor-setup.com's last check-in on #13/#14 unchanged, nothing new to review; CI backlogs on
+CADS-devsystem and CADS-webconference-android confirmed clear; no new scimbe-authored open
+PRs/issues on any of the three repos (CADS-webconference-android's only open PRs are dependabot's,
+out of scope). No open scimbe-authored GitHub issue existed to drive this firing -- the flagship
+`webconference-android` run stays correctly out of new scope per firing `iiii`'s own M1 decision,
+so this firing re-ran §7.2 gap #2's own standing re-audit discipline instead of inventing work.
+
+Cross-checked every real `/api/runs/{id}/...` POST/PUT/DELETE handler in `web/src/main.rs`
+against the `Action` enum's 22 variants (at the time): `toggle_requirement_automode_handler`
+(the Requirements panel's per-requirement automode checkbox) had no match. Closed exactly like
+its `auto_judge` sibling before it -- direct action, no approval gate, fully reversible toggle.
+Shipped [`CADS-devsystem@80f4389`](https://github.com/scimbe/CADS-devsystem/commit/80f4389).
+Hermetic (Docker, `ct-devsystem-pipeline-target`/`ct-devsystem-cargo-registry` volumes -- this
+repo's own deploy-script convention, not the `cads-devsystem-*` volumes removed as detached
+cache elsewhere this session): `cargo build`/`cargo test --bin devsystem_assistant` 58/58 (57
+existing + 1 new), `cargo clippy -- -D warnings` clean. Not yet redeployed -- `devsystem_assistant`
+runs as a persistent cron `@reboot` process; the next real deploy or an explicit
+`scripts/deploy-devsystem-assistant.sh` run picks this up.
+
+Real, unrelated observation, not acted on: `runs/webconference-android/state.json` (the one
+tracked file under the otherwise-untracked `runs/` scratch directory) had a pending, uncommitted
+diff (four new `withdrawn*` fields on several history records, additive/schema-only) when this
+firing started -- not caused by this firing's own build/test (which never touches host `runs/`
+files), most likely the live cron-driven `devsystem_assistant`/stress-harness process picking up
+a newer binary's default field values on its own. Left untouched and uncommitted, per firing
+`iiii`'s own "no new scope against this run" decision -- this firing's commit stages only the two
+files it actually changed, not a blanket `git add -A`.
