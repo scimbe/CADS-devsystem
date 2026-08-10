@@ -7824,4 +7824,30 @@ Answered the decision via `POST /decisions/{id}/answer`, retried the identical s
 real `200`, `outcome: "Abort"` (the run's own real ceiling firing normally, as expected). Scratch
 run deleted afterward.
 
+**Goal-driven-loop firing, 2026-08-10 (vvvv) -- a real DAU-lens gap found in code from the very
+same session (firing uuuu): the new Answer-decision button had no `confirm()`, despite answering
+a decision being genuinely permanent -- exactly-once, no edit, no undo, enforced server-side.**
+State check: no new scimbe reply on any of `#382`'s open checkpoints; comment count on the issue
+unchanged; no new open scimbe-authored issues/PRs in either `CADS-devsystem` or
+`CADS-webconference-android`.
+
+Found by re-applying the same DAU-lens sweep this project already applies to old code -- this time
+to code written earlier in the same session, not an inherited gap. Added a real `confirm()` naming
+the exact question and the exact answer text before submitting, matching every other permanent
+Open Points action already gated this way (reject, delete-run approval, etc.). Deployed the
+still-uncommitted fix directly (the deploy script builds from the working tree, so this makes a
+fix live and testable before it's committed) and live-verified with a real Playwright run against
+the actual deployment: captured the real native `confirm()` dialog text (names the question and
+answer verbatim), proved Cancel leaves `pending_decisions[0].answer` as `null` (nothing happened),
+then proved Accept actually resolves it to the real answer text. Screenshot confirmed the resolved
+"Nothing open right now" state afterward. Cleaned up the scratch run. Committed as
+`CADS-devsystem@4a0e204`, CI-confirmed fully green (clippy, both test tiers, real Postgres
+integration tests, docker build, and the incompetent-agent stress test all passed), redeployed, and
+`/api/version` confirmed the running container matches `4a0e204` exactly.
+
+Also confirmed this firing: the earlier `rrrr`-line docs work for the final-iteration gating gate
+(`_reference/rest-api.md`'s Decisions section, `_how-to/why-did-my-run-pause.md`'s fourth trigger)
+had already shipped and pushed to `CADS-devsystem-docs` in a prior firing (`b33040b`, `2731f59`) --
+verified via `git log`, not assumed from memory, before treating it as done.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
