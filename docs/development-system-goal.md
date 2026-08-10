@@ -7672,4 +7672,49 @@ and still genuinely fails CI on its own -- re-checked its live CI status rather 
 followed the other two, confirmed still `fail`. Corrected the table to reflect two of three real
 gaps closed, one still genuinely open, not left as a stale three-way tie.
 
+**Goal-driven-loop firing, 2026-08-10 (rrrr) -- issue #39's real root fix: `pending_decisions`, a
+structured channel for a question the pipeline cannot answer on its own.** State check: no new scimbe
+reply on any of `#382`'s open checkpoints (comment count unchanged); no new open issues/PRs on either
+repo. Systematic confirm()-gap and `owner_authorized`-gap sweeps (the two patterns that found the most
+real bugs this session) came back clean again, same as the prior firing -- both bug classes appear
+genuinely exhausted for now.
+
+Re-read #39 and #41 directly rather than re-sweeping: #39's own root ask (a real channel for "the
+pipeline cannot decide and needs answered," the inverse of the seven existing `pending_*_proposals`
+queues) and #41's suggestion #3 ("have the answer land in a structured field an agent reads") name the
+same real gap from two directions. Built it: `RunState.pending_decisions: Vec<PendingDecision>`
+(`{id, question, options?, asked_by_iteration, asked_by_iteration_id, asked_at, answer, answered_at,
+answered_by}`, close to #39's own proposed shape, with the same id-provenance discipline #42 already
+forced onto `checkin_acknowledged_through_id`). `POST /api/runs/{id}/decisions` lets a role-filler
+raise a real question (no owner-gate -- same trust level as `run_iteration`'s own immediately-applied
+`StageProposal`); `POST .../decisions/{id}/answer` lets the operator answer it exactly once
+(owner-gated, same trust level as `acknowledge_checkin`; a second answer is rejected, never silently
+overwrites the first). Unanswered decisions now surface as a real Open Point (kind `pending_decision`)
+with a real input+Answer button -- Open Points is "the panel named for exactly this," per #39's own
+words, and until now it had nothing to show for this case. The check-in's own "Decision needed"
+section now enumerates every real unanswered question by name (with options, if any) instead of pure
+boilerplate, closing the gap more directly than firing (iiii)'s earlier stopgap (which only echoed
+past *acknowledge* notes, not a real per-question list).
+
+Hermetic: 2 new `pipeline` lib tests, 6 new `web` integration tests (ask/answer round trip verified end
+to end through Open Points and the check-in markdown, empty-question/empty-answer rejection,
+double-answer rejection, cross-account answer rejection, unknown-id 404). `cargo test` green on both
+crates (`devsystem-pipeline` full suite, `devsystem-web` 254/254 with 4 Postgres-only ignored),
+`cargo clippy --all-targets -- -D warnings` clean on both. Shipped as `CADS-devsystem@a16be2d`, pushed
+directly to `main` (small, additive, no schema migration risk -- every new field is `#[serde(default)]`
+so every pre-existing `state.json` still loads unchanged). Posted real status comments on both #39 and
+#41 naming exactly what's closed and what's still open: #39's own gating-policy suggestion (block an
+iteration/the run's ceiling while a decision sits unanswered) is real, separate, deliberately not
+attempted here; #41's general check-in-wide Approve/Request-changes gate (distinct from answering one
+escalated question) is likewise still open. Neither issue closed -- both have a real remaining ask.
+
+**A real methodology bug found and fixed mid-firing, worth recording**: this repo has no root
+workspace `Cargo.toml` (`pipeline/` and `web/` are independent crates) -- every `cargo build/test -p
+devsystem-pipeline -p devsystem-web` invocation from the repo root this session (and possibly earlier
+ones) was silently failing immediately with "could not find `Cargo.toml`," and piping through `| tail
+-N` with no `pipefail` masked the real nonzero exit as success. Caught by actually reading a build's
+output content instead of trusting the background task notification's "exit code 0" alone. Fixed by
+running each crate from its own directory with `set -eo pipefail` from here on -- the corrected
+invocation is now the one this firing's own hermetic verification actually used.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
