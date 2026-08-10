@@ -1088,6 +1088,43 @@ pub fn toggle_milestone(state: &mut RunState, index: usize) -> Result<(), String
 const MIN_REVIEW_FEEDBACK_LEN: usize = 25;
 const MIN_REVIEW_DISTINCT_WORDS: usize = 8;
 
+/// The exact "generic-but-varied" gap this gate's own comment above named as
+/// still open ("a generic-but-varied review ('looks good, works fine,
+/// nothing to flag, all clear here') clears both bars without being real
+/// scrutiny either"): live-verified before this fix, that literal phrase
+/// (10 distinct words, 57 characters) got a real `200` against the deployed
+/// gate -- length and distinct-word-count alone can't tell varied filler from
+/// real per-requirement scrutiny. A third, complementary mechanical proxy,
+/// same crude-but-explainable discipline as `SECURITY_KEYWORDS`/
+/// `DEFECT_ADMISSION_PHRASES` in `preflight.rs`: a curated list of generic
+/// praise/filler words and common English function words. Honest, named
+/// limitation, not claimed comprehensive -- a lazy reviewer who avoids every
+/// word on this list while still saying nothing requirement-specific can
+/// still slip through; this closes the exact phrasing the goal doc itself
+/// used as its worked example, not every possible generic review.
+const GENERIC_REVIEW_WORDS: &[&str] = &[
+    "a", "an", "the", "to", "of", "in", "on", "for", "and", "or", "with", "this", "that", "it", "its", "as", "be",
+    "by", "at", "is", "are", "was", "were", "no", "not", "good", "fine", "great", "nice", "ok", "okay", "correct",
+    "perfect", "solid", "excellent", "clear", "clean", "nothing", "none", "flag", "flags", "everything", "all",
+    "here", "there", "looks", "look", "looking", "works", "work", "working", "done", "complete", "completed",
+    "lgtm", "issue", "issues", "seems", "seem", "appears", "appear",
+];
+
+/// Distinct alphanumeric words in `text`, excluding [`GENERIC_REVIEW_WORDS`] --
+/// what's left after stripping generic praise and common function words. A
+/// review that's varied and long purely because of filler like "looks good,
+/// works fine, nothing to flag, all clear here" has zero words left; real
+/// scrutiny of a specific requirement leaves real, specific vocabulary behind.
+fn specific_word_count(text: &str) -> usize {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty() && !GENERIC_REVIEW_WORDS.contains(w))
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+}
+
+const MIN_REVIEW_SPECIFIC_WORDS: usize = 4;
+
 /// Case-insensitive distinct alphanumeric "words" in `text` -- the same
 /// tokenization spirit as `preflight.rs`'s other mechanical checks (simple,
 /// explainable, no fake LLM-judgment-in-disguise). Punctuation-only repeats
@@ -1172,7 +1209,11 @@ pub fn qualifying_review_evidence(state: &RunState, index: usize) -> Result<(), 
                 && !same_requirement_set(&other.requirement_indices, &r.requirement_indices)
         })
     };
-    let qualifies = |r: &&IterationRecord| long_enough(r) && !reused_verbatim_elsewhere(r);
+    let specific_enough = |r: &&IterationRecord| {
+        let claimed = r.requirement_indices.len().max(1);
+        specific_word_count(r.feedback.trim()) >= MIN_REVIEW_SPECIFIC_WORDS * claimed
+    };
+    let qualifies = |r: &&IterationRecord| long_enough(r) && !reused_verbatim_elsewhere(r) && specific_enough(r);
     if !reviews.iter().any(qualifies) {
         if reviews.iter().any(|r| long_enough(r) && reused_verbatim_elsewhere(r)) {
             return Err(format!(
@@ -1180,6 +1221,18 @@ pub fn qualifying_review_evidence(state: &RunState, index: usize) -> Result<(), 
                  addressing it reuses feedback text verbatim from a review of a different, unrelated \
                  requirement in this run's history. Real scrutiny of THIS requirement's specific \
                  acceptance criteria is required, not a copy-pasted review meant for something else."
+            ));
+        }
+        if let Some(r) = reviews.iter().find(|r| long_enough(r) && !reused_verbatim_elsewhere(r) && !specific_enough(r)) {
+            let claimed = r.requirement_indices.len().max(1);
+            return Err(format!(
+                "requirement {index} cannot be marked verified yet -- the devsystem.review iteration \
+                 addressing it is long and varied enough to pass the length/distinct-word bars, but \
+                 that's entirely generic praise and filler ('{} distinct non-generic word(s)', minimum \
+                 {}) -- it never engages with anything specific to this requirement. A varied-sounding \
+                 rubber-stamp doesn't satisfy this gate any more than a short one does.",
+                specific_word_count(r.feedback.trim()),
+                MIN_REVIEW_SPECIFIC_WORDS * claimed,
             ));
         }
         let best = reviews.iter().max_by_key(|r| (r.feedback.trim().chars().count(), distinct_word_count(r.feedback.trim()))).unwrap();
@@ -2302,6 +2355,56 @@ mod tests {
         });
         toggle_requirement(&spec, &mut state, 4).unwrap();
         assert!(state.requirements[4].verified);
+    }
+
+    #[test]
+    /// The exact "generic-but-varied" gap this gate's own doc comment named as
+    /// still open, closed for real: `qualifying_review_evidence`'s own worked
+    /// example phrase, live-verified before this fix to get a real `200`
+    /// against the deployed gate (10 distinct words, 57 characters -- clears
+    /// both the length and distinct-word bars easily).
+    fn a_generic_but_varied_review_does_not_satisfy_the_gate() {
+        let spec = full_spec("run-req-generic", None);
+        let mut state = RunState::new("run-req-generic");
+        state.requirements.push(Requirement {
+            statement: "WHEN the user rotates the device, THE SYSTEM SHALL preserve the in-progress message draft".into(),
+            acceptance_criteria: vec!["draft text survives a real configuration change".into()],
+            verified: false,
+            verified_criteria: Vec::new(),
+            auto_judge: false,
+            proposed_by: None,
+            created_by: None,
+        });
+
+        state.history.push(IterationRecord {
+            run_id: "run-req-generic".into(),
+            stage: "devsystem.review".into(),
+            iteration: 1,
+            feedback: "looks good, works fine, nothing to flag, all clear here".into(),
+            succeeded: true,
+            proposals: vec![],
+            requirement_indices: vec![0],
+            ..Default::default()
+        });
+        let err = toggle_requirement(&spec, &mut state, 0)
+            .expect_err("a generic-but-varied review must not satisfy the gate just because it's long and varied");
+        assert!(err.contains("generic praise and filler"), "the error must explain why: {err}");
+        assert!(!state.requirements[0].verified);
+
+        // A real, substantive review of the SAME requirement still satisfies it --
+        // this fix must not have made the gate impossible to clear.
+        state.history.push(IterationRecord {
+            run_id: "run-req-generic".into(),
+            stage: "devsystem.review".into(),
+            iteration: 2,
+            feedback: "Rotated the device mid-draft on a real emulator: the EditText content survives onConfigurationChanged and no duplicate text appears afterward.".into(),
+            succeeded: true,
+            proposals: vec![],
+            requirement_indices: vec![0],
+            ..Default::default()
+        });
+        toggle_requirement(&spec, &mut state, 0).unwrap();
+        assert!(state.requirements[0].verified);
     }
 
     #[test]
