@@ -692,6 +692,16 @@ async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap
             // a real pending panel-removal proposal showed pending_reviews: 0 and
             // needs_attention: false in the actual Runs list, completely invisible
             // where a human looks first.
+            //
+            // Same bug class found live AGAIN, 2026-08-10: `pending_requirement_proposals`
+            // (issue #56's first slice, added 2026-08-09) and `pending_decisions` (issue
+            // #39/#41's real channel, added the same day this fix landed) were both
+            // added without ever touching this count -- confirmed live before fixing,
+            // a scratch run with one real requirement proposal and one real unanswered
+            // decision (two genuine open points) showed `pending_reviews: 0`,
+            // `needs_attention: false`. This is the "at minimum an unanswered decision
+            // should be visible on the run badge" half of issue #39's own suggested fix
+            // #3, closed here.
             let pending_reviews = run_state.pending_panel_proposals.len()
                 + run_state.pending_panel_removal_proposals.len()
                 + run_state.pending_panel_edit_proposals.len()
@@ -701,7 +711,9 @@ async fn list_runs(State(state): State<AppState>, headers: axum::http::HeaderMap
                 // count in the same commit that introduced the field, not left for a
                 // future firing to rediscover this same undercounting bug class a
                 // sixth queue.
-                + run_state.pending_delete_run_proposal.is_some() as usize;
+                + run_state.pending_delete_run_proposal.is_some() as usize
+                + run_state.pending_requirement_proposals.len()
+                + run_state.pending_decisions.iter().filter(|d| d.answer.is_none()).count();
             let alert = needs_attention(&health, pending_reviews);
             let paused = run_state.paused;
             let pause_reason = run_state.pause_reason.clone();
@@ -6023,6 +6035,50 @@ mod tests {
         let body = body_json(response).await;
         assert_eq!(body[0]["pending_reviews"], 1, "a real pending panel-removal proposal must count toward pending_reviews, not be silently invisible");
         assert_eq!(body[0]["needs_attention"], true);
+    }
+
+    #[tokio::test]
+    /// Same undercount bug class found live a third time, 2026-08-10:
+    /// `pending_requirement_proposals` (issue #56's first slice, added
+    /// 2026-08-09) and unanswered `pending_decisions` (issue #39/#41's real
+    /// channel, added the same day as this fix) were both added without ever
+    /// touching this tally. Live-confirmed before fixing: a real scratch run
+    /// with one of each showed `pending_reviews: 0`, `needs_attention: false`
+    /// in the actual deployed Runs list.
+    async fn list_runs_pending_reviews_counts_requirement_proposals_and_unanswered_decisions_too() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "undercount-run-2"}))).await.unwrap();
+
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/undercount-run-2/requirements/propose",
+                serde_json::json!({"statement": "WHEN X THE SYSTEM SHALL Y", "acceptance_criteria": ["real acceptance criterion"], "rationale": "rounding out coverage"}),
+            ))
+            .await
+            .unwrap();
+        let ask = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/undercount-run-2/decisions", serde_json::json!({"question": "a real open question"})))
+            .await
+            .unwrap();
+        let decision_id = body_json(ask).await["decision"]["id"].as_str().unwrap().to_string();
+
+        let response = app.clone().oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body[0]["pending_reviews"], 2, "a real pending requirement proposal and a real unanswered decision must both count, not be silently invisible");
+        assert_eq!(body[0]["needs_attention"], true);
+
+        // Answering the decision must drop it back out of the count -- it's
+        // no longer something waiting on a human.
+        app.clone()
+            .oneshot(json_request("POST", &format!("/api/runs/undercount-run-2/decisions/{decision_id}/answer"), serde_json::json!({"answer": "a real answer"})))
+            .await
+            .unwrap();
+        let response = app.oneshot(Request::builder().uri("/api/runs").body(Body::empty()).unwrap()).await.unwrap();
+        let body = body_json(response).await;
+        assert_eq!(body[0]["pending_reviews"], 1, "an answered decision must stop counting toward pending_reviews");
     }
 
     #[tokio::test]

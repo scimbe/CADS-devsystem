@@ -219,11 +219,22 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
     // this section's own enumeration below never listed them at all. A real
     // pending panel-removal or -edit proposal was invisible to the one artifact
     // whose whole job is telling a human what's waiting on them.
+    // Same undercount bug class found live a third time, 2026-08-10 (same
+    // firing that fixed the Runs-list's own `pending_reviews` tally): this
+    // count never grew to include `pending_delete_run_proposal` (added
+    // 2026-08-07) or `pending_requirement_proposals` (issue #56's first
+    // slice, added 2026-08-09) -- a real pending run-deletion or requirement
+    // proposal was invisible to this artifact too. `pending_decisions` is
+    // deliberately NOT folded in here -- it already gets its own dedicated
+    // "## Decision needed" section above (a real question needs an answer,
+    // not an approve/reject), so counting it here too would double-list it.
     let pending_total = state.pending_stage_proposals.len()
         + state.pending_panel_proposals.len()
         + state.pending_panel_removal_proposals.len()
         + state.pending_panel_edit_proposals.len()
-        + state.pending_issue_proposals.len();
+        + state.pending_issue_proposals.len()
+        + state.pending_delete_run_proposal.is_some() as usize
+        + state.pending_requirement_proposals.len();
     if pending_total > 0 {
         md.push_str("## Also awaiting your review\n\n");
         md.push_str("Independent of this check-in's own decision -- queued separately (possibly \
@@ -246,6 +257,12 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
         }
         for p in &state.pending_issue_proposals {
             md.push_str(&format!("- **GitHub issue** on `{}`: {}\n", p.repo, inline_code_escape(&p.title)));
+        }
+        if let Some(p) = &state.pending_delete_run_proposal {
+            md.push_str(&format!("- **Run deletion proposed:** {}\n", inline_code_escape(&p.rationale)));
+        }
+        for p in &state.pending_requirement_proposals {
+            md.push_str(&format!("- **New requirement proposed:** {}\n", inline_code_escape(&p.statement)));
         }
         md.push('\n');
     }
@@ -730,6 +747,33 @@ mod tests {
         assert!(md.contains("## Also awaiting your review"), "a real pending proposal must never leave this section entirely absent: {md}");
         assert!(md.contains("Release Burndown"), "a pending removal proposal must be named: {md}");
         assert!(md.contains("Old Title") && md.contains("New Title"), "a pending edit proposal must show both the real old and new title: {md}");
+    }
+
+    #[test]
+    /// Same undercount bug class found live a third time, 2026-08-10: a real
+    /// pending delete-run proposal or requirement proposal was invisible to
+    /// this artifact too, the same way panel-removal/panel-edit were before
+    /// them.
+    fn a_pending_delete_run_or_requirement_proposal_surfaces_in_also_awaiting_your_review() {
+        use crate::runner::{PendingDeleteRunProposal, PendingRequirementProposal};
+        let mut state = state_with_one_iteration(vec![]);
+        state.pending_delete_run_proposal = Some(PendingDeleteRunProposal {
+            id: "del1".into(),
+            rationale: "duplicate of another real run, safe to remove".into(),
+            proposed_at: 1,
+        });
+        state.pending_requirement_proposals.push(PendingRequirementProposal {
+            id: "req1".into(),
+            statement: "WHEN a message exceeds the size limit THE SYSTEM SHALL reject it".into(),
+            acceptance_criteria: vec!["real".into()],
+            rationale: "rounding out coverage".into(),
+            proposed_at: 1,
+        });
+
+        let md = render_plan_markdown(&state).unwrap();
+        assert!(md.contains("## Also awaiting your review"), "a real pending proposal must never leave this section entirely absent: {md}");
+        assert!(md.contains("duplicate of another real run, safe to remove"), "a pending delete-run proposal must be named: {md}");
+        assert!(md.contains("WHEN a message exceeds the size limit"), "a pending requirement proposal must be named: {md}");
     }
 
     #[test]
