@@ -1301,11 +1301,14 @@ pub fn toggle_requirement_auto_judge(state: &mut RunState, index: usize) -> Resu
 
 /// Toggles a requirement's `automode` opt-in -- see [`Requirement::automode`]'s own doc
 /// comment for exactly what this does and does not do yet (issue #31's honest first
-/// slice, same precedent as `toggle_requirement_auto_judge` above).
-pub fn toggle_requirement_automode(state: &mut RunState, index: usize) -> Result<(), String> {
+/// slice, same precedent as `toggle_requirement_auto_judge` above). Returns the real new
+/// value so the caller can tell a `false -> true` transition apart from a `true -> false`
+/// one -- issue #31's own second real slice (initial-proposals-on-enable) needs to fire
+/// its one-shot trigger only on the former, never on every toggle.
+pub fn toggle_requirement_automode(state: &mut RunState, index: usize) -> Result<bool, String> {
     let requirement = state.requirements.get_mut(index).ok_or_else(|| format!("no requirement at index {index}"))?;
     requirement.automode = !requirement.automode;
-    Ok(())
+    Ok(requirement.automode)
 }
 
 /// Toggles a single acceptance criterion's real, human-set verified state --

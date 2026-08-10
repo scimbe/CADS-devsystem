@@ -2699,8 +2699,17 @@ async fn toggle_requirement_auto_judge_handler(
 
 /// `POST /api/runs/{id}/requirements/{index}/automode/toggle` -- issue #31's honest first
 /// slice, mirroring `toggle_requirement_auto_judge_handler` above exactly. See
-/// `Requirement::automode`'s own doc comment: recorded and visible, does not yet drive
-/// any actual automatic proposal/bid/iteration behavior.
+/// `Requirement::automode`'s own doc comment: recorded and visible.
+///
+/// Issue #31's real second slice, operator-directed: "das System macht erste
+/// Vorschläge" (the system makes initial proposals) -- deliberately scoped to
+/// *proposing*, never auto-approving/auto-verifying/auto-succeeding, so it needs no
+/// answer to this issue's still-open question 3 (the mandatory-review-gate
+/// interaction). A real `false -> true` transition fires exactly one internal
+/// `devsystem.assistant` call asking it to propose 1-3 real coverage-rounding
+/// requirements/next-steps for the newly-automode-enabled requirement, landing in the
+/// same human-reviewed `pending_requirement_proposals`/`pending_next_step_proposals`
+/// queues every other proposal on this platform already uses.
 async fn toggle_requirement_automode_handler(
     State(state): State<AppState>,
     AxPath((id, index)): AxPath<(String, usize)>,
@@ -2712,21 +2721,97 @@ async fn toggle_requirement_automode_handler(
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
     }
-    let _guard = state.write_lock.lock().await;
-    let dir = run_dir(&state, &id);
-    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
-        Ok(v) => v,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    // Scoped so `write_lock` is released before the assistant call below --
+    // `trigger_automode_initial_proposals` re-acquires it itself (via
+    // `persist_assistant_call`), which would deadlock against a non-reentrant lock
+    // still held here.
+    let (response, just_enabled) = {
+        let _guard = state.write_lock.lock().await;
+        let dir = run_dir(&state, &id);
+        let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+            Ok(v) => v,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+        };
+        if !owner_authorized(&headers, &run_state) {
+            return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+        }
+        // `toggle_requirement_automode` is a strict flip -- `Ok(true)` happens if and
+        // only if this call is the real `false -> true` transition, never on an
+        // already-on requirement or a toggle-off.
+        let now_on = match toggle_requirement_automode(&mut run_state, index) {
+            Ok(v) => v,
+            Err(e) => return (StatusCode::NOT_FOUND, e).into_response(),
+        };
+        if let Err(e) = persist_run(&dir, &spec, &run_state) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response();
+        }
+        let response = Json(serde_json::json!({"requirements": run_state.requirements})).into_response();
+        (response, now_on.then(|| run_state.requirements[index].clone()))
     };
-    if !owner_authorized(&headers, &run_state) {
-        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    // Fail-soft by design: the toggle itself already succeeded and persisted above
+    // regardless of whether an assistant bridge is configured or reachable -- this is
+    // a best-effort addition on top, never a precondition for the toggle succeeding.
+    if let Some(requirement) = just_enabled {
+        trigger_automode_initial_proposals(&state, &id, &requirement).await;
     }
-    if let Err(e) = toggle_requirement_automode(&mut run_state, index) {
-        return (StatusCode::NOT_FOUND, e).into_response();
+    response
+}
+
+/// Issue #31's automode-triggered "initial proposals" call -- see
+/// `toggle_requirement_automode_handler`'s own doc comment for the real scope and
+/// safety reasoning. Reuses the exact same internal call [`ask_assistant`] makes to a
+/// running `devsystem_assistant --serve` bridge; the only difference is the caller
+/// (this handler, on a real toggle event) instead of a human typing in the chat box.
+/// Never fails the caller: no configured bridge, an unreachable one, or a non-success
+/// response are all silently absorbed here, matching [`ask_assistant`]'s own
+/// "never fabricates a response, but never blocks on this either" convention for a
+/// call that's additive, not load-bearing.
+async fn trigger_automode_initial_proposals(state: &AppState, run_id: &str, requirement: &Requirement) {
+    let Some(assistant_url) = state.assistant_url.clone() else {
+        return;
+    };
+    let criteria = if requirement.acceptance_criteria.is_empty() {
+        "(none given yet)".to_string()
+    } else {
+        requirement
+            .acceptance_criteria
+            .iter()
+            .map(|c| format!("- {c}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    // Deliberately phrased as a real "round out coverage" request, matching the exact
+    // wording devsystem_assistant.rs's own system prompt already steers toward
+    // `propose_requirement`/`propose_next_step` for (issue #56's own established
+    // pattern) -- never `add_requirement` or any other direct action.
+    let instruction = format!(
+        "Automode was just enabled for this requirement:\n\nStatement: {}\n\nAcceptance criteria:\n{criteria}\n\n\
+         Propose 1-3 real, concrete requirements or next steps that round out coverage for it \
+         (a real edge case, a security-relevant variant, or a natural follow-on) using \
+         propose_requirement or propose_next_step. Do not use add_requirement or any other \
+         direct action -- these must land as real proposals for a human to review, not be \
+         applied automatically.",
+        requirement.statement
+    );
+    let url = format!("{}/ask", assistant_url.trim_end_matches('/'));
+    let resp = match state.http_client.post(&url).json(&serde_json::json!({"run_id": run_id, "instruction": instruction})).send().await {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    if !resp.status().is_success() {
+        return;
     }
-    match persist_run(&dir, &spec, &run_state) {
-        Ok(()) => Json(serde_json::json!({"requirements": run_state.requirements})).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    let Ok(text) = resp.text().await else { return };
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) else { return };
+    let usage = parsed.get("usage");
+    let response_text = parsed.get("response").and_then(|v| v.as_str());
+    let requirement_indices: Vec<usize> = parsed
+        .get("requirement_indices")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_u64()).map(|n| n as usize).collect())
+        .unwrap_or_default();
+    if usage.is_some() || response_text.is_some() {
+        persist_assistant_call(state, run_id, &instruction, response_text, usage, &requirement_indices).await;
     }
 }
 
@@ -8202,6 +8287,91 @@ mod tests {
     }
 
     #[tokio::test]
+    /// Issue #31's real second slice: a genuine `false -> true` automode transition
+    /// fires exactly one real call to the assistant bridge, grounded in the real
+    /// requirement, steering toward propose_requirement/propose_next_step (never
+    /// add_requirement) -- and, critically, a later `true -> false` toggle (or the run
+    /// simply having no more automode-off requirements) never fires a second one.
+    async fn automode_enabled_transition_fires_exactly_one_real_proposal_call_31() {
+        let (port, received) = spawn_mock_assistant_counting(SC::OK, serde_json::json!({"response": "proposed two follow-on requirements"})).await;
+        let (state, _dir) = test_state_with_assistant(Some(&format!("http://127.0.0.1:{port}")));
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "automode-trigger-run"})))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/automode-trigger-run/requirements",
+                serde_json::json!({
+                    "statement": "WHEN a user sends a message offline, THE SYSTEM SHALL queue it locally",
+                    "acceptance_criteria": ["a queued message survives an app restart"],
+                }),
+            ))
+            .await
+            .unwrap();
+
+        // false -> true: must fire exactly one real call.
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/automode-trigger-run/requirements/0/automode/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let calls = received.lock().await;
+        assert_eq!(calls.len(), 1, "a real false->true transition must fire exactly one assistant call, got {calls:?}");
+        assert_eq!(calls[0]["run_id"], "automode-trigger-run");
+        let instruction = calls[0]["instruction"].as_str().expect("instruction is a string");
+        assert!(instruction.contains("queue it locally"), "instruction must be grounded in the real requirement statement: {instruction}");
+        assert!(instruction.contains("a queued message survives an app restart"), "instruction must include the real acceptance criteria: {instruction}");
+        assert!(instruction.contains("propose_requirement"), "instruction must steer toward the proposal-only action: {instruction}");
+        assert!(instruction.contains("propose_next_step"), "instruction must steer toward the proposal-only action: {instruction}");
+        assert!(instruction.contains("Do not use add_requirement"), "instruction must explicitly forbid the direct-add action: {instruction}");
+        drop(calls);
+
+        // true -> false: must NOT fire a second call.
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/automode-trigger-run/requirements/0/automode/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body["requirements"][0]["automode"], false, "second toggle flips back off");
+        assert_eq!(received.lock().await.len(), 1, "toggling automode OFF must never itself fire a proposal call");
+    }
+
+    #[tokio::test]
+    /// Fail-soft, matching `ask_assistant`'s own established convention: an
+    /// unreachable/erroring assistant bridge must never block or fail the real toggle
+    /// itself -- the flag change is the durable, real action; the proposal call is a
+    /// best-effort addition on top.
+    async fn automode_toggle_succeeds_even_when_the_assistant_bridge_errors_31() {
+        let (port, _received) = spawn_mock_assistant_counting(SC::INTERNAL_SERVER_ERROR, serde_json::json!({"error": "simulated bridge failure"})).await;
+        let (state, _dir) = test_state_with_assistant(Some(&format!("http://127.0.0.1:{port}")));
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "automode-bridge-error-run"})))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/automode-bridge-error-run/requirements",
+                serde_json::json!({"statement": "WHEN ..., THE SYSTEM SHALL ...", "acceptance_criteria": ["criterion A"]}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/automode-bridge-error-run/requirements/0/automode/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK, "the toggle itself must succeed regardless of the bridge's own response");
+        let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body["requirements"][0]["automode"], true, "the flag must still flip even though the bridge call failed");
+    }
+
+    #[tokio::test]
     async fn backlog_items_can_be_added_and_toggled_and_persist() {
         let (state, _dir) = test_state();
         let app = api_router(state);
@@ -11286,6 +11456,35 @@ exit 1"#);
             axum::serve(listener, mock_app).await.expect("serve mock");
         });
         (port, rx)
+    }
+
+    /// Issue #31: a mock `devsystem_assistant --serve` bridge that records EVERY real
+    /// request it receives (not just the first, unlike [`spawn_mock_assistant`]'s
+    /// single-shot `oneshot::Receiver`) -- needed to prove a NEGATIVE ("no second call
+    /// happened after toggling automode back off"), which a channel that can only ever
+    /// capture one message can't distinguish from "a second call happened but nothing
+    /// was listening for it."
+    async fn spawn_mock_assistant_counting(status: StatusCode, response_body: serde_json::Value) -> (u16, Arc<tokio::sync::Mutex<Vec<serde_json::Value>>>) {
+        let received: Arc<tokio::sync::Mutex<Vec<serde_json::Value>>> = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let received_clone = received.clone();
+        let mock_app = Router::new().route(
+            "/ask",
+            post(move |Json(body): Json<serde_json::Value>| {
+                let received = received_clone.clone();
+                let status = status;
+                let response_body = response_body.clone();
+                async move {
+                    received.lock().await.push(body);
+                    (status, Json(response_body))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind mock listener");
+        let port = listener.local_addr().expect("local addr").port();
+        tokio::spawn(async move {
+            axum::serve(listener, mock_app).await.expect("serve mock");
+        });
+        (port, received)
     }
 
     /// Real local embedding-API mock -- always returns the same fixed unit
