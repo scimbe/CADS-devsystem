@@ -8040,4 +8040,30 @@ instrumented test that calls this new API on two real sessions inside a running 
 inspects `logcat` for a Rust panic marker. Requirement #22 now stands at 3.5/4 with the real blocker
 on its last half removed, not yet fully closed.
 
+**Goal-driven-loop firing, 2026-08-10 (cccc) -- a real CI failure on firing `bbbb`'s own commit,
+read and fixed for real, not retried blind.** State check: `#382` still 22 comments, no new scimbe
+reply; no labor-setup.com activity on #14.
+
+`CADS-webconference-android@5239adb` (the new `send_raw_bytes_for_testing` UniFFI method) failed CI
+for a real, exactly-anticipated reason: `verify-native-bridge`'s own "Verify committed Kotlin
+bindings match a fresh build exactly" step caught that adding a new `#[uniffi::export]`ed method
+without regenerating the committed `native_bridge.kt`/`.so` artifacts leaves them stale -- precisely
+the drift that job exists to catch, working correctly, not a flaky failure.
+
+Attempted the real fix -- `native-bridge/build-android.sh`'s own documented process -- and hit a
+real, live disk-space wall doing it: `mingc/android-build-box` (the Docker image this script is
+"verified inside") failed to extract, "no space left on device," on this host's 20GB free. Aborted
+immediately rather than let it degrade further, matching this same page's own earlier documented
+incident (`zzzz`) and this repo's own docs (`dau-lens-and-stress-testing.md`) already naming exactly
+this as the reason Kotlin-side work here relies on real CI, not local Android SDK builds.
+
+Used the established alternative instead, not a workaround: `verify-native-bridge`'s own "Upload
+freshly built native-bridge artifacts" step uploads the fresh Kotlin bindings and per-ABI `.so`
+files unconditionally (`if: always()`), specifically so CI's own output is retrievable without a
+local Android toolchain. Downloaded that artifact from the failed run, then verified it before
+trusting it -- a real `nm -D --defined-only` symbol diff against the committed `.so` files confirmed
+the *only* difference on both ABIs is exactly the three new `send_raw_bytes_for_testing` symbols,
+no unexpected toolchain drift riding along. Copied the verified artifacts into place and committed
+as `CADS-webconference-android@c024925`. CI queued on the new commit.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
