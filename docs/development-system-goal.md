@@ -8233,4 +8233,24 @@ self-correction right after: the first comment claimed a screenshot was "attache
 isn't something `gh` can actually do (the same gotcha this project already documented on issue
 #13) -- corrected rather than left stale.
 
+**Goal-driven-loop firing, 2026-08-10 (kkkk) -- real regression sweep after this session's two
+concurrent shipped changes (issue #56's wizard, issue #362's RwLock conversion on CADS-Tunnel);
+no gap found, none fabricated.** State check: `#382` still 23 comments (the count from firing
+`iiii`'s own comment), no further new scimbe reply; no labor-setup.com activity on #13/#14.
+
+Ran `scripts/incompetent-agent-stress-test.sh` cold against the real deployment: **154/154
+passing, zero regressions** from either change landing today. Went further than trusting the
+green count, though: checked directly whether the new wizard (firing `jjjj`) needed its own new
+harness coverage, the way every genuinely new server-side behavior this session has gotten one
+(checks `[59]`/`[60]`/`[61]`/`[62]`/`[63]`). It doesn't, and this is a real, checked conclusion,
+not an assumption -- `validate_requirement_fields` (`web/src/main.rs:2198`) is, by its own doc
+comment, the single shared validator both `add_requirement` and `propose_requirement` call
+through, "not a second, separately-maintained copy that could quietly drift." The wizard is a
+pure client-side composer sitting in front of the *existing* `propose_requirement` endpoint --
+every real gate check `[60]` already exercises directly against that endpoint (bidi-control-char
+rejection, the EARS "SHALL"-as-a-real-word check, the per-criterion alphanumeric-count floor, the
+per-criterion bidi check) applies to a wizard-submitted requirement exactly as-is, with zero new
+server-side surface for a harness check to cover. A new check here would be redundant, not
+thorough.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
