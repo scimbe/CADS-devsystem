@@ -4947,7 +4947,7 @@ function renderPlanCanvasPanel(id, data) {
       <div class="pc-annotation" data-id="${escapeHtml(a.id)}">
         <div class="lede" style="font-size:.7rem">re: "${escapeHtml(a.anchor_snippet)}"</div>
         <div>${escapeHtml(a.text)}</div>
-        <button type="button" class="secondary pc-remove-annotation" data-id="${escapeHtml(a.id)}" style="margin-top:.2rem">Remove</button>
+        <button type="button" class="secondary pc-remove-annotation" data-id="${escapeHtml(a.id)}" data-text="${escapeHtml(a.text)}" style="margin-top:.2rem">Remove</button>
       </div>`).join('')
     : '<span class="lede" style="font-size:.75rem">No annotations yet -- click a block of the plan above to point at it.</span>';
 
@@ -5006,6 +5006,12 @@ function renderPlanCanvasPanel(id, data) {
   };
   for (const btn of body.querySelectorAll('.pc-remove-annotation')) {
     btn.onclick = async () => {
+      // Real DAU-lens gap, found live: every other permanent removal in this
+      // GUI (custom panels, RAG documents, build artifacts, next-step drafts)
+      // already confirms first -- this one, added when the panel itself
+      // shipped, never did. A careless click discarded a reviewer's real
+      // comment with zero warning and no undo.
+      if (!confirm(`Remove this annotation: "${truncate(btn.dataset.text, 80)}"? This is real -- there's no undo.`)) return;
       try {
         await fetchJSON(`${API}/runs/${encodeURIComponent(id)}/plan-canvas/annotations/${encodeURIComponent(btn.dataset.id)}/remove`, { method: 'POST' });
         await selectRun(id);
