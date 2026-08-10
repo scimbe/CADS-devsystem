@@ -86,6 +86,13 @@ fn run_local(run_id: &str, record_path: &str) -> std::process::ExitCode {
         eprintln!("rejected: {reason}");
         return std::process::ExitCode::FAILURE;
     }
+    // Same "two real entry points, one bug class" shape as the checks around it --
+    // see final_iteration_blocked_by_unanswered_decision's own doc comment
+    // (pipeline crate) for the full story (issue #39 suggestion #3, 2026-08-10).
+    if let Some(reason) = devsystem_pipeline::runner::final_iteration_blocked_by_unanswered_decision(&state, &state.criteria) {
+        eprintln!("rejected: {reason}");
+        return std::process::ExitCode::FAILURE;
+    }
 
     // Real gap found live by the incompetent-agent stress test's twelfth run (#382
     // goal doc §8, 2026-08-06): this local path calls run_iteration directly, with

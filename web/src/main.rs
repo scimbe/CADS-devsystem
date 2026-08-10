@@ -1331,6 +1331,9 @@ async fn iterate_run(
     if let Some(reason) = devsystem_pipeline::runner::ceiling_already_reached(&run_state, &run_state.criteria, body.succeeded) {
         return (StatusCode::CONFLICT, reason).into_response();
     }
+    if let Some(reason) = devsystem_pipeline::runner::final_iteration_blocked_by_unanswered_decision(&run_state, &run_state.criteria) {
+        return (StatusCode::CONFLICT, reason).into_response();
+    }
     // DAU-lens gap found live 2026-08-06 (#382 goal doc §8), same lens and shape as the
     // add_requirement/validate_proposals fixes: this used to `find` and reject on the
     // FIRST out-of-range index in the batch only. `requirement_indices` is a real batch
@@ -4356,6 +4359,9 @@ async fn plan_canvas_verdict(State(state): State<AppState>, AxPath(id): AxPath<S
         return (StatusCode::CONFLICT, "run is paused -- resume it first (POST /api/runs/{id}/resume)").into_response();
     }
     if let Some(reason) = devsystem_pipeline::runner::ceiling_already_reached(&run_state, &run_state.criteria, true) {
+        return (StatusCode::CONFLICT, reason).into_response();
+    }
+    if let Some(reason) = devsystem_pipeline::runner::final_iteration_blocked_by_unanswered_decision(&run_state, &run_state.criteria) {
         return (StatusCode::CONFLICT, reason).into_response();
     }
     let feedback = if run_state.plan_canvas_annotations.is_empty() {
@@ -10388,6 +10394,63 @@ exit 1"#);
 
         let submitted_at0 = history[0]["submitted_at"].as_u64().expect("a real submitted_at");
         assert!(submitted_at0 > 1_700_000_000, "the real submitted_at must be a genuine current unix timestamp, not the client-supplied 1: {submitted_at0}");
+    }
+
+    #[tokio::test]
+    /// Issue #39 suggestion #3, the gating half, end to end through the real HTTP
+    /// entry point: a submission that would consume the run's LAST remaining slot
+    /// must be refused while a real decision sits unanswered, and let through once
+    /// answered.
+    async fn iterate_run_refuses_the_final_slot_while_a_real_decision_is_unanswered() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "final-slot-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/final-slot-run/criteria",
+                serde_json::json!({"max_iterations": 1, "max_consecutive_failures": 3, "checkin_every": 0}),
+            ))
+            .await
+            .unwrap();
+        let ask = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/final-slot-run/decisions", serde_json::json!({"question": "a real open question"})))
+            .await
+            .unwrap();
+        let decision_id = body_json(ask).await["decision"]["id"].as_str().unwrap().to_string();
+
+        let refused = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/final-slot-run/iterate",
+                serde_json::json!({"stage": "devsystem.implement", "feedback": "real work", "succeeded": true}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), SC::CONFLICT, "the final (and only) slot must be refused while a real decision is unanswered");
+        let body = String::from_utf8(axum::body::to_bytes(refused.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+        assert!(body.contains("a real open question"), "the refusal must name the real open question: {body}");
+
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/api/runs/final-slot-run/decisions/{decision_id}/answer"),
+                serde_json::json!({"answer": "a real answer"}),
+            ))
+            .await
+            .unwrap();
+
+        let allowed = app
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/final-slot-run/iterate",
+                serde_json::json!({"stage": "devsystem.implement", "feedback": "real work", "succeeded": true}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(allowed.status(), SC::OK, "once the real decision is answered, the same final-slot submission must be let through");
     }
 
     #[tokio::test]

@@ -1357,6 +1357,48 @@ pub fn ceiling_already_reached(state: &RunState, criteria: &AbortCriteria, incom
     }
 }
 
+/// Real evaluator finding, issue #39 (suggestion #3, the gating half of the
+/// `pending_decisions` channel -- #382 goal doc §8, 2026-08-10). Suggestion #4 ("at
+/// least visible on the run badge") shipped the same day (issue #39/#41 comment
+/// history, task #97); this is the harder, deliberately-deferred second half: "a run
+/// should not be allowed to burn its final iteration with a blocking question
+/// outstanding." Real incident this closes: this project's own `webconference-android`
+/// run had a genuine open question (offline-delivery support, `state.backlog[7]`
+/// before the structured channel existed) sit unanswered while iterations kept landing
+/// toward the run's own ceiling -- nothing stopped the very last slot from being
+/// consumed with the question still open, after which no further iteration could ever
+/// act on whatever the real answer turned out to be.
+///
+/// Deliberately narrow, matching the issue's own wording ("final iteration", not
+/// "every iteration while something is open"): only refuses the ONE submission that
+/// would consume the run's last remaining slot
+/// (`state.history.len() + 1 == criteria.max_iterations`). An ordinary mid-run
+/// decision does not block ordinary progress -- blocking every iteration on every
+/// question that comes up would just recreate the "one careless click can't fix a
+/// real gap" failure mode this project keeps closing elsewhere, in the opposite
+/// direction. Independent of `incoming_succeeded`: a `succeeded: true` final
+/// iteration is exactly as unable to act on a still-open answer as a failed one, so
+/// unlike `ceiling_already_reached`'s consecutive-failure escape, there is no
+/// "let success through" exception here.
+pub fn final_iteration_blocked_by_unanswered_decision(state: &RunState, criteria: &AbortCriteria) -> Option<String> {
+    if state.history.len() as u32 + 1 != criteria.max_iterations {
+        return None;
+    }
+    let open: Vec<&str> = state.pending_decisions.iter().filter(|d| d.answer.is_none()).map(|d| d.question.as_str()).collect();
+    if open.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "this would be the run's final iteration ({} of {} max_iterations) while {} real decision(s) remain unanswered -- \
+         answer them first (POST /api/runs/{{id}}/decisions/{{decision_id}}/answer), or raise max_iterations before \
+         submitting: {}",
+        state.history.len() + 1,
+        criteria.max_iterations,
+        open.len(),
+        open.join("; ")
+    ))
+}
+
 /// A fourth gap of the identical "two real entry points, one bug class" shape (#382
 /// goal doc §8, 2026-08-06), deliberately deferred out of the `paused`-check fix
 /// (firing ttt) rather than bundled in, since it protects a different and less severe
@@ -2731,6 +2773,75 @@ mod tests {
             ceiling_already_reached(&state, &criteria, false).is_none(),
             "the run must be genuinely usable again afterward, not just for the one recovery submission"
         );
+    }
+
+    #[test]
+    /// Issue #39 suggestion #3, the gating half: a real unanswered decision must
+    /// refuse the ONE submission that would consume the run's last remaining slot,
+    /// but not an earlier one with real headroom still left.
+    fn final_iteration_blocked_by_unanswered_decision_only_refuses_the_actual_final_slot() {
+        let mut state = RunState::new("run-final-slot");
+        state.pending_decisions.push(PendingDecision {
+            id: "d1".into(),
+            question: "should this run ever support offline delivery?".into(),
+            options: None,
+            asked_by_iteration: 1,
+            asked_by_iteration_id: None,
+            asked_at: 1,
+            answer: None,
+            answered_at: None,
+            answered_by: None,
+        });
+        // 2 of 3 max_iterations already used -- the NEXT submission (the 3rd) would be
+        // the final slot.
+        state.history.push(record(1, true, vec![]));
+        state.history.push(record(2, true, vec![]));
+        let criteria = AbortCriteria { max_iterations: 3, max_consecutive_failures: 3, checkin_every: 0 };
+
+        let reason = final_iteration_blocked_by_unanswered_decision(&state, &criteria);
+        assert!(reason.is_some(), "the final-slot submission must be refused while a real decision sits unanswered");
+        let reason = reason.unwrap();
+        assert!(reason.contains("3 of 3"), "the refusal must name the real, current would-be count: {reason}");
+        assert!(reason.contains("should this run ever support offline delivery?"), "the refusal must name the real open question, not just a count: {reason}");
+
+        // Raise the ceiling by one -- the same submission is no longer the final slot,
+        // so it must be let through despite the decision still being unanswered.
+        let roomier = AbortCriteria { max_iterations: 4, max_consecutive_failures: 3, checkin_every: 0 };
+        assert!(
+            final_iteration_blocked_by_unanswered_decision(&state, &roomier).is_none(),
+            "a submission that ISN'T the final slot must never be blocked by this gate, even with the same unanswered decision -- only the last slot is protected"
+        );
+    }
+
+    #[test]
+    fn final_iteration_blocked_by_unanswered_decision_allows_the_final_slot_once_answered() {
+        let mut state = RunState::new("run-final-slot-answered");
+        state.pending_decisions.push(PendingDecision {
+            id: "d1".into(),
+            question: "real question".into(),
+            options: None,
+            asked_by_iteration: 1,
+            asked_by_iteration_id: None,
+            asked_at: 1,
+            answer: Some("real answer".into()),
+            answered_at: Some(2),
+            answered_by: Some("scimbe".into()),
+        });
+        state.history.push(record(1, true, vec![]));
+        let criteria = AbortCriteria { max_iterations: 2, max_consecutive_failures: 3, checkin_every: 0 };
+
+        assert!(
+            final_iteration_blocked_by_unanswered_decision(&state, &criteria).is_none(),
+            "an answered decision must never block the final slot -- only a genuinely unanswered one"
+        );
+    }
+
+    #[test]
+    fn final_iteration_blocked_by_unanswered_decision_is_none_with_no_decisions_at_all() {
+        let mut state = RunState::new("run-final-slot-none");
+        state.history.push(record(1, true, vec![]));
+        let criteria = AbortCriteria { max_iterations: 2, max_consecutive_failures: 3, checkin_every: 0 };
+        assert!(final_iteration_blocked_by_unanswered_decision(&state, &criteria).is_none());
     }
 
     #[test]
