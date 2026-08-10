@@ -7796,4 +7796,32 @@ didn't work, here's the real evidence, here's what's still needed" is the proces
 not a process failure. The alternative -- trusting the hermetic test alone and closing #98/#56 as
 done -- would have been the actual process failure this project's own discipline exists to prevent.
 
+**Goal-driven-loop firing, 2026-08-10 (uuuu) -- issue #39 suggestion #3's second, harder half closed:
+a run can no longer burn its final iteration with a real decision left unanswered.** State check: no
+new scimbe reply on any of `#382`'s open checkpoints; no new open issues/PRs. Disk space checked first
+(13GB free) and found too tight to safely start the deferred, disk-heavy requirement #22 on-device
+emulator work this firing -- picked this instead, a backend-only change with no build-heavy footprint.
+
+Suggestion #3's first half ("at minimum an unanswered decision should be visible on the run badge")
+shipped earlier the same day as part of the pending-proposal undercount fix (firing ssss). This closes
+the harder half, the issue's own wording: "ideally a run should not be allowed to burn its final
+iteration with a blocking question outstanding." Added `final_iteration_blocked_by_unanswered_decision`
+(pipeline crate) -- refuses (409) only the ONE submission that would consume a run's last remaining
+slot while any `pending_decisions` entry is unanswered; deliberately narrow, an ordinary mid-run
+decision never blocks ordinary progress. Wired into all three real entry points that call
+`run_iteration` (web's `/iterate`, web's Plan Canvas verdict-approve path, the local
+non-`--remote` `devsystem_iterate` CLI), matching this codebase's own "shared check, not
+two-entry-point drift" discipline already established for `ceiling_already_reached` and others.
+
+Hermetic: 3 new pipeline unit tests, 1 new web end-to-end integration test, both crates green
+(174+256 real per-binary counts, specific new test lines confirmed present, not just aggregates),
+clippy clean. Shipped as `CADS-devsystem@e216290`, CI-confirmed fully green, deployed and
+SHA-verified. **Live-verified end to end against the real deployment, not just the hermetic
+tests**: created a scratch run with `max_iterations: 1`, raised a real open question via
+`POST /decisions`, attempted the one real iteration submission -- refused with a real `409` naming
+the question verbatim (`"this would be the run's final iteration (1 of 1 max_iterations)..."`).
+Answered the decision via `POST /decisions/{id}/answer`, retried the identical submission -- now a
+real `200`, `outcome: "Abort"` (the run's own real ceiling firing normally, as expected). Scratch
+run deleted afterward.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
