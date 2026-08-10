@@ -684,6 +684,18 @@ pub struct RunState {
     /// didn't exist yet) still load as empty.
     #[serde(default)]
     pub plan_canvas_annotations: Vec<PlanCanvasAnnotation>,
+    /// Real evaluator finding, issue #39: "an iteration that needs an operator
+    /// decision can only shout it in free-text backlog prose... nothing
+    /// indexes it, nothing summarises it, nothing waits for it." `state` had
+    /// seven structured channels for "the pipeline wants to do something and
+    /// needs signed off" (`pending_stage_proposals` and its five siblings
+    /// above) but none for the inverse, far more common case: "the pipeline
+    /// cannot decide and needs answered." This is that channel, close to the
+    /// exact shape the issue itself proposed. See [`PendingDecision`].
+    /// `#[serde(default)]` so pre-existing `state.json` files (none asked
+    /// yet) still load.
+    #[serde(default)]
+    pub pending_decisions: Vec<PendingDecision>,
 }
 
 /// See [`RunState::checkin_notes`]'s own doc comment.
@@ -720,6 +732,39 @@ pub struct PlanCanvasAnnotation {
     pub anchor_snippet: String,
     pub text: String,
     pub created_at: u64,
+}
+
+/// See [`RunState::pending_decisions`]'s own doc comment. Distinct from
+/// [`BacklogItem`] (a "still needs doing" task, checked off and effectively
+/// removed from view) -- this is a genuine yes/no/free-text product question
+/// the run cannot resolve on its own, and stays in this list, WITH its
+/// answer, once answered, rather than disappearing. Same append-only,
+/// never-silently-repointed discipline issue #38/#42 already forced onto
+/// `history`: a decision is looked up by its stable `id`, never by position,
+/// and answering only ever fills in `answer`/`answered_at`/`answered_by` in
+/// place.
+///
+/// `asked_by_iteration_id` pairs the position with the record's own stable id
+/// at the moment this decision was raised -- the exact same "position alone
+/// can't survive a future history mutation" lesson issue #42 already forced
+/// onto `RunState::checkin_acknowledged_through_id`, applied here before a
+/// second real incident of the same class has to teach it again.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PendingDecision {
+    pub id: String,
+    pub question: String,
+    #[serde(default)]
+    pub options: Option<Vec<String>>,
+    pub asked_by_iteration: u32,
+    #[serde(default)]
+    pub asked_by_iteration_id: Option<String>,
+    pub asked_at: u64,
+    #[serde(default)]
+    pub answer: Option<String>,
+    #[serde(default)]
+    pub answered_at: Option<u64>,
+    #[serde(default)]
+    pub answered_by: Option<String>,
 }
 
 /// True when this run has genuinely crossed a real `checkin_every` boundary (or
@@ -952,6 +997,7 @@ impl RunState {
             checkin_acknowledged_through_id: None,
             checkin_notes: Vec::new(),
             plan_canvas_annotations: Vec::new(),
+            pending_decisions: Vec::new(),
         }
     }
 }

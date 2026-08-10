@@ -3763,6 +3763,7 @@ const OPEN_POINT_KIND_LABELS = {
   delete_run_proposal: 'Delete-run proposal',
   checkin_due: 'Check-in due, unacknowledged',
   requirement_proposal: 'New requirement proposal',
+  pending_decision: 'Open question (needs your answer)',
 };
 const OPEN_POINT_APPROVE_PATHS = {
   panel_proposal: 'panels/proposals',
@@ -3823,7 +3824,14 @@ async function renderOpenPointsPanel(id, data) {
   const isDraft = p.kind === 'next_step_draft';
   const draft = isDraft ? { id: p.id, text: p.summary } : null;
 
-  const actionsHtml = isDraft
+  // Issue #39's real channel (`pending_decision`, see `open_points`'s own doc
+  // comment in web/src/main.rs): a genuine open question a role-filler
+  // raised that this run cannot resolve on its own. Not an approve/reject
+  // proposal -- there's nothing to approve, it needs a real, structured
+  // answer -- so it gets its own input+button, the same shape the check-in
+  // panel's own reply textarea already established (2026-08-09).
+  const isDecision = p.kind === 'pending_decision';
+  const actionsHtml = isDraft || isDecision
     ? ''
     : p.kind === 'paused_checkpoint'
       ? `<button type="button" id="op-act-resume">Resume run</button>`
@@ -3834,7 +3842,15 @@ async function renderOpenPointsPanel(id, data) {
 
   const mainContentHtml = isDraft
     ? renderNextStepDraftsHtml([draft])
-    : `<div class="role-card">
+    : isDecision
+      ? `<div class="role-card">
+           <div class="role-card-head"><span class="role">${escapeHtml(OPEN_POINT_KIND_LABELS[p.kind] || p.kind)}</span></div>
+           <div class="role-meta">${escapeHtml(p.summary)}</div>
+           ${p.options && p.options.length ? `<div class="role-meta" style="margin-top:.2rem">options: ${p.options.map(o => escapeHtml(o)).join(', ')}</div>` : ''}
+           <textarea id="decision-answer-input" rows="2" placeholder="your answer" style="width:100%;box-sizing:border-box;margin:.4rem 0;font-family:var(--mono);font-size:.75rem"></textarea>
+           <button type="button" id="op-act-answer-decision">Answer</button>
+         </div>`
+      : `<div class="role-card">
          <div class="role-card-head"><span class="role">${escapeHtml(OPEN_POINT_KIND_LABELS[p.kind] || p.kind)}</span></div>
          <div class="role-meta">${escapeHtml(p.summary)}</div>
        </div>`;
@@ -3912,6 +3928,21 @@ async function renderOpenPointsPanel(id, data) {
     // comment, pipeline/src/runner.rs). Same single-action shape as the
     // paused-checkpoint's Resume button just above.
     document.getElementById('op-act-acknowledge-checkin').onclick = () => runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/checkin/acknowledge`, { method: 'POST' }));
+  } else if (isDecision) {
+    // Issue #39/#41 suggestion #3: a real, structured answer to a genuine
+    // open question a role-filler couldn't decide on its own -- lands in
+    // `pending_decisions[].answer` via this endpoint, not just a seen/unseen
+    // marker (same "answers must be real, persisted data" discipline the
+    // check-in reply textarea already established).
+    document.getElementById('op-act-answer-decision').onclick = () => {
+      const btn = document.getElementById('op-act-answer-decision');
+      const answer = document.getElementById('decision-answer-input').value.trim();
+      if (!answer) { statusEl.textContent = 'an answer is required'; statusEl.className = 'status-line err'; return; }
+      btn.disabled = true;
+      runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/decisions/${encodeURIComponent(p.id)}/answer`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ answer }),
+      })).finally(() => { if (btn) btn.disabled = false; });
+    };
   } else if (!isDraft) {
     const base = OPEN_POINT_APPROVE_PATHS[p.kind];
     const isDeleteRun = p.kind === 'delete_run_proposal';

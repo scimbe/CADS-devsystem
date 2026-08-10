@@ -252,6 +252,8 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/resume", post(resume_run))
         .route("/api/runs/{id}/checkin/acknowledge", post(acknowledge_checkin))
         .route("/api/runs/{id}/history/{iteration_id}/withdraw", post(withdraw_history_record))
+        .route("/api/runs/{id}/decisions", post(ask_decision))
+        .route("/api/runs/{id}/decisions/{decision_id}/answer", post(answer_decision))
         .route("/api/runs/{id}/memory", get(memory_run))
         .route("/api/runs/{id}/memory/{index}/govern", post(govern_memory))
         .route("/api/runs/{id}/backlog", post(add_backlog_item))
@@ -882,6 +884,12 @@ struct OpenPoint {
     /// existing to destroy).
     #[serde(skip_serializing_if = "Option::is_none")]
     approve_destroys_panel_title: Option<String>,
+    /// `Some` only for kind `pending_decision` -- the real, role-filler-chosen
+    /// option list from `PendingDecision::options`, structured data for the
+    /// GUI to render alongside the free-text answer field, not parsed out of
+    /// `summary`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<Vec<String>>,
 }
 
 fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
@@ -893,10 +901,11 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
             summary: run_state.pause_reason.clone().unwrap_or_else(|| "paused, no reason recorded".to_string()),
             proposed_at: None,
             approve_destroys_panel_title: None,
+            options: None,
         });
     }
     for p in &run_state.pending_panel_proposals {
-        points.push(OpenPoint { kind: "panel_proposal", id: p.id.clone(), summary: format!("new panel \"{}\"", p.title), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None });
+        points.push(OpenPoint { kind: "panel_proposal", id: p.id.clone(), summary: format!("new panel \"{}\"", p.title), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None, options: None });
     }
     for p in &run_state.pending_panel_removal_proposals {
         points.push(OpenPoint {
@@ -905,6 +914,7 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
             summary: format!("remove panel \"{}\"", p.panel_title),
             proposed_at: Some(p.proposed_at),
             approve_destroys_panel_title: Some(p.panel_title.clone()),
+            options: None,
         });
     }
     for p in &run_state.pending_panel_edit_proposals {
@@ -914,6 +924,7 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
             summary: format!("edit panel \"{}\" -> \"{}\"", p.old_title, p.new_title),
             proposed_at: Some(p.proposed_at),
             approve_destroys_panel_title: Some(p.old_title.clone()),
+            options: None,
         });
     }
     for p in &run_state.pending_stage_proposals {
@@ -923,16 +934,17 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
             summary: format!("new stage \"{}\": {}", p.proposal.stage_id, p.proposal.rationale),
             proposed_at: Some(p.proposed_at),
             approve_destroys_panel_title: None,
+            options: None,
         });
     }
     for p in &run_state.pending_issue_proposals {
-        points.push(OpenPoint { kind: "issue_proposal", id: p.id.clone(), summary: format!("file issue on {}: {}", p.repo, p.title), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None });
+        points.push(OpenPoint { kind: "issue_proposal", id: p.id.clone(), summary: format!("file issue on {}: {}", p.repo, p.title), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None, options: None });
     }
     // §7.2 gap #2's newest instance (2026-08-07): same "real pending-proposal
     // queue, surfaced here so a human sees it without hunting" treatment as
     // the five queues above.
     if let Some(p) = &run_state.pending_delete_run_proposal {
-        points.push(OpenPoint { kind: "delete_run_proposal", id: p.id.clone(), summary: format!("delete this run: {}", p.rationale), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None });
+        points.push(OpenPoint { kind: "delete_run_proposal", id: p.id.clone(), summary: format!("delete this run: {}", p.rationale), proposed_at: Some(p.proposed_at), approve_destroys_panel_title: None, options: None });
     }
     // Issue #56's first slice (2026-08-09): same "real pending-proposal queue,
     // surfaced here so a human sees it without hunting" treatment as every
@@ -944,6 +956,7 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
             summary: format!("new requirement: {}", truncate_for_summary(&p.statement, 120)),
             proposed_at: Some(p.proposed_at),
             approve_destroys_panel_title: None,
+            options: None,
         });
     }
     // Real gap found live 2026-08-07, the same firing after the check-in-pending
@@ -973,6 +986,7 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
             summary: "this run crossed its own check-in cadence and hasn't been acknowledged yet".to_string(),
             proposed_at: None,
             approve_destroys_panel_title: None,
+            options: None,
         });
     }
     // Real gap, live-found 2026-08-06: while paused, a next-step draft is
@@ -991,7 +1005,19 @@ fn open_points(run_state: &RunState) -> Vec<OpenPoint> {
     // also appearing as separate entries -- no duplication either way.
     if !run_state.paused {
         for d in &run_state.pending_next_step_drafts {
-            points.push(OpenPoint { kind: "next_step_draft", id: d.id.clone(), summary: d.text.clone(), proposed_at: Some(d.proposed_at), approve_destroys_panel_title: None });
+            points.push(OpenPoint { kind: "next_step_draft", id: d.id.clone(), summary: d.text.clone(), proposed_at: Some(d.proposed_at), approve_destroys_panel_title: None, options: None });
+        }
+    }
+    // Issue #39's own real channel (`RunState::pending_decisions`, see its doc
+    // comment): a genuine open question a role-filler raised that the run
+    // cannot resolve on its own. Only the UNANSWERED ones surface here --
+    // that's the actual open point; an answered decision stays in
+    // `pending_decisions` forever as a real, structured record (same
+    // append-only discipline as `history`) but has nothing left waiting on a
+    // human.
+    for d in &run_state.pending_decisions {
+        if d.answer.is_none() {
+            points.push(OpenPoint { kind: "pending_decision", id: d.id.clone(), summary: d.question.clone(), proposed_at: Some(d.asked_at), approve_destroys_panel_title: None, options: d.options.clone() });
         }
     }
     points
@@ -1781,6 +1807,168 @@ async fn withdraw_history_record(State(state): State<AppState>, AxPath((id, iter
             "iteration_id": iteration_id,
         }))
         .into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct AskDecisionRequest {
+    question: String,
+    #[serde(default)]
+    options: Option<Vec<String>>,
+}
+
+/// Real evaluator finding, issue #39: "an iteration that needs an operator
+/// decision can only shout it in free-text backlog prose, while the Open
+/// Points panel says 'Nothing open' and the check-in 'Decision needed'
+/// section is static boilerplate." A role-filler that hits a genuine product
+/// question it has no standing to decide (the run's own `webconference-android`
+/// backlog item 7 is a real, live instance -- "should this project ever
+/// support offline delivery?") had exactly two options before this: guess, or
+/// bury the question 12,000 characters into an iteration's own feedback
+/// prose. This is the structured channel issue #39 itself specified,
+/// implemented close to its own proposed shape (`{id, question,
+/// asked_by_iteration, options?, answer, answered_at}`), plus the same
+/// `_by`/id-provenance discipline issue #42 already forced onto
+/// `checkin_acknowledged_through` -- `asked_by_iteration_id` alongside the
+/// position, so a later history mutation can't silently disconnect this
+/// question from the record that actually asked it.
+///
+/// Deliberately NOT gated behind `owner_authorized` the way answering one is
+/// (below) -- a role-filler agent acting on this run raises the question,
+/// same trust level as `run_iteration`'s own `StageProposal` (applied
+/// immediately, no propose-then-approve queue): asking a question changes
+/// nothing about the run's real state, it only makes a real gap visible.
+async fn ask_decision(State(state): State<AppState>, AxPath(id): AxPath<String>, Json(body): Json<AskDecisionRequest>) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let question = body.question.trim().to_string();
+    if question.is_empty() {
+        return (StatusCode::BAD_REQUEST, "question must not be empty").into_response();
+    }
+    if question.len() > MAX_SHORT_TEXT_LEN {
+        return (StatusCode::BAD_REQUEST, format!("question must be under {MAX_SHORT_TEXT_LEN} characters")).into_response();
+    }
+    if contains_bidi_control_char(&question) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "question contains a Unicode bidi control character (e.g. a right-to-left override) -- these can make the visually displayed text not match what's actually stored",
+        )
+            .into_response();
+    }
+    let options: Vec<String> = body
+        .options
+        .unwrap_or_default()
+        .into_iter()
+        .map(|o| o.trim().to_string())
+        .filter(|o| !o.is_empty())
+        .collect();
+    if options.len() > 8 {
+        return (StatusCode::BAD_REQUEST, "at most 8 options are allowed").into_response();
+    }
+    for o in &options {
+        if o.len() > MAX_SHORT_TEXT_LEN {
+            return (StatusCode::BAD_REQUEST, format!("each option must be under {MAX_SHORT_TEXT_LEN} characters")).into_response();
+        }
+        if contains_bidi_control_char(o) {
+            return (
+                StatusCode::BAD_REQUEST,
+                "an option contains a Unicode bidi control character (e.g. a right-to-left override) -- these can make the visually displayed text not match what's actually stored",
+            )
+                .into_response();
+        }
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    let decision = devsystem_pipeline::runner::PendingDecision {
+        id: format!("{:016x}", rand::random::<u64>()),
+        question,
+        options: if options.is_empty() { None } else { Some(options) },
+        asked_by_iteration: run_state.history.len() as u32,
+        asked_by_iteration_id: run_state.history.last().and_then(|h| h.id.clone()),
+        asked_at: unix_now(),
+        answer: None,
+        answered_at: None,
+        answered_by: None,
+    };
+    run_state.pending_decisions.push(decision.clone());
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({ "decision": decision })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct AnswerDecisionRequest {
+    answer: String,
+}
+
+/// Real evaluator finding, issue #41 (suggestion #3, "have the answer land in
+/// a structured field an agent reads"): the operator side of the same gap
+/// `ask_decision` closes above. Gated behind `owner_authorized`, unlike
+/// asking one -- answering is a real operator decision, the same trust level
+/// every other operator-only write in this file already gets (e.g.
+/// `acknowledge_checkin`). Idempotent-refusing rather than silently
+/// overwriting: a decision can be answered exactly once, so a later reader
+/// (an agent or a human) never has to wonder whether a second, different
+/// answer superseded the first without anything recording that it happened --
+/// the same append-only discipline issue #38/#42 already forced onto
+/// `history`.
+async fn answer_decision(
+    State(state): State<AppState>,
+    AxPath((id, decision_id)): AxPath<(String, String)>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<AnswerDecisionRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let answer = body.answer.trim().to_string();
+    if answer.is_empty() {
+        return (StatusCode::BAD_REQUEST, "answer must not be empty").into_response();
+    }
+    if answer.len() > MAX_SHORT_TEXT_LEN {
+        return (StatusCode::BAD_REQUEST, format!("answer must be under {MAX_SHORT_TEXT_LEN} characters")).into_response();
+    }
+    if contains_bidi_control_char(&answer) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "answer contains a Unicode bidi control character (e.g. a right-to-left override) -- these can make the visually displayed text not match what's actually stored",
+        )
+            .into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    let Some(decision) = run_state.pending_decisions.iter_mut().find(|d| d.id == decision_id) else {
+        return (StatusCode::NOT_FOUND, "no pending decision with that id").into_response();
+    };
+    if decision.answer.is_some() {
+        return (StatusCode::BAD_REQUEST, "this decision has already been answered").into_response();
+    }
+    decision.answer = Some(answer);
+    decision.answered_at = Some(unix_now());
+    decision.answered_by = headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+    let decision = decision.clone();
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({ "decision": decision })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
     }
 }
@@ -9552,6 +9740,157 @@ exit 1"#);
                 &format!("/api/runs/withdraw-owned-run/history/{real_id}/withdraw"),
                 "someone-else@example.com",
                 Some(serde_json::json!({"reason": "real reason"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    /// Issue #39's real channel end-to-end: a role-filler raises a genuine open
+    /// question (no owner-gate on asking -- same trust level as `run_iteration`'s
+    /// own immediately-applied `StageProposal`), it surfaces as a real Open
+    /// Point (kind `pending_decision`) until answered, and the operator's real
+    /// answer lands in a structured field -- not just a seen/unseen marker.
+    async fn asking_a_decision_surfaces_it_as_an_open_point_until_answered() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "decision-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs/decision-run/iterate", serde_json::json!({"stage": "devsystem.implement", "feedback": "real work", "succeeded": true})))
+            .await
+            .unwrap();
+
+        let ask = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/decision-run/decisions",
+                serde_json::json!({"question": "should this run ever support offline delivery?", "options": ["yes", "no"]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(ask.status(), SC::OK);
+        let ask_body = body_json(ask).await;
+        let decision_id = ask_body["decision"]["id"].as_str().unwrap().to_string();
+        assert_eq!(ask_body["decision"]["asked_by_iteration"], 1, "must stamp the real, current iteration count -- not a guess");
+        assert!(ask_body["decision"]["asked_by_iteration_id"].is_string(), "must pair the position with the real id of the record that asked it (issue #42's own lesson)");
+
+        let open_points = app
+            .clone()
+            .oneshot(Request::builder().uri("/api/runs/decision-run/open-points").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let points = body_json(open_points).await;
+        let points = points.as_array().unwrap();
+        assert!(points.iter().any(|p| p["kind"] == "pending_decision" && p["id"] == decision_id), "an unanswered decision must be a real open point: {points:?}");
+        assert_eq!(points.iter().find(|p| p["id"] == decision_id).unwrap()["options"], serde_json::json!(["yes", "no"]));
+
+        let checkin = app
+            .clone()
+            .oneshot(Request::builder().uri("/api/runs/decision-run/checkin").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let checkin_md = String::from_utf8(axum::body::to_bytes(checkin.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
+        assert!(checkin_md.contains("should this run ever support offline delivery?"), "the check-in doc must name the real open question, not just static boilerplate: {checkin_md}");
+
+        let answer = app
+            .clone()
+            .oneshot(gate_request(
+                "POST",
+                &format!("/api/runs/decision-run/decisions/{decision_id}/answer"),
+                "operator@example.com",
+                Some(serde_json::json!({"answer": "no, forward-only for this run's scope"})),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(answer.status(), SC::OK);
+        let answer_body = body_json(answer).await;
+        assert_eq!(answer_body["decision"]["answer"], "no, forward-only for this run's scope");
+        assert_eq!(answer_body["decision"]["answered_by"], "operator@example.com");
+        assert!(answer_body["decision"]["answered_at"].as_u64().unwrap() > 0);
+
+        let open_points = app
+            .oneshot(Request::builder().uri("/api/runs/decision-run/open-points").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let points = body_json(open_points).await;
+        assert!(points.as_array().unwrap().iter().all(|p| p["kind"] != "pending_decision"), "an answered decision must stop being a real open point");
+    }
+
+    #[tokio::test]
+    async fn asking_a_decision_rejects_an_empty_question() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "decision-empty-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/decision-empty-run/decisions", serde_json::json!({"question": "   "})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn answering_an_unknown_decision_id_returns_not_found() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "decision-unknown-run"}))).await.unwrap();
+
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/decision-unknown-run/decisions/no-such-id/answer", serde_json::json!({"answer": "real answer"})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn answering_the_same_decision_twice_is_rejected_not_silently_overwritten() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "decision-twice-run"}))).await.unwrap();
+        let ask = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/decision-twice-run/decisions", serde_json::json!({"question": "real question"})))
+            .await
+            .unwrap();
+        let decision_id = body_json(ask).await["decision"]["id"].as_str().unwrap().to_string();
+
+        let first = app
+            .clone()
+            .oneshot(json_request("POST", &format!("/api/runs/decision-twice-run/decisions/{decision_id}/answer"), serde_json::json!({"answer": "first"})))
+            .await
+            .unwrap();
+        assert_eq!(first.status(), SC::OK);
+
+        let second = app
+            .oneshot(json_request("POST", &format!("/api/runs/decision-twice-run/decisions/{decision_id}/answer"), serde_json::json!({"answer": "second"})))
+            .await
+            .unwrap();
+        assert_eq!(second.status(), SC::BAD_REQUEST, "a decision can be answered exactly once -- a would-be second answer must never silently overwrite the first");
+    }
+
+    #[tokio::test]
+    async fn a_different_account_cannot_answer_someone_elses_decision() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone()
+            .oneshot(gate_request("POST", "/api/runs", "owner@example.com", Some(serde_json::json!({"run_id": "decision-owned-run"}))))
+            .await
+            .unwrap();
+        let ask = app
+            .clone()
+            .oneshot(json_request("POST", "/api/runs/decision-owned-run/decisions", serde_json::json!({"question": "real question"})))
+            .await
+            .unwrap();
+        let decision_id = body_json(ask).await["decision"]["id"].as_str().unwrap().to_string();
+
+        let response = app
+            .oneshot(gate_request(
+                "POST",
+                &format!("/api/runs/decision-owned-run/decisions/{decision_id}/answer"),
+                "someone-else@example.com",
+                Some(serde_json::json!({"answer": "real answer"})),
             ))
             .await
             .unwrap();

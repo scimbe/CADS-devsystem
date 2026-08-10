@@ -268,16 +268,41 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
     // not just the mechanism -- so a reader can tell at a glance whether THIS run's open
     // question has already been answered once, not just that answering is possible in general.
     md.push_str("## Decision needed\n\n");
+    // Real evaluator finding, issue #39 (root fix, 2026-08-10): this section used
+    // to be static boilerplate regardless of what the run actually needed --
+    // "it never names a single open question." `RunState::pending_decisions` is
+    // the real, structured channel a role-filler now escalates a genuine
+    // open question through (`POST /api/runs/{id}/decisions`); every
+    // UNANSWERED one is a real thing THIS run is blocked on, enumerated here
+    // by name instead of buried in backlog prose. Answering one
+    // (`POST .../decisions/{id}/answer`, or the Open Points panel's own real
+    // input+button for kind `pending_decision`) writes a real, structured
+    // `answer` a later iteration can read back via the same API -- the
+    // "structured field an agent reads" issue #41 suggestion #3 asks for.
+    let open_decisions: Vec<&crate::runner::PendingDecision> = state.pending_decisions.iter().filter(|d| d.answer.is_none()).collect();
+    if !open_decisions.is_empty() {
+        md.push_str("**This run has a real, unanswered question it cannot resolve on its own:**\n\n");
+        for d in &open_decisions {
+            md.push_str(&format!("- {}", inline_code_escape(&d.question)));
+            if let Some(opts) = &d.options {
+                if !opts.is_empty() {
+                    md.push_str(&format!(" (options: {})", opts.iter().map(|o| inline_code_escape(o)).collect::<Vec<_>>().join(", ")));
+                }
+            }
+            md.push_str(&format!(" -- asked at iteration {}\n", d.asked_by_iteration));
+        }
+        md.push_str("\nAnswer via `POST /api/runs/<run_id>/decisions/<id>/answer` or the web control panel's Open Points panel (each open decision gets a real input field and an Answer button there).\n\n");
+    }
     md.push_str("**If you're reading this via `ecc-plan-canvas`** (the CLI checkpoint): reply \
         `approve` to accept this iteration's proposals as-is and let the next iteration proceed, \
         or `request-changes` with your answer/direction (this canvas live-reloads on \
         `--reply`).\n\n");
     md.push_str("**If you're reading this in the web control panel instead:** use the optional \
-        reply field right above the **Acknowledge check-in** button -- a real, persisted answer, \
-        not just a seen/unseen marker. It doesn't yet feed back into the run's own next \
-        iteration the way `ecc-plan-canvas`'s own `--reply` does (issue #41's own larger, \
-        separate suggestion #3, still open); until then, also leave your answer as a comment on \
-        the relevant GitHub issue if the run's next iteration needs to act on it.\n");
+        reply field right above the **Acknowledge check-in** button for a general note, or -- if \
+        an open decision is listed above -- answer that specific question directly in the Open \
+        Points panel, where the answer is stored as a real, structured, per-question record any \
+        later iteration can read back (`GET /api/runs/<run_id>` -> `pending_decisions`), not just \
+        free text next to a watermark.\n");
     if state.checkin_notes.is_empty() {
         md.push_str("\nNo reply has been recorded for this run yet.\n");
     } else {
@@ -355,6 +380,35 @@ mod tests {
         assert!(md.contains("the optional reply field right above the **Acknowledge check-in** button"), "got: {md}");
         assert!(!md.contains("there is currently no reply field here"), "this claim is stale -- issue #41 suggestion #2 shipped the real field");
         assert!(md.contains("No reply has been recorded for this run yet."));
+    }
+
+    #[test]
+    /// Issue #39's root fix: a real, unanswered `pending_decisions` entry must
+    /// be named by its own question text, not left to the static boilerplate
+    /// alone -- and once answered, it must drop out of the "unanswered"
+    /// enumeration (the run isn't blocked on it anymore) while the general
+    /// reply-field guidance still remains for anything else.
+    fn checkin_markdown_names_a_real_unanswered_decision_and_stops_once_answered() {
+        let mut state = state_with_one_iteration(vec![]);
+        state.pending_decisions.push(crate::runner::PendingDecision {
+            id: "d1".to_string(),
+            question: "should this project ever support offline delivery?".to_string(),
+            options: Some(vec!["yes".to_string(), "no".to_string()]),
+            asked_by_iteration: 1,
+            asked_by_iteration_id: None,
+            asked_at: 1_786_000_000,
+            answer: None,
+            answered_at: None,
+            answered_by: None,
+        });
+        let md = render_plan_markdown(&state).expect("history is non-empty");
+        assert!(md.contains("real, unanswered question"), "got: {md}");
+        assert!(md.contains("should this project ever support offline delivery?"), "got: {md}");
+        assert!(md.contains("options: `yes`, `no`"), "got: {md}");
+
+        state.pending_decisions[0].answer = Some("no, forward-only for this run's scope".to_string());
+        let md = render_plan_markdown(&state).expect("history is non-empty");
+        assert!(!md.contains("real, unanswered question"), "an answered decision must stop appearing as unanswered: {md}");
     }
 
     #[test]
