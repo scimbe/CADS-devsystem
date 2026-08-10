@@ -8646,3 +8646,31 @@ files), most likely the live cron-driven `devsystem_assistant`/stress-harness pr
 a newer binary's default field values on its own. Left untouched and uncommitted, per firing
 `iiii`'s own "no new scope against this run" decision -- this firing's commit stages only the two
 files it actually changed, not a blanket `git add -A`.
+
+**Goal-driven-loop firing, 2026-08-10 (xxxx) -- deployed firing `wwww`'s ToggleRequirementAutomode
+fix, which had shipped hermetically-tested but explicitly not yet redeployed.** State check:
+`#382` unchanged at 23 comments, only the OIDC blocker open; CADS-devsystem #13 closed, #14's last
+labor-setup.com check-in (2026-08-10T09:08:24Z) unchanged, nothing new to review; CI backlogs on
+CADS-devsystem and CADS-webconference-android confirmed clear; no new scimbe-authored open
+PRs/issues (webconference-android's only open PRs are dependabot's). No open scimbe-authored issue
+existed to drive this firing.
+
+`80f4389` (Action::ToggleRequirementAutomode) landed hermetically tested but explicitly deferred
+its own redeploy, since `devsystem_assistant` runs as a persistent cron `@reboot` process rather
+than something a docker-compose redeploy picks up automatically. Ran
+`scripts/deploy-devsystem-assistant.sh` for real: hermetic release build (rust:1-slim,
+`ct-devsystem-pipeline-target`/`ct-devsystem-cargo-registry`), backed up the previously-running
+binary before replacing it, restarted the real `--serve` process, confirmed a real HTTP round
+trip (400 for a deliberately malformed request, no LLM spend) and the running process's
+`DEVSYSTEM_GIT_SHA` matches current HEAD (`047d42d`) -- the fix is now genuinely live, not just
+committed. Did not force a full real LLM round-trip exercising the new action specifically (that
+would cost real spend to re-prove a small, already-hermetically-tested mirror of the already-
+live-verified `auto_judge` sibling action) -- the deploy-time HTTP/git_sha checks are this
+firing's real verification bar, consistent with several earlier firings that shipped without a
+forced live LLM call when the change was a tested structural mirror of an already-proven pattern.
+
+No code changes this firing -- the increment was closing the real gap between "shipped" and
+"actually running in production" that firing `wwww` explicitly left open. Disk: 93% used, 5.5G
+free -- stable, no cleanup needed this firing, but still worth the operator's attention given this
+is the third time this session disk pressure has been flagged (see `vvvv`'s note); a periodic
+cleanup habit (or a cron) may be the real fix rather than each firing noticing it ad hoc.
