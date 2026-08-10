@@ -5230,6 +5230,17 @@ function renderHistoryPanel(data) {
   const withdrawnHtml = (h) => h.withdrawn
     ? `<div class="lede" style="font-size:.72rem;margin-top:.2rem;color:#b45309">⊘ withdrawn${h.withdrawn_by ? ` by ${escapeHtml(h.withdrawn_by)}` : ''}: ${escapeHtml(h.withdrawn_reason || '(no reason recorded)')}</div>`
     : '';
+  // Real gap closed (#382 goal doc §7.2 re-audit, 2026-08-10): `withdraw_history_record`
+  // (issue #42 suggestion #2's own fix, above) was built server-side specifically to give
+  // a real, safe alternative to hand-editing state.json -- but the GUI never grew a button
+  // to call it, so a human's only way to actually withdraw a bad iteration was still raw
+  // API calls, exactly the manual editing this endpoint exists to replace. Only offered
+  // when `h.id` is set and not already withdrawn -- matches the endpoint's own real
+  // constraint (id-keyed, only records with a real id can be withdrawn) and its own
+  // idempotency guard (already-withdrawn rejects with 400).
+  const withdrawBtnHtml = (h) => (!h.withdrawn && h.id)
+    ? `<button type="button" class="withdraw-btn" data-id="${escapeHtml(h.id)}" data-iteration="${h.iteration}" style="font-size:.7rem;margin-top:.3rem">Withdraw…</button>`
+    : '';
   const history = [...data.state.history].reverse().map(h => `
     <div class="iter"${h.withdrawn ? ' style="opacity:.6"' : ''}>
       <div class="head"><span>iteration ${h.iteration} · ${h.stage}${submittedByHtml(h.submitted_by)}</span>
@@ -5238,8 +5249,31 @@ function renderHistoryPanel(data) {
       ${renderProposals(h.proposals)}
       ${requirementRefsHtml(h.requirement_indices)}
       ${withdrawnHtml(h)}
+      ${withdrawBtnHtml(h)}
     </div>`).join('') || '<span class="lede">No iterations yet.</span>';
   body.innerHTML = `<div class="history">${history}</div>`;
+  for (const btn of body.querySelectorAll('.withdraw-btn')) {
+    btn.onclick = async () => {
+      const iterationId = btn.dataset.id;
+      const iteration = btn.dataset.iteration;
+      const reason = prompt(
+        `Withdraw iteration ${iteration}? It stays visible, tagged as withdrawn, at its ` +
+        `real original position -- nothing else is renumbered or rewritten. This is real ` +
+        `and there's no "un-withdraw" here. Why?`
+      );
+      if (reason === null) return;
+      if (!reason.trim()) { alert('A reason is required.'); return; }
+      try {
+        await fetchJSON(`${API}/runs/${encodeURIComponent(currentRun)}/history/${encodeURIComponent(iterationId)}/withdraw`, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ reason: reason.trim() })
+        });
+        await selectRun(currentRun);
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+  }
 }
 
 // Real operator ask, verbatim, 2026-08-07: "ein echtes Plan Canvas panel: review
