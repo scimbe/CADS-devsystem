@@ -7929,4 +7929,30 @@ governing principle applies here too: the process (independent verification befo
 caught both the sub-agent's scope violation and the live-verification script's own setup bug --
 neither was allowed to stand unverified.
 
+**Goal-driven-loop firing, 2026-08-10 (yyyy) -- issue #31's honest first `automode` slice shipped,
+CI-confirmed green, redeployed and live-verified.** State check: `#382` still 22 comments, no new
+scimbe reply on its open checkpoints; no labor-setup.com activity on #14; no new open
+scimbe-authored issues/PRs.
+
+A prior firing had already investigated #31 (a broad "unattended pipeline progression" ask) and
+posted three concrete, unresolved design questions -- most importantly whether an automode-driven
+iteration would still have to clear the real `devsystem.review` gate -- with no operator reply
+since. This firing shipped the safe fallback that investigation itself offered: a real, separate
+`automode` bool on `Requirement`, mirroring `auto_judge`'s own honest-placeholder precedent
+(persisted, visible, does nothing yet). Also found and fixed a real DAU-lens gap this change would
+otherwise have made worse: the *existing* `auto_judge` checkbox was already labeled "automode flag"
+in the GUI, predating this issue -- shipping a second, genuinely different `automode` field next to
+a control already using that word would have collided. Relabeled both with distinct, accurate copy
+and added a test proving the two are genuinely independent bits, not two labels on one. Hermetic:
+pipeline 175/175, web 259/259 tests (4 ignored, real Postgres), both crates clippy-clean under
+`-D warnings`. Shipped as `CADS-devsystem@465d060`, posted a status comment on issue #31.
+
+CI ran its usual full duration (docker build + incompetent-agent stress test are consistently the
+long pole in this repo's pipeline, not a stall) and came back fully green. Redeployed and
+SHA-verified (`465d060` running). **Live-verified against the actual deployment, not just the
+hermetic tests**: created a real scratch run, toggled `automode` on for its one requirement --
+`automode: true`, `auto_judge` stayed `false` (the two flags really are independent, not the same
+bit read twice), `verified` stayed `false` (toggling automode never itself judges or verifies
+anything, exactly as documented). Scratch run deleted afterward.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
