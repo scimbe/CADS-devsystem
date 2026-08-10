@@ -8079,4 +8079,24 @@ green, not just locally asserted. The remaining slice -- the actual Kotlin instr
 calls `send_raw_bytes_for_testing` on two real sessions and inspects `logcat` -- stays correctly
 scoped as separate future work, not attempted in this same bounded increment.
 
+**Goal-driven-loop firing, 2026-08-10 (eeee) -- requirement #22 criterion 2's final slice attempted:
+the actual on-device instrumented test, CI-pending, not yet claimed done.** State check: `#382`
+still 22 comments, no new scimbe reply; no labor-setup.com activity on #14.
+
+With `send_raw_bytes_for_testing` shipped and CI-confirmed (firing `dddd`), wrote the instrumented
+Kotlin test itself: `MalformedFrameInstrumentedTest.kt` runs the same two-session malformed-frame
+scenario `native-bridge`'s own hermetic tests already prove, through a real JNI call on real device
+hardware -- `generateChannelIdentity`/`bindChannelListener`/`dialChannelDirect`/
+`sendRawBytesForTesting`/`recvText`, no Activity/UI involved, matching `ConnectFlowInstrumentedTest`'s
+own established UI-free scope for a criterion that specifically needs real device hardware.
+
+**Honest about verification method**: this host cannot compile-check Kotlin/Gradle locally (the
+same disk constraint from firing `cccc`). Every API call was verified against the real generated
+bindings (`native_bridge.kt`) via direct `grep` before writing -- exact signatures, suspend-ness,
+field names, the `ChannelException.Decode` type -- not guessed at. But that is not the same as a
+real compile+run, so this is reported as **attempted, CI-pending**, not as done. Shipped as
+`CADS-webconference-android@7a3c073`, CI queued. The next firing checks whether it actually passed
+and either confirms requirement #22 fully closed (4/4) or reads a real failure and fixes it, per
+this session's own standing discipline -- not retried blind either way.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
