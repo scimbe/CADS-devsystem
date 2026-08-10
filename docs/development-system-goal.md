@@ -8674,3 +8674,36 @@ No code changes this firing -- the increment was closing the real gap between "s
 free -- stable, no cleanup needed this firing, but still worth the operator's attention given this
 is the third time this session disk pressure has been flagged (see `vvvv`'s note); a periodic
 cleanup habit (or a cron) may be the real fix rather than each firing noticing it ad hoc.
+
+**Goal-driven-loop firing, 2026-08-10 (yyyy) -- check [64]'s own blind spot: it never checked the
+guided Open Points queue, the exact surface firing `vvvv` had to separately fix `triggered_by`
+onto.** State check: `#382` unchanged at 23 comments, only the OIDC blocker open; CADS-devsystem
+#13 closed, #14's last labor-setup.com check-in (2026-08-10T09:08:24Z) unchanged; CI backlogs
+clear on both repos; no new scimbe-authored open PRs/issues. Disk had crept to 93% used (5.5G
+free) -- did a bounded safe cleanup before building (`docker image prune`, plus removing two
+detached `ct-devsystem-*` volumes under the older, superseded naming prefix fork `vvvv` had
+already flagged as stale -- not the `cads-devsystem-*`/`devsystem-*` volumes this session's real
+commands use, and not `cads-tunnel-target`/`ct-build-cargo-registry`, the CADS-Tunnel triage
+thread's own active cache), freeing ~1.4GB (91% used, 6.9G free afterward).
+
+`OpenPoint::triggered_by` (firing `vvvv`'s fix) is assembled by a genuinely separate function
+(`open_points()` in `web/src/main.rs`) from a different struct than
+`PendingRequirementProposal::triggered_by` -- not shared storage. Check [64] (firing `uuuu`) only
+ever queried the raw `pending_requirement_proposals` list, so a regression that silently dropped
+the tag from the Open Points projection specifically -- the exact class of bug `vvvv` itself found
+and fixed in the underlying feature -- would sail past [64] undetected. Added check [65]: same
+run/skip-if-no-bridge convention as [64], querying `/open-points` and asserting every
+`requirement_proposal`/`next_step_draft`-kind entry it returns is tagged. Verified the check's own
+filter logic against a synthetic regressed payload before trusting it live (one tagged entry, one
+silently untagged, one unrelated `panel_proposal`-kind entry correctly excluded from the check
+entirely -- correctly reports exactly 1 untagged). Ran the full harness cold against the live
+deployment: 156/156 (155 existing + this one new assertion) -- a real `devsystem.assistant` bridge
+was reachable, so both [64] and [65] exercised the real LLM call path, not the fail-soft skip
+branch. Shipped [`CADS-devsystem@a5b424a`](https://github.com/scimbe/CADS-devsystem/commit/a5b424a).
+
+No production code changed this firing -- pure regression-coverage infrastructure, same class as
+runs 35-38's own harness-strengthening firings; the gap tally is unaffected. Disk: 91% used, 6.9G
+free after this firing's own cleanup -- the fourth time disk pressure has been noted this session
+(`vvvv`, `xxxx`, and now here); flagging again rather than fixing it a fourth time ad hoc, since
+the pattern (naming-convention drift leaving detached target/registry volumes across repos) is now
+clearly recurring and worth the operator's own attention for a real periodic-cleanup fix.
