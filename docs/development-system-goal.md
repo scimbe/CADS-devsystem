@@ -8143,4 +8143,34 @@ Added `[63]`: toggles `automode` on a real requirement, asserts `auto_judge` sta
 toggles `auto_judge` afterward, asserts `automode` stays untouched. Ran the full harness against the
 live deployment -- 154/154 checks green. Shipped as `CADS-devsystem@3dd3c29`.
 
+**Goal-driven-loop firing, 2026-08-10 (iiii) -- the operator answered two of the three real,
+standing decision points on `#382`, live, in this session; the third stays genuinely open.**
+
+Asked directly rather than continuing to wait silently on the GitHub thread (the operator's own
+explicit instruction this session: "ask me about open points"):
+
+1. **M1 checkpoint** (`webconference-android`, paused at iteration 34 since 2026-08-05): the
+   operator chose **option 1** -- the run's `#382` proving-ground mission is complete as-is, no
+   new scope. Acted on immediately: the run's real, live check-in was acknowledged for real against
+   the actual deployed `devsystem-web` (`POST /api/runs/webconference-android/checkin/acknowledge`,
+   `checkin_acknowledged_through: 34`), with a note recording the real decision and that this loop
+   will not submit further iterations against this run absent new instruction. Acknowledging a
+   check-in-due pause mechanically resumes the run (by design, see `acknowledge_checkin`'s own doc
+   comment -- a cadence check-in is a review checkpoint, not a stop) -- confirmed live afterward,
+   `paused: false`. That resumption is not itself new scope; no new iteration follows unless
+   instructed. Task tracker item #85 ("submit a devsystem.review iteration once the flagship run is
+   unpaused") is superseded by this decision -- "no new scope" is read here as no new iteration of
+   any kind against this run, review included, not narrowly as "no new features."
+2. **Review-gate hard-block policy** (`no_review_for_succeeded_work`'s deferred harder half): the
+   operator chose **option 3** -- stay advisory. The existing Risks & Stalled panel annotation is
+   judged sufficient; no `409` hard-block on `succeeded: true` iterations lacking a real review,
+   forward-looking or retroactive. No code change needed -- this closes the decision, not a gap.
+3. **OIDC credential blocker** (issue #14's `ct-agent channel register` step): genuinely still open
+   -- the operator was asked and gave no preference among the three options offered (self-provision,
+   grant this loop temporary admin access, or leave it deferred). Not guessed at; stays flagged
+   exactly as before, blocked on the same real Keycloak admin action.
+
+`#382` itself will get a real comment recording all three outcomes, matching the transparency this
+whole thread has kept throughout. Ranked-gap-list status otherwise unchanged since firing `hhhh`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
