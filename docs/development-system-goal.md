@@ -7615,4 +7615,40 @@ confirmed in the real CI test report artifact (not just "build succeeded"): the 
 row, `class="success"`, 1/1, 0 failures. Both the pre-merge PR run and the real post-merge push run
 went fully green (4/4 jobs each) before this was logged as done.
 
+**Goal-driven-loop firing, 2026-08-10 (pppp) -- requirement #22 criterion 2's native-session half
+proven hermetically, plus a real CI gap found and closed along the way.** State check: no new scimbe
+reply on any of `#382`'s open checkpoints; no new open issues on either repo.
+
+Continued the same requirement #22 investigation from (oooo): criterion 2 requires that no decode
+failure crosses the UniFFI boundary as a Rust panic, proven by a real on-device emulator test. Before
+attempting that larger piece, proved the underlying claim at the native `ChannelSession` level:
+`send_text` always encodes a well-formed message (there's no way to construct a malformed one through
+it), so a new hermetic test sends raw, deliberately invalid bytes through the exact same real
+`a2a_send` encryption `send_text` uses internally -- a genuine authenticated-hostile-peer scenario,
+not a mock -- and confirms `recv_text` returns a real, typed `ChannelError::Decode`, never panics, and
+(criterion 3's own claim, proven again at this level) a real follow-up message from the same peer
+still arrives normally afterward.
+
+**A real, significant CI gap found live while verifying this same test actually ran anywhere**:
+`native-bridge`'s own hermetic test suite -- every test this whole session has relied on, including
+this new one -- was never actually run by CI at all. `verify-native-bridge` only rebuilds and diffs
+committed artifacts; `build-and-test`'s own "Unit tests" step is Gradle's `testDebugUnitTest`, the
+Kotlin/Robolectric side, never `cargo test`. A real regression in this crate's own logic could have
+merged with zero CI signal, silently, for as long as this repo has existed. Fixed by adding a real
+`cargo test --locked` step to `verify-native-bridge`, verified locally first (24/24 passing inside a
+hermetic `rust:1-slim` container, `--locked` clean against the committed lockfile) before trusting it
+in CI.
+
+Merged as [PR #21](https://github.com/scimbe/CADS-webconference-android/pull/21)
+(`CADS-webconference-android@2a2e36b`) -- not treated as done on the strength of the merge alone: read
+the actual CI job log line by line, confirmed the new test's own name and a real `24 passed; 0
+failed` appear in it, not just that the job's overall conclusion said success. Then waited for the
+real post-merge `push` run on `main` (not the pre-merge preview), confirmed all 4 jobs green there
+too, before logging this.
+
+Requirement #22 now stands at 3.5/4: criteria 0, 1, 3 fully verified; criterion 2's native-session
+half is real and tested, its on-device emulator half remains open -- no UniFFI API exists yet to send
+deliberately malformed bytes from Kotlin, so that half needs a new native-bridge API surface plus new
+instrumented-test infrastructure, correctly scoped as a separate, larger follow-up.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
