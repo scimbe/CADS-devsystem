@@ -771,6 +771,7 @@ mod tests {
             acceptance_criteria: vec!["real".into()],
             rationale: "rounding out coverage".into(),
             proposed_at: 1,
+            triggered_by: None,
         });
 
         let md = render_plan_markdown(&state).unwrap();

@@ -2424,6 +2424,12 @@ async fn propose_requirement(
         acceptance_criteria,
         rationale,
         proposed_at: unix_now(),
+        // Ordinary chat-triggered proposal via this endpoint -- `trigger_automode_
+        // initial_proposals` tags automode-sourced ones itself, after the fact (see
+        // its own doc comment), since this endpoint has no way to know which caller
+        // (a human's chat message vs. an automode toggle) prompted the assistant to
+        // call it.
+        triggered_by: None,
     };
     run_state.pending_requirement_proposals.push(proposal.clone());
     match persist_run(&dir, &spec, &run_state) {
@@ -2770,6 +2776,22 @@ async fn trigger_automode_initial_proposals(state: &AppState, run_id: &str, requ
     let Some(assistant_url) = state.assistant_url.clone() else {
         return;
     };
+    // #382 goal doc §7/§8 DAU-lens finding, 2026-08-10: snapshot which requirement
+    // proposals already exist BEFORE firing the assistant call, so any that appear
+    // afterward can be tagged as automode-triggered (see
+    // `PendingRequirementProposal::triggered_by`'s own doc comment for why this
+    // matters). Taken entirely on the web side, not threaded through
+    // devsystem_assistant.rs's own Action/apply_action plumbing -- this handler
+    // already knows exactly which proposals existed right before its own call, no
+    // new cross-binary wiring needed.
+    let before_ids: std::collections::HashSet<String> = {
+        let _guard = state.write_lock.lock().await;
+        let dir = run_dir(state, run_id);
+        match load_or_init_run(&dir, run_id) {
+            Ok((_, run_state)) => run_state.pending_requirement_proposals.iter().map(|p| p.id.clone()).collect(),
+            Err(_) => std::collections::HashSet::new(),
+        }
+    };
     let criteria = if requirement.acceptance_criteria.is_empty() {
         "(none given yet)".to_string()
     } else {
@@ -2800,6 +2822,27 @@ async fn trigger_automode_initial_proposals(state: &AppState, run_id: &str, requ
     };
     if !resp.status().is_success() {
         return;
+    }
+    // Tag whatever's new against the snapshot taken before the call -- independent
+    // of whether the response body below parses, since `propose_requirement`'s own
+    // HTTP call back to this process (made synchronously by devsystem_assistant.rs
+    // while handling `/ask`, before it ever replies here) has already landed and
+    // persisted by the time this response arrives.
+    {
+        let _guard = state.write_lock.lock().await;
+        let dir = run_dir(state, run_id);
+        if let Ok((spec, mut run_state)) = load_or_init_run(&dir, run_id) {
+            let mut changed = false;
+            for p in run_state.pending_requirement_proposals.iter_mut() {
+                if !before_ids.contains(&p.id) && p.triggered_by.is_none() {
+                    p.triggered_by = Some(format!("automode: {}", requirement.statement));
+                    changed = true;
+                }
+            }
+            if changed {
+                let _ = persist_run(&dir, &spec, &run_state);
+            }
+        }
     }
     let Ok(text) = resp.text().await else { return };
     let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) else { return };
@@ -8372,6 +8415,97 @@ mod tests {
     }
 
     #[tokio::test]
+    /// #382 goal doc §7/§8 DAU-lens finding, 2026-08-10: a proposal that appears as a
+    /// direct result of an automode toggle must be structurally traceable back to
+    /// that toggle (`triggered_by`), not left indistinguishable from an ordinary
+    /// chat-triggered proposal -- see `PendingRequirementProposal::triggered_by`'s own
+    /// doc comment for the real DAU confusion this closes (a user who toggles
+    /// automode on then quickly back off, then later sees an unexplained proposal
+    /// appear with no visible link to an action they believe they already cancelled).
+    /// The mock assistant here directly inserts a new proposal into the run's
+    /// persisted state before responding -- exactly what a real devsystem_assistant
+    /// process does synchronously while handling `/ask`, before it ever replies to
+    /// this caller -- so this proves the real snapshot-before/tag-after logic, not
+    /// just that the field exists.
+    async fn a_proposal_landing_from_the_automode_trigger_call_is_tagged_traceable_to_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let runs_dir = dir.path().to_path_buf();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind mock listener");
+        let port = listener.local_addr().expect("local addr").port();
+        let mock_runs_dir = runs_dir.clone();
+        let mock_app = Router::new().route(
+            "/ask",
+            post(move |Json(_body): Json<serde_json::Value>| {
+                let run_dir = mock_runs_dir.join("automode-tag-run");
+                async move {
+                    let (spec, mut run_state) = load_or_init_run(&run_dir, "automode-tag-run").expect("run must already exist");
+                    run_state.pending_requirement_proposals.push(PendingRequirementProposal {
+                        id: "from-automode".into(),
+                        statement: "WHEN offline, THE SYSTEM SHALL retry".into(),
+                        acceptance_criteria: vec!["real criterion".into()],
+                        rationale: "rounds out the offline-queue requirement".into(),
+                        proposed_at: 1,
+                        triggered_by: None,
+                    });
+                    persist_run(&run_dir, &spec, &run_state).expect("persist the simulated propose_requirement action");
+                    (SC::OK, Json(serde_json::json!({"response": "proposed a follow-on requirement"})))
+                }
+            }),
+        );
+        tokio::spawn(async move {
+            axum::serve(listener, mock_app).await.expect("serve mock");
+        });
+
+        let (state, _dir) = test_state_with_assistant(Some(&format!("http://127.0.0.1:{port}")));
+        // Same runs_dir the mock writes into directly -- both sides of this test must
+        // agree on where the run actually lives.
+        let state = AppState { runs_dir: Arc::new(runs_dir), ..state };
+        let app = api_router(state);
+        app.clone()
+            .oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "automode-tag-run"})))
+            .await
+            .unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/automode-tag-run/requirements",
+                serde_json::json!({"statement": "WHEN offline, THE SYSTEM SHALL queue", "acceptance_criteria": ["survives restart"]}),
+            ))
+            .await
+            .unwrap();
+        // Pre-existing proposal, from BEFORE the toggle (an ordinary chat-triggered
+        // one) -- must never get tagged as automode-sourced just because it happened
+        // to already be sitting in the queue when automode was enabled.
+        let propose_response = app
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/automode-tag-run/requirements/propose",
+                serde_json::json!({"statement": "WHEN X, THE SYSTEM SHALL Y", "acceptance_criteria": ["real criterion"], "rationale": "an earlier, unrelated proposal"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(propose_response.status(), SC::OK, "the pre-existing proposal setup call itself must succeed");
+
+        let response = app
+            .oneshot(Request::builder().method("POST").uri("/api/runs/automode-tag-run/requirements/0/automode/toggle").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+
+        let (_, run_state) = load_or_init_run(&dir.path().join("automode-tag-run"), "automode-tag-run").expect("run must exist");
+        assert_eq!(run_state.pending_requirement_proposals.len(), 2, "the pre-existing proposal plus the one the mock inserted");
+        let pre_existing = run_state.pending_requirement_proposals.iter().find(|p| p.rationale == "an earlier, unrelated proposal").expect("pre-existing proposal present");
+        assert_eq!(pre_existing.triggered_by, None, "a proposal that existed BEFORE the toggle must never be retroactively tagged");
+        let from_automode = run_state.pending_requirement_proposals.iter().find(|p| p.id == "from-automode").expect("automode-triggered proposal present");
+        assert_eq!(
+            from_automode.triggered_by,
+            Some("automode: WHEN offline, THE SYSTEM SHALL queue".to_string()),
+            "the proposal that appeared as a result of the automode call must be traceable back to the real requirement that triggered it"
+        );
+    }
+
+    #[tokio::test]
     async fn backlog_items_can_be_added_and_toggled_and_persist() {
         let (state, _dir) = test_state();
         let app = api_router(state);
@@ -8493,7 +8627,7 @@ mod tests {
             .map(|i| PendingIssueProposal { id: format!("issue-{i}"), repo: "scimbe/CADS-webconference-demo".into(), title: format!("T{i}"), body: "real body".into(), proposed_at: 0 })
             .collect();
         run_state.pending_requirement_proposals = (0..MAX_LIST_ITEMS)
-            .map(|i| PendingRequirementProposal { id: format!("req-{i}"), statement: format!("WHEN X{i}, THE SYSTEM SHALL Y"), acceptance_criteria: vec!["real criterion".into()], rationale: "real reason".into(), proposed_at: 0 })
+            .map(|i| PendingRequirementProposal { id: format!("req-{i}"), statement: format!("WHEN X{i}, THE SYSTEM SHALL Y"), acceptance_criteria: vec!["real criterion".into()], rationale: "real reason".into(), proposed_at: 0, triggered_by: None })
             .collect();
         persist_run(&dir.path().join("cap-run"), &spec, &run_state).expect("seed the run directly, same real persist_run the handlers use");
 

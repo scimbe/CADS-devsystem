@@ -4479,6 +4479,7 @@ function renderRequirementsPanel(id, data) {
         <div class="role-card">
           <div class="role-card-head"><span class="role">${escapeHtml(p.statement)}</span></div>
           <div class="role-meta">proposed ${escapeHtml(new Date(p.proposed_at * 1000).toLocaleString())}</div>
+          ${p.triggered_by ? `<div class="role-meta" style="color:var(--accent)">⚡ ${escapeHtml(p.triggered_by)}</div>` : ''}
           <div style="margin:.3rem 0;font-size:.72rem" class="lede">rationale: ${escapeHtml(p.rationale)}</div>
           <div style="display:flex;flex-direction:column;gap:.15rem;font-size:.75rem">
             ${p.acceptance_criteria.map(c => `<div>&bull; ${escapeHtml(c)}</div>`).join('')}

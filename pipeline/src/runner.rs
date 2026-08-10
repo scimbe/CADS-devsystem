@@ -980,6 +980,22 @@ pub struct PendingRequirementProposal {
     pub acceptance_criteria: Vec<String>,
     pub rationale: String,
     pub proposed_at: u64,
+    /// #382 goal doc §7/§8 DAU-lens finding, 2026-08-10: an automode-triggered proposal
+    /// (issue #31's "toggling ON fires an initial-proposals call") used to look
+    /// identical to any other assistant proposal -- no structural link back to the
+    /// toggle that caused it, only whatever prose the LLM happened to write in its own
+    /// `rationale`. A user who toggles automode on then quickly off again (e.g. testing
+    /// what it does) sees a proposal appear later with no visible connection to an
+    /// action they believe they already cancelled -- relying on an LLM to remember to
+    /// mention "this is from automode" in free text is exactly the kind of unenforced
+    /// guidance this methodology exists to harden into a real guarantee instead.
+    /// `Some("automode: <requirement statement>")` when this proposal was one of the
+    /// ones that appeared as a direct result of an automode-trigger call (set by
+    /// `trigger_automode_initial_proposals`, never client-supplied); `None` for every
+    /// ordinary chat-triggered proposal, unaffected. `#[serde(default)]` so a run
+    /// persisted before this field existed still deserializes.
+    #[serde(default)]
+    pub triggered_by: Option<String>,
 }
 
 impl RunState {
