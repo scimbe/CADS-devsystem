@@ -3938,6 +3938,12 @@ async function renderOpenPointsPanel(id, data) {
       const btn = document.getElementById('op-act-answer-decision');
       const answer = document.getElementById('decision-answer-input').value.trim();
       if (!answer) { statusEl.textContent = 'an answer is required'; statusEl.className = 'status-line err'; return; }
+      // Real DAU-lens gate (same class this project already closed twice for
+      // Open Points Approve/Reject, 2026-08-07): the server rejects a second
+      // answer to the same decision with a real 400 -- this is exactly as
+      // permanent as a delete-run or panel-removal approval, just via a
+      // different button, and had no confirmation at all.
+      if (!confirm(`Answer "${p.summary}" with:\n\n"${answer}"\n\nThis is permanent -- a decision can only be answered once, there's no edit or undo.`)) return;
       btn.disabled = true;
       runOpenPointAction(() => fetchJSON(`${API}/runs/${encodeURIComponent(id)}/decisions/${encodeURIComponent(p.id)}/answer`, {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ answer }),
