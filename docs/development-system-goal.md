@@ -8066,4 +8066,17 @@ the *only* difference on both ABIs is exactly the three new `send_raw_bytes_for_
 no unexpected toolchain drift riding along. Copied the verified artifacts into place and committed
 as `CADS-webconference-android@c024925`. CI queued on the new commit.
 
+**Goal-driven-loop firing, 2026-08-10 (dddd) -- `CADS-webconference-android@c024925` CI-confirmed
+fully green, closing out firing `cccc`'s fix.** State check: `#382` still 22 comments, no new
+scimbe reply; no labor-setup.com activity on #14.
+
+All four jobs (`build-and-test`, `verify-connect-flow-instrumented-test`,
+`verify-native-bridge`, `verify-release-install`) passed, including the exact step that failed on
+the prior commit (`Verify committed Kotlin bindings match a fresh build exactly`) -- confirms the
+artifact downloaded from the failed run and verified via the `nm` symbol diff was genuinely
+correct, not just plausible. Requirement #22 criterion 2's on-device blocker is closed for real, CI
+green, not just locally asserted. The remaining slice -- the actual Kotlin instrumented test that
+calls `send_raw_bytes_for_testing` on two real sessions and inspects `logcat` -- stays correctly
+scoped as separate future work, not attempted in this same bounded increment.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
