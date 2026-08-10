@@ -7998,4 +7998,22 @@ pattern actually works before relying on it going forward: re-ran a real hermeti
 that `pipeline/target` does not exist on the host at all, proving the fix, not just asserting it.
 Every hermetic build/test/clippy invocation from here forward in this session uses this pattern.
 
+**Goal-driven-loop firing, 2026-08-10 (aaaa) -- stress-harness check [62] added for the
+generic-but-varied review gate, closing the loop on `CADS-devsystem@6836977`.** State check: `#382`
+still 22 comments, no new scimbe reply; no labor-setup.com activity on #14; no new open
+scimbe-authored issues/PRs.
+
+The gate itself (firing `xxxx`) and its docs (`CADS-devsystem-docs@0e9b69a`) had already shipped,
+but the incompetent-agent stress harness -- the repeatable, real regression guard this whole
+methodology depends on -- had never grown a check for it. Added `[62]`, mirroring the gate's own
+worked-example phrase exactly (`"looks good, works fine, nothing to flag, all clear here"`):
+declares a real `review` role via the same self-optimizing proposal path any role-filler uses,
+submits the exact generic phrase, asserts a real `409`; then submits a genuinely specific review of
+the same requirement, asserts a real `200`. Ran the full 152-check harness against the live
+deployment -- all green. Deliberately did not temporarily redeploy the live production container to
+the known-bad pre-fix image just to prove the check would fail there -- the already-documented
+before/after curl evidence from firing `xxxx` (real `200` pre-fix, real `409` post-fix, same exact
+phrase) already establishes the check's teeth without that real, disproportionate production risk.
+Shipped as `CADS-devsystem@d628726`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
