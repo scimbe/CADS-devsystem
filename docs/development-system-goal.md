@@ -8289,4 +8289,45 @@ behavior, server-validation parity, and this firing's add/remove-criterion edge 
 three came back clean. Considering this feature's own audit thread closed for now; a future firing
 should look elsewhere for the next genuine gap rather than a fourth pass over the same surface.
 
+**Goal-driven-loop firing, 2026-08-10 (nnnn) -- issue #31's automode gets its real first
+behavior: toggling ON now triggers the assistant's initial proposals.** State check: `#382`
+still 23 comments, no new scimbe reply; no labor-setup.com activity on #13/#14.
+
+Operator decision, live this session: "Ja es soll einen automode geben. Zumindest einen wo das
+System erste Vorschläge macht" (yes, automode should exist -- at least one where the system makes
+initial proposals). Deliberately narrower than issue #31's own original full auto-bid/role-fill/
+auto-verify ask, which sidesteps its own still-open question 3 (the mandatory-review-gate
+interaction) entirely: this wires automode to *propose* things only, through the same
+`pending_requirement_proposals`/`pending_next_step_proposals` queues `devsystem.assistant`'s own
+coverage-rounding-out proposals (issue #56) already use. Nothing auto-approved or auto-verified --
+a human still reviews every proposal.
+
+Built on what already existed rather than inventing new infrastructure: `ask_assistant` already
+proxies a plain instruction string to a running `devsystem_assistant --serve` bridge over a
+browser-agnostic HTTP call. `toggle_requirement_automode` now returns the real new value
+(`Result<bool, String>`, was `Result<(), String>`) -- since it's a strict flip, `Ok(true)` happens
+if and only if this call is a genuine `false -> true` transition. On exactly that transition (never
+on toggle-off), the handler fires one internal call to the configured bridge, grounded in the
+requirement's own real statement/acceptance criteria, explicitly steering toward
+`propose_requirement`/`propose_next_step` (never `add_requirement`), matching
+`devsystem_assistant.rs`'s own established "round out coverage" system-prompt convention. Fail-soft
+throughout, matching `ask_assistant`'s own convention: no bridge configured, an unreachable one, or
+a non-success response never fail the toggle itself -- the flag change is persisted before the
+bridge call is even attempted.
+
+Hermetic (single Docker container, each crate run from its own directory -- no root workspace
+`Cargo.toml`): pipeline 9/9 (the signature change), web 261/261 (4 Postgres-only ignored, unchanged)
+including 2 new tests -- one proving a `false->true` toggle fires exactly one real, correctly-worded
+call while `true->false` fires none (via a new call-counting mock bridge,
+`spawn_mock_assistant_counting`, since the existing single-shot mock can't prove a negative), one
+proving the toggle still succeeds and the flag still flips when the bridge itself 500s. Both crates
+clippy-clean. Self-caught a real bug in my own first test draft, not the code: asserted the
+instruction never contains the substring `"use add_requirement"`, which fails against the
+instruction's own correct real text (`"Do not use add_requirement"`) -- fixed the assertion to check
+for that actual phrase instead. Shipped as `CADS-devsystem@01b1939`, CI-pending at write time.
+
+Not attempted here, deliberately: question 2 (price_ceiling interaction under automode) and the
+full auto-bid/role-fill/auto-verify chain remain explicitly out of scope -- still the first real
+slice per the operator's own scoping, not the whole issue.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
