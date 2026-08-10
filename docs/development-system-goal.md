@@ -8130,4 +8130,17 @@ is closed on every axis this project's own discipline checks: real hermetic test
 real CI (all 4 jobs), and real on-device evidence (the actual instrumented-test-report artifact),
 not just an inferred green checkmark. Nothing further to verify here.
 
+**Goal-driven-loop firing, 2026-08-10 (hhhh) -- stress-harness check [63] added for the
+automode/auto_judge independence.** State check: `#382` still 22 comments, no new scimbe reply; no
+labor-setup.com activity on #14; flagship `webconference-android` run correctly still paused,
+awaiting the operator's own real check-in acknowledgment (iteration 34, watermark 33) -- not
+touched.
+
+Issue #31's automode slice (firing `yyyy`) shipped hermetic and web-layer tests proving `automode`
+and `auto_judge` are genuinely independent bits, but the live-deployment stress harness never grew
+a matching regression check -- the same class of gap check `[62]` closed for the review gate.
+Added `[63]`: toggles `automode` on a real requirement, asserts `auto_judge` stays untouched;
+toggles `auto_judge` afterward, asserts `automode` stays untouched. Ran the full harness against the
+live deployment -- 154/154 checks green. Shipped as `CADS-devsystem@3dd3c29`.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
