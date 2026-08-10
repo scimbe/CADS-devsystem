@@ -8741,3 +8741,43 @@ scope, not closing one -- the governing principle is about the pipeline's own ga
 firing something every cycle regardless of whether there's real work ready. Next firing: re-check
 whether the concurrent build has cleared, then either resume `#31`/`#56` re-audit discipline or
 pick up whatever real gap that re-audit finds.
+
+**Goal-driven-loop firing, 2026-08-10 (aaaa) -- resumed the #31/#56 re-audit discipline per
+firing `zzzz`'s own next-step note (concurrent CADS-Tunnel build had cleared): a real
+GUI-completeness gap found and closed, distinct from the Action-enum-parity class of gap the
+last several firings kept finding.** State check: `#382` unchanged at 23 comments, only the
+OIDC blocker open; CADS-devsystem #13 closed, #14's last labor-setup.com check-in
+(2026-08-10T09:08:24Z) unchanged; CI clear on both repos; the same four open scimbe-authored
+issues (`#56`, `#31`, `#14`, `#7`) all still at their prior real stopping points, nothing new
+from the operator.
+
+Cross-checked the `devsystem.assistant` Action enum against every real `/api/runs/{id}/...`
+handler again, from the reverse direction this time (real endpoints with no matching action) --
+`govern_memory` and `ask_decision`/`answer_decision` are correctly excluded (deliberately
+human-only by design, per their own doc comments: memory governance and human product decisions
+must stay human, matching the review-must-be-human principle this thread has debated before on
+`#382` itself). `withdraw_history_record` (`web/src/main.rs`, built for issue #42 suggestion #2)
+had no Action-enum equivalent either, but investigating it surfaced a bigger, more directly
+governing-principle-relevant gap: **the endpoint has no GUI button at all** -- confirmed via
+`grep` across `web/static/index.html`, zero call sites. The safety mechanism built specifically
+to replace issue #42's dangerous manual `state.json` editing was itself unreachable through
+normal use; a human still had no real way to withdraw a bad iteration except raw API calls.
+
+Wired a real "Withdraw…" button onto each non-withdrawn history record with a real `id`
+(matching the endpoint's own constraints), using the same `prompt()`-for-required-reason pattern
+already established for the Delete Run button. Shipped
+[`CADS-devsystem@3390f1a`](https://github.com/scimbe/CADS-devsystem/commit/3390f1a). `node
+--check` on the extracted script block: clean.
+
+**Live deploy explicitly deferred, not forced** -- host under real, confirmed contention (5+
+concurrent CADS-Tunnel security-fix forks running this same session), `deploy-devsystem-web.sh`'s
+own `timeout 300` killed the build mid-way (exit 143) before it could finish. Same precedent as
+firings `wwww`->`xxxx`: ship hermetically-checked code now, redeploy as its own separate,
+explicit next step once host contention clears -- not the same concern as the code itself being
+correct.
+
+No `devsystem.assistant` Action-enum change this firing -- the gap found was GUI-completeness,
+not action parity, so nothing there needed touching. Next firing: redeploy `3390f1a` and
+live-verify the Withdraw button against the real deployment (create a real run, submit an
+iteration, withdraw it, confirm the tombstone renders and the record stays at its original
+position), then resume the standing re-audit discipline for whatever's found next.
