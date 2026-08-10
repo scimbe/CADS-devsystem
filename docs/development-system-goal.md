@@ -8099,4 +8099,25 @@ real compile+run, so this is reported as **attempted, CI-pending**, not as done.
 and either confirms requirement #22 fully closed (4/4) or reads a real failure and fixes it, per
 this session's own standing discipline -- not retried blind either way.
 
+**Goal-driven-loop firing, 2026-08-10 (ffff) -- requirement #22 criterion 2 confirmed genuinely
+closed: real test-report evidence, not an inferred "BUILD SUCCESSFUL."** State check: `#382` still
+22 comments, no new scimbe reply; no labor-setup.com activity on #14.
+
+Firing `eeee` shipped `MalformedFrameInstrumentedTest.kt` honestly labeled "attempted, CI-pending"
+-- API calls verified against the real bindings by inspection, but never compile-checked locally.
+This firing checked the actual result rather than trusting the job's green checkmark alone:
+`verify-connect-flow-instrumented-test` (the job running the full `connectedDebugAndroidTest`
+suite) completed successfully, but its raw log never mentions test names (Gradle's default output,
+not a red flag) -- so downloaded the real `instrumented-test-report` artifact and read the actual
+per-test HTML report. Real evidence:
+`aMalformedFrameOverARealOnDeviceSessionSurfacesAsATypedErrorNeverAPanic` -- **passed, 0.077s, 100%
+success rate**, run on a real AVD (`test(AVD) - 10`), alongside `ConnectFlowInstrumentedTest`'s own
+existing test in the same suite. Requirement #22 now stands at genuinely 4/4: every criterion real,
+tested, and confirmed by actual evidence, not asserted from a build's own exit code.
+
+`verify-native-bridge`/`verify-release-install` (unrelated to this Kotlin test's own correctness --
+native-bridge crate build and APK install checks) were still in progress at the time of this
+check; the test's own real pass/fail is what this firing needed to confirm honestly, and it's now
+real, not inferred.
+
 This ranking is a proposal, not a decision — the operator leads (§4.3).
