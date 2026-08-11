@@ -56,7 +56,7 @@ rand = "0.10"
 # `rand` now pulls in) -- kept as an explicit direct dependency so
 # SigningKey::generate's own real CryptoRngCore bound is satisfied by a
 # version-matched OsRng, not this crate's newer, incompatible one.
-rand_core = "0.6"
+rand_core = "0.10"
 # Real Postgres+pgvector storage for RAG semantic search (CADS-devsystem#7,
 # operator-directed switch from the earlier embedded-only approach --
 # rustls to match every other TLS dep in this crate, not the default
