@@ -43,5 +43,5 @@ tiny_http = "0.12"
 # the request shape to a single string (#149-A.1, ct-common/src/mcp.rs), so a real
 # document's binary bytes (PDF/DOCX/image) have to travel as text somehow to reach
 # the extraction agent over the channel. Standard, no alternative encoding invented.
-base64 = "0.22"
+base64 = "0.23"
 
