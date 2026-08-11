@@ -30,7 +30,7 @@ rand = "0.10"
 # `rand` now pulls in) -- kept as an explicit direct dependency so
 # SigningKey::generate's own real CryptoRngCore bound is satisfied by a
 # version-matched OsRng, not this crate's newer, incompatible one.
-rand_core = "0.6"
+rand_core = "0.10"
 # devsystem_assistant --serve only -- a minimal, synchronous HTTP server so the
 # GUI can call the assistant over the same real logic the one-shot CLI uses.
 # Deliberately not axum/tokio (already web/'s job): this bridge is meant to run
