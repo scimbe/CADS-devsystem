@@ -78,7 +78,7 @@ pgvector = { version = "0.4", features = ["sqlx"] }
 # already follows. Already resolved transitively in this workspace's lock file
 # (ed25519-dalek/reqwest's own dependency tree); pinned here as a direct dep
 # since this crate now calls it directly, not just through another crate's API.
-sha2 = "0.10"
+sha2 = "0.11"
 
 [dev-dependencies]
 # Drives the real `api_router()` in-process via `ServiceExt::oneshot` -- no network
