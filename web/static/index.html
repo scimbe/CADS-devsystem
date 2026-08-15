@@ -501,6 +501,19 @@
  }
  .orb-bubble:hover .orb-puck,.orb-bubble:focus-visible .orb-puck{transform:scale(1.1);border-color:var(--accent2)}
  .orb-bubble.active .orb-puck{border-color:var(--accent);box-shadow:0 0 0 2px rgba(217,138,79,.28),0 10px 26px rgba(0,0,0,.4)}
+ /* Real bug, GitHub issue #65: the puck-collision-avoidance math (TIERS'
+    chord/radius floors above) only ever accounted for puck-to-puck spacing,
+    never for the .orb-label pill's own footprint -- which is real, on-hover
+    content that can be wider/taller than the gap between tightly-packed
+    tiers and geometrically land on top of a neighboring bubble. Verified
+    live: 0/22 puck-to-puck overlaps at rest (bounding-box math confirms the
+    TIERS system itself is correct), but a hovered bubble's label had no
+    z-index boost of its own, so a later-DOM-order sibling bubble (higher in
+    the default stacking order) painted over it, clipping the label text --
+    exactly the reported screenshot. `.orb-label` already had `z-index:1`,
+    but that only orders content *within* one bubble's own subtree; nothing
+    raised the whole hovered/focused bubble above its siblings. */
+ .orb-bubble:hover,.orb-bubble:focus-visible{z-index:10}
  /* Real operator ask, live 2026-08-07 -- a real pictogram in every puck
     (still within this launcher's own glass/dark scheme, not the bright
     reference palette the operator pointed at only for the icon *idea*),
