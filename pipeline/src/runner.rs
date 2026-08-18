@@ -21,6 +21,29 @@ pub struct BacklogItem {
     pub done: bool,
 }
 
+/// A human's real inline note on one specific past iteration -- operator feedback,
+/// UX pass 2026-08-18 ("mehr potentielle Einflussgabe... neue Eingriffspunkte"):
+/// today the only way to react to an iteration is to submit an entirely new one via
+/// New Iteration, with no way to attach a remark to a *specific already-happened*
+/// entry without it getting lost among unrelated backlog/requirement text. Addressed
+/// by `history_index`, the same array-position convention `toggle_backlog_item`/
+/// `toggle_milestone` already use to reference one entry in a `Vec` -- deliberately
+/// NOT `IterationRecord::iteration`, since issues #38/#52 already found live that
+/// iteration numbers can repeat within a run's real history, making them unsafe as
+/// a unique reference. Append-only (no edit/delete yet -- the same minimal first
+/// slice this project's other real-but-narrow features started as, e.g. Requirements
+/// before edit support existed).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IterationComment {
+    pub history_index: usize,
+    /// The real, gate-verified `x-gate-email` of whoever wrote this, same
+    /// never-trust-the-body discipline as `RunState::owner_email`/`created_by`
+    /// elsewhere. `None` for a caller with no real session (e.g. a local CLI).
+    pub author: Option<String>,
+    pub text: String,
+    pub created_at: u64,
+}
+
 /// How one role's status is determined and (eventually) filled -- operator feedback
 /// (#382 Roles panel ask 1/4): "Umschalten von Auktion zu einem dezidierten LLM
 /// Agenten." `Auction` is today's only real behavior, unchanged: the role's status
@@ -453,6 +476,11 @@ pub struct RunState {
     /// pre-existing `state.json` files (no backlog yet) still load.
     #[serde(default)]
     pub backlog: Vec<BacklogItem>,
+    /// This run's real per-iteration human comments -- see [`IterationComment`].
+    /// `#[serde(default)]` so pre-existing `state.json` files (no comments yet)
+    /// still load.
+    #[serde(default)]
+    pub iteration_comments: Vec<IterationComment>,
     /// This run's real completion/abort checkpoints -- see [`Milestone`].
     /// `#[serde(default)]` so pre-existing `state.json` files still load.
     #[serde(default)]
@@ -1020,6 +1048,7 @@ impl RunState {
             paused: false,
             pause_reason: None,
             backlog: Vec::new(),
+            iteration_comments: Vec::new(),
             milestones: Vec::new(),
             repo_url: None,
             owner_email: None,

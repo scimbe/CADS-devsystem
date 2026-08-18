@@ -21,7 +21,7 @@ use devsystem_pipeline::improve::stalled_stages;
 use devsystem_pipeline::preflight::{preflight_annotations, process_annotations};
 use devsystem_pipeline::runner::{
     checkin_pending, duplicate_of_last_iteration, load_or_init_run, persist_run, push_chat_exchange, qualifying_review_evidence, render_requirements_markdown, run_iteration, toggle_acceptance_criterion,
-    toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, toggle_requirement_automode, valid_run_id, validate_requirement_indices, BacklogItem, CustomPanel,
+    toggle_milestone, toggle_requirement, toggle_requirement_auto_judge, toggle_requirement_automode, valid_run_id, validate_requirement_indices, BacklogItem, CustomPanel, IterationComment,
     Milestone, PendingDeleteRunProposal, PendingIssueProposal, PendingNextStepDraft, PendingPanelEditProposal, PendingPanelProposal, PendingPanelRemovalProposal, PendingRequirementProposal,
     PendingStageProposal, PlanCanvasAnnotation, Requirement, RoleFillMode, RunOutcome, RunState,
 };
@@ -258,6 +258,7 @@ fn api_router(state: AppState) -> Router {
         .route("/api/runs/{id}/memory/{index}/govern", post(govern_memory))
         .route("/api/runs/{id}/backlog", post(add_backlog_item))
         .route("/api/runs/{id}/backlog/{index}/toggle", post(toggle_backlog_item))
+        .route("/api/runs/{id}/history/{index}/comments", post(add_iteration_comment))
         .route("/api/runs/{id}/milestones", post(add_milestone))
         .route("/api/runs/{id}/milestones/{index}/toggle", post(toggle_milestone_handler))
         .route("/api/runs/{id}/requirements", post(add_requirement))
@@ -2089,6 +2090,73 @@ async fn toggle_backlog_item(
     item.done = !item.done;
     match persist_run(&dir, &spec, &run_state) {
         Ok(()) => Json(serde_json::json!({"backlog": run_state.backlog})).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct AddIterationCommentRequest {
+    text: String,
+}
+
+/// A human's real inline note on one specific past iteration -- see
+/// [`devsystem_pipeline::runner::IterationComment`]'s own doc comment for why
+/// (UX pass 2026-08-18, "mehr potentielle Einflussgabe"). `index` addresses
+/// `RunState::history` by array position, the same convention
+/// `toggle_backlog_item`/`toggle_milestone_handler` already use -- deliberately
+/// NOT the iteration number itself (issues #38/#52: iteration numbers can repeat).
+async fn add_iteration_comment(
+    State(state): State<AppState>,
+    AxPath((id, index)): AxPath<(String, usize)>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<AddIterationCommentRequest>,
+) -> impl IntoResponse {
+    if !valid_run_id(&id) {
+        return (StatusCode::BAD_REQUEST, "run_id must be non-empty alphanumeric/-/_ only").into_response();
+    }
+    if !run_exists(&state, &id) {
+        return (StatusCode::NOT_FOUND, "no such run").into_response();
+    }
+    let text = body.text.trim().to_string();
+    if text.is_empty() {
+        return (StatusCode::BAD_REQUEST, "text must not be empty").into_response();
+    }
+    if text.len() > MAX_SHORT_TEXT_LEN {
+        return (StatusCode::BAD_REQUEST, format!("text must be under {MAX_SHORT_TEXT_LEN} characters")).into_response();
+    }
+    if contains_bidi_control_char(&text) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "text contains a Unicode bidi control character (e.g. a right-to-left override) -- \
+             these can make the visually displayed text not match what's actually stored"
+                .to_string(),
+        )
+            .into_response();
+    }
+    let _guard = state.write_lock.lock().await;
+    let dir = run_dir(&state, &id);
+    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+    };
+    if !owner_authorized(&headers, &run_state) {
+        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+    }
+    if run_state.history.get(index).is_none() {
+        return (StatusCode::NOT_FOUND, format!("no history entry at index {index}")).into_response();
+    }
+    if run_state.iteration_comments.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("iteration comments are at their defensive cap of {MAX_LIST_ITEMS}")).into_response();
+    }
+    let author = headers.get("x-gate-email").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+    run_state.iteration_comments.push(IterationComment {
+        history_index: index,
+        author,
+        text,
+        created_at: unix_now(),
+    });
+    match persist_run(&dir, &spec, &run_state) {
+        Ok(()) => Json(serde_json::json!({"iteration_comments": run_state.iteration_comments})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response(),
     }
 }
@@ -8829,6 +8897,51 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), SC::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    /// UX pass 2026-08-18 ("mehr potentielle Einflussgabe" -- a real new
+    /// intervention point, not just a more visible existing one): a human can now
+    /// attach a real, attributed comment to one specific past iteration, addressed
+    /// by its array position in `history` (not the iteration number -- see
+    /// `IterationComment`'s own doc comment for why that would be unsafe).
+    async fn add_iteration_comment_persists_with_real_author_and_404s_out_of_range() {
+        let (state, _dir) = test_state();
+        let app = api_router(state);
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "comment-run"}))).await.unwrap();
+        app.clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/runs/comment-run/iterate",
+                serde_json::json!({"stage": "devsystem.implement", "feedback": "wired the real session handshake", "succeeded": true}),
+            ))
+            .await
+            .unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(gate_request("POST", "/api/runs/comment-run/history/0/comments", "reviewer@example.com", Some(serde_json::json!({"text": "looks right, ship it"}))))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["iteration_comments"][0]["history_index"], 0);
+        assert_eq!(body["iteration_comments"][0]["author"], "reviewer@example.com");
+        assert_eq!(body["iteration_comments"][0]["text"], "looks right, ship it");
+        assert!(body["iteration_comments"][0]["created_at"].as_u64().unwrap() > 1_700_000_000);
+
+        let response = app
+            .clone()
+            .oneshot(Request::builder().method("POST").uri("/api/runs/comment-run/history/0/comments").header("content-type", "application/json").body(Body::from(serde_json::json!({"text": "   "}).to_string())).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::BAD_REQUEST, "blank comment text must be rejected");
+
+        let response = app
+            .oneshot(gate_request("POST", "/api/runs/comment-run/history/9/comments", "reviewer@example.com", Some(serde_json::json!({"text": "out of range"}))))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), SC::NOT_FOUND, "an out-of-range history index must 404, not panic");
     }
 
     #[tokio::test]
