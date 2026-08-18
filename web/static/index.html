@@ -2126,7 +2126,26 @@ function initPanels() {
 // -------------------- data + rendering --------------------
 
 async function fetchJSON(url, opts) {
-  const res = await fetch(url, opts);
+  let res;
+  try {
+    res = await fetch(url, opts);
+  } catch (e) {
+    // Real bug, live-caught in a long-running session (GitHub issue #67): once this
+    // session's auth expires, EVERY API call here gets redirected server-side to
+    // /gate/start, which fetch() can't follow (no Access-Control-Allow-Origin on that
+    // endpoint -- it's meant for a real page navigation, not XHR/fetch) and throws a bare
+    // TypeError("Failed to fetch"). That's indistinguishable, from script, from a genuine
+    // network outage -- but in this app the overwhelmingly likely cause on a
+    // previously-working page is session expiry, so say so instead of leaving the caller
+    // with a message that looks like a server/network problem.
+    const err = new Error(
+      'Connection failed -- if this page has been open a long time, your session may have ' +
+      'expired. Try reloading; if it keeps happening, log in again.'
+    );
+    err.status = 0;
+    err.likelySessionExpiry = true;
+    throw err;
+  }
   const raw = await res.text();
   // Real gap found+fixed 2026-08-05: the overwhelming majority of this
   // backend's real error responses are plain text (`(StatusCode::X, "a real
