@@ -2343,6 +2343,13 @@ function openNewProjectDialog() {
       closeNewProjectDialog();
       await refreshRunsList();
       await selectRun(run_id);
+      // Real gap found live: Milestones/Backlog already have good "Start here" empty-state
+      // copy (see their own panels), but nothing ever pointed a first-time operator at them
+      // -- a run could run for 9+ successful iterations with neither ever opened, purely
+      // because nobody already knew to look. Not a mandatory step (still fully optional,
+      // dismissable like any other panel), just surfaced once, right when a fresh run has
+      // the most reason to get a real completion target set before work starts drifting.
+      showPanel('milestones');
     } catch (err) {
       status.textContent = err.message; status.className = 'status-line err';
     }
