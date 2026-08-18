@@ -843,6 +843,24 @@ fn parse_llm_json_output(stdout: &str) -> Result<LlmReply, String> {
         "cache_read_input_tokens": tok("cache_read_input_tokens"),
         "total_cost_usd": parsed.get("total_cost_usd").and_then(|v| v.as_f64()),
     });
+    // Real gap found live (2026-08-18 check-in): a run showed 1 real assistant
+    // call with 0 tokens/cost recorded, and the best-effort default-to-zero
+    // behavior above (deliberately kept, see the two tests right below this
+    // function) made it silently indistinguishable from a genuinely free
+    // call. If the CLI's own JSON has no "usage" object at all -- e.g. a
+    // `CT_LLM_CMD` pointing at a wrapper/older CLI whose output shape has
+    // moved on from what this parser was written against -- log it so the
+    // next occurrence is diagnosable from the server's own stderr instead of
+    // only from a suspicious-looking zero in the GUI.
+    if parsed.get("usage").is_none() {
+        eprintln!(
+            "devsystem_assistant: LLM CLI JSON output has no \"usage\" object at all -- \
+             token/cost accounting for this call will show as 0, not because it was free, \
+             but because this parser found nothing to read. Check CT_LLM_CMD ({}) actually \
+             invokes a CLI whose --output-format json includes a top-level \"usage\" field.",
+            env::var("CT_LLM_CMD").unwrap_or_else(|_| "claude".to_string()),
+        );
+    }
     Ok(LlmReply { text, usage })
 }
 
