@@ -141,10 +141,15 @@ docker stop devsystem-web >/dev/null 2>&1 || true
 docker rm devsystem-web >/dev/null 2>&1 || true
 
 echo "Starting devsystem-web ..."
+# #74: this container shares the production ct-selfhost_default network on a
+# swap-less host -- an unbounded container here is the same risk class
+# CADS-Tunnel#600 closed for examples/help-site. Real usage is ~5MB; 128m/32m/
+# 0.5cpu is generous headroom, matching #600's precedent exactly.
 docker run -d --name devsystem-web \
   --network ct-selfhost_default \
   --add-host=host.docker.internal:host-gateway \
   --restart unless-stopped \
+  --memory=128m --memory-swap=128m --memory-reservation=32m --cpus=0.5 \
   -p 127.0.0.1:8790:8790 \
   -e CT_CHANNEL_NOISE_KEY="$CT_CHANNEL_NOISE_KEY" \
   -e CT_CHANNEL_PEER_NOISE_KEY="$CT_CHANNEL_PEER_NOISE_KEY" \
