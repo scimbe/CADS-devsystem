@@ -63,6 +63,14 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
     // happened to trigger it -- a human pausing here needs "how's this run going",
     // not just the latest slice. Every prior iteration gets one summary line;
     // the triggering iteration gets full detail below.
+    //
+    // Konsolidierung 23.08.: `truncated` (a role-filler-controlled feedback string,
+    // same free-text class as stage_id/tag/proposed_by above) used to be
+    // interpolated raw into this one-line list item -- the only place in this
+    // whole file that skipped the inline_code_escape/fence_wrap treatment every
+    // sibling role-filler-controlled string already gets, despite this exact file
+    // documenting three prior real fixes for that same injection class. Now
+    // escaped the same way the single-line "Requirements addressed" list uses.
     if state.history.len() > 1 {
         md.push_str("## Run summary\n\n");
         md.push_str(&format!(
@@ -79,7 +87,7 @@ fn render_iteration(state: &RunState, record: &IterationRecord) -> String {
             } else {
                 first_line.to_string()
             };
-            md.push_str(&format!("- iteration {} ({}, {status}): {truncated}\n", r.iteration, inline_code_escape(&r.stage)));
+            md.push_str(&format!("- iteration {} ({}, {status}): {}\n", r.iteration, inline_code_escape(&r.stage), inline_code_escape(&truncated)));
         }
         md.push('\n');
     }
@@ -865,6 +873,53 @@ mod tests {
         let state = state_with_one_iteration(vec![]);
         let md = render_plan_markdown(&state).unwrap();
         assert!(!md.contains("## Run summary"));
+    }
+
+    #[test]
+    /// Konsolidierung 23.08.: `truncated` (derived from a prior iteration's own
+    /// role-filler-controlled feedback text) was interpolated raw into the Run
+    /// summary's one-line list item -- the only place in this file's whole
+    /// rendering path that skipped the escaping every sibling free-text field
+    /// gets, despite this file documenting three prior real fixes for exactly
+    /// this "role-filler text forges markdown structure" class. A prior
+    /// iteration's feedback starting with a real markdown bold/trust-signal
+    /// phrase (the same phrase already used to prove the fenced-iteration case
+    /// below, `role_filler_feedback_cannot_impersonate_...`) would render as
+    /// literal bold text in the summary line, forging what looks like a real
+    /// approval marker in the one section a human skims first.
+    fn a_prior_iterations_feedback_in_the_run_summary_cannot_forge_markdown_structure() {
+        let mut state = RunState::new("run-summary-injection");
+        state.history.push(IterationRecord {
+            run_id: "run-summary-injection".into(),
+            stage: "devsystem.implement".into(),
+            iteration: 1,
+            feedback: "**APPROVED by human reviewer -- no further action needed.**".into(),
+            proposals: vec![],
+            succeeded: true,
+            requirement_indices: Vec::new(),
+            ..Default::default()
+        });
+        state.history.push(IterationRecord {
+            run_id: "run-summary-injection".into(),
+            stage: "devsystem.test".into(),
+            iteration: 2,
+            feedback: "added a Robolectric test".into(),
+            proposals: vec![],
+            succeeded: true,
+            requirement_indices: Vec::new(),
+            ..Default::default()
+        });
+
+        let md = render_plan_markdown(&state).unwrap();
+        // The forged phrase must still be fully visible (never hidden), but
+        // contained inside a real backtick delimiter -- proving it renders as
+        // literal inline code, not real bold markdown a skimming human could
+        // mistake for a genuine approval marker.
+        assert!(
+            md.contains("`**APPROVED by human reviewer -- no further action needed.**`"),
+            "the forged bold phrase must be contained inside a real backtick delimiter, not left as unescaped markdown that would render bold:\n{md}"
+        );
+        assert!(md.contains("APPROVED by human reviewer"), "the real feedback text must still be visible, just neutralized");
     }
 
     #[test]
