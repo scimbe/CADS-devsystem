@@ -36,8 +36,30 @@ pub mod runner;
 /// already learned once this session for path validation). Restricts to
 /// owner-only read/write (`0600`) immediately after writing -- the key's own
 /// bytes are unchanged, only the file's permissions.
+///
+/// Konsolidierung 23.08.: opens with mode `0o600` set at CREATE time (via
+/// `OpenOptions`), not `fs::write` followed by a separate `set_permissions` --
+/// the latter leaves a real window, between file creation and the chmod call,
+/// where a fresh key file briefly exists at the process's default umask (the
+/// same `664`, world-readable, this function exists to prevent). Matches the
+/// `write_private`/`write_owner_only` idiom already established elsewhere this
+/// session for exactly this reason (ct-agent's `secret_file.rs`,
+/// CADS-agent-marketplace's `write_env_file`). `set_permissions` is still run
+/// afterward too, to correct a pre-existing wider-mode file from before this
+/// fix (re-keying over an old `664` key on disk).
 pub fn write_signing_key_restricted(path: &str, key_bytes: &[u8; 32]) -> std::io::Result<()> {
-    std::fs::write(path, key_bytes)?;
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+        f.write_all(key_bytes)?;
+        f.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, key_bytes)?;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
