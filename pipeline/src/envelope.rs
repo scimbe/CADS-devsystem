@@ -116,6 +116,12 @@ pub fn read_memory_log(path: &Path) -> io::Result<Vec<EnvelopeRecord>> {
 /// this is the only place that should: an explicit human action through the GUI,
 /// never automatic. Returns `NotFound` for an out-of-range index rather than
 /// silently doing nothing, so a stale GUI reference fails loudly.
+///
+/// Rewrites via a temp file + rename rather than truncating `path` in place: a
+/// truncate-then-rewrite left a crash or I/O error mid-write (disk full, process
+/// killed) with an empty or partially-written memory.jsonl, destroying every prior
+/// entry rather than just failing to add the one being governed -- the durable log
+/// this module exists to provide would have been the least durable part of it.
 pub fn govern_memory_entry(path: &Path, index: usize) -> io::Result<Vec<EnvelopeRecord>> {
     let mut entries = read_memory_log(path)?;
     let entry = entries
@@ -123,11 +129,16 @@ pub fn govern_memory_entry(path: &Path, index: usize) -> io::Result<Vec<Envelope
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no memory entry at index {index}")))?;
     entry.trust = Trust::Governed;
 
-    let mut file = std::fs::File::create(path)?;
-    for e in &entries {
-        let line = serde_json::to_string(e).expect("EnvelopeRecord always serializes");
-        writeln!(file, "{line}")?;
+    let tmp_path = path.with_extension("jsonl.tmp");
+    {
+        let mut file = std::fs::File::create(&tmp_path)?;
+        for e in &entries {
+            let line = serde_json::to_string(e).expect("EnvelopeRecord always serializes");
+            writeln!(file, "{line}")?;
+        }
+        file.sync_all()?;
     }
+    std::fs::rename(&tmp_path, path)?;
     Ok(entries)
 }
 
@@ -264,6 +275,40 @@ mod tests {
 
         let reread = read_memory_log(&path).unwrap();
         assert_eq!(reread, returned, "the promotion must actually persist to disk, not just the in-memory return value");
+
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_failed_governing_rewrite_leaves_the_original_log_fully_intact() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("devsystem-envelope-govern-fail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("memory.jsonl");
+        let _ = std::fs::remove_file(&path);
+
+        let env1 = envelope_from_iteration(&record(vec![]), &[]);
+        let env2 = envelope_from_iteration(&record(vec![]), &[]);
+        append_to_memory_log(&path, &env1).unwrap();
+        append_to_memory_log(&path, &env2).unwrap();
+
+        // Deny write access to the directory so creating the temp file fails before
+        // any byte of the original `path` is touched -- proves the old truncate-in-
+        // place approach would have destroyed both entries here, while the temp-file
+        // + rename approach must leave `path` completely untouched.
+        let original_perms = std::fs::metadata(&dir).unwrap().permissions();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+        let result = govern_memory_entry(&path, 0);
+
+        std::fs::set_permissions(&dir, original_perms).unwrap();
+
+        assert!(result.is_err(), "expected the temp-file creation to fail under a read-only directory");
+        let reread = read_memory_log(&path).unwrap();
+        assert_eq!(reread, vec![env1, env2], "the original log must survive a failed governing attempt untouched");
 
         std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir(&dir).unwrap();
