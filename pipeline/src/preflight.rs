@@ -125,12 +125,23 @@ fn vague_acceptance_criteria(state: &RunState) -> Vec<RiskAnnotation> {
             if distinct_word_count(c) < MIN_ACCEPTANCE_CRITERION_DISTINCT_WORDS {
                 findings.push(RiskAnnotation {
                     label: "acceptance criteria too vague to be deterministic".into(),
+                    // Konsolidierung 23.08.: `c` is role-filler-controlled free text --
+                    // `add_requirement`'s own gate (web/src/main.rs) only requires 5
+                    // alphanumeric characters, no restriction on backticks/newlines/
+                    // markdown syntax, and this check specifically fires on SHORT
+                    // criteria, exactly the shape a payload like "`\n\n# X\n\n`" (one
+                    // alphanumeric word, distinct_word_count == 1) takes. `evidence`
+                    // flows raw into checkin.rs's `.plan.md` Risk annotations line with
+                    // no fence of its own -- inline_code_escape here, same as every
+                    // other role-filler-controlled field this file already escapes
+                    // (stage_id in security_keyword_hit/no_price_ceiling above).
                     evidence: format!(
-                        "requirement #{i}'s acceptance criterion #{ci} (\"{c}\") has fewer than \
+                        "requirement #{i}'s acceptance criterion #{ci} (\"{}\") has fewer than \
                          {MIN_ACCEPTANCE_CRITERION_DISTINCT_WORDS} distinct words -- goal doc §1's own \
                          commitment (\"acceptance criteria specific enough to leave no real decision to \
                          the LLM\") needs more than a short label to actually constrain what a \
-                         role-filler builds"
+                         role-filler builds",
+                        inline_code_escape(c)
                     ),
                     fix_target: None,
                 });
@@ -1456,6 +1467,29 @@ mod tests {
         assert_eq!(findings[0].label, "acceptance criteria too vague to be deterministic");
         assert!(findings[0].evidence.contains("requirement #0"));
         assert!(findings[0].evidence.contains("criterion #0"));
+    }
+
+    #[test]
+    /// Konsolidierung 23.08.: a vague acceptance criterion is role-filler-
+    /// controlled free text with no character restriction beyond
+    /// add_requirement's 5-alphanumeric-character gate -- `"`\n\n# HELLO\n\n`"`
+    /// clears that gate (5 alnum chars: HELLO) while still having only ONE
+    /// distinct alphanumeric word (distinct_word_count ignores punctuation
+    /// entirely), so it genuinely triggers this check. `evidence` flows raw
+    /// into checkin.rs's `.plan.md` Risk annotations line with no fence of its
+    /// own; unescaped, the embedded newlines would break the list item and the
+    /// embedded `# HELLO` would render as a real markdown heading.
+    fn a_vague_criterion_containing_markdown_syntax_cannot_forge_markdown_structure() {
+        let mut state = RunState::new("run-preflight");
+        state.requirements.push(requirement("WHEN a user sends a message, THE SYSTEM SHALL deliver it", vec!["`\n\n# HELLO\n\n`"]));
+        let findings = preflight_annotations(&state);
+        let vague: Vec<_> = findings.iter().filter(|f| f.label == "acceptance criteria too vague to be deterministic").collect();
+        assert_eq!(vague.len(), 1, "got: {findings:?}");
+        assert!(
+            vague[0].evidence.contains("`` `\n\n# HELLO\n\n` ``"),
+            "the forged heading must be contained inside a real widened backtick delimiter, not left as an unescaped, breakable span with live newlines:\n{}",
+            vague[0].evidence
+        );
     }
 
     #[test]
