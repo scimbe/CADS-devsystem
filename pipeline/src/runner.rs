@@ -1791,11 +1791,36 @@ pub fn load_or_init_run(run_dir: &Path, run_id: &str) -> Result<(PipelineSpec, R
 /// Persist a run's spec + state to `run_dir`, creating it if needed. The write side
 /// of the same load/persist round-trip `devsystem_iterate` performs every real
 /// invocation.
+///
+/// Konsolidierung 23.08.: each file is written to a `.tmp` path in the same
+/// directory, synced, then renamed into place -- not a plain `fs::write`, which
+/// truncates its target before writing. Two real risks that closed: a process
+/// killed between the two files being persisted used to leave a genuinely
+/// inconsistent pair (e.g. `spec.json` already reflecting a newly-applied
+/// proposal/role with `state.json` still missing the history entry that added
+/// it -- several real checks elsewhere in this codebase assume the pair stays in
+/// sync); and a concurrent reader (`GET /api/runs/{id}`) landing in a plain
+/// write's truncate window could see a truncated, unparseable file even with no
+/// crash at all. `rename` is atomic with respect to readers, so that second risk
+/// is closed entirely; the crash window narrows to the gap between the two
+/// renames, where a crash leaves one file one iteration stale, never
+/// truncated/partial -- the same idiom already established this session
+/// (`envelope.rs::govern_memory_entry`, #75).
 pub fn persist_run(run_dir: &Path, spec: &PipelineSpec, state: &RunState) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(run_dir)?;
-    fs::write(run_dir.join("spec.json"), serde_json::to_string_pretty(spec)?)?;
-    fs::write(run_dir.join("state.json"), serde_json::to_string_pretty(state)?)?;
+    write_atomic(&run_dir.join("spec.json"), &serde_json::to_string_pretty(spec)?)?;
+    write_atomic(&run_dir.join("state.json"), &serde_json::to_string_pretty(state)?)?;
     Ok(())
+}
+
+fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
+    let tmp_path = path.with_extension("json.tmp");
+    {
+        let mut f = fs::File::create(&tmp_path)?;
+        std::io::Write::write_all(&mut f, content.as_bytes())?;
+        f.sync_all()?;
+    }
+    fs::rename(&tmp_path, path)
 }
 
 #[cfg(test)]
@@ -3109,6 +3134,32 @@ mod tests {
         assert_eq!(loaded_spec, spec);
         assert_eq!(loaded_state.run_id, state.run_id);
         assert_eq!(loaded_state.history.len(), 1);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    /// Konsolidierung 23.08.: persist_run writes via a temp-file + rename per
+    /// file, not a plain truncate-in-place fs::write -- no leftover .tmp file
+    /// should ever survive a successful persist, and a second real persist
+    /// (a later iteration) must still cleanly replace the first, not merge or
+    /// duplicate content the way a leftover partial write could.
+    fn persist_run_leaves_no_leftover_tmp_files_and_a_later_persist_cleanly_replaces_the_earlier_one() {
+        let dir = temp_run_dir("atomic");
+        let mut spec = plan_only_spec("atomic-run", None);
+        let mut state = RunState::new("atomic-run");
+        let criteria = AbortCriteria::default();
+        run_iteration(&mut spec, &mut state, record(1, true, vec![]), &criteria);
+        persist_run(&dir, &spec, &state).unwrap();
+
+        assert!(!dir.join("spec.json.tmp").exists(), "no leftover temp file after a successful persist");
+        assert!(!dir.join("state.json.tmp").exists(), "no leftover temp file after a successful persist");
+
+        run_iteration(&mut spec, &mut state, record(2, true, vec![]), &criteria);
+        persist_run(&dir, &spec, &state).unwrap();
+        let (loaded_spec, loaded_state) = load_or_init_run(&dir, "atomic-run").unwrap();
+        assert_eq!(loaded_spec, spec);
+        assert_eq!(loaded_state.history.len(), 2, "the second persist must fully replace the first, not merge with it");
 
         fs::remove_dir_all(&dir).unwrap();
     }
