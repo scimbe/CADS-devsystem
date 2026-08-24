@@ -12533,7 +12533,7 @@ exit 1"#);
     #[tokio::test]
     async fn removing_an_artifact_deletes_both_the_metadata_and_the_real_file() {
         let (state, _dir) = test_state();
-        let app = api_router(state);
+        let app = api_router(state.clone());
         app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "artifact-remove-run"}))).await.unwrap();
         app.clone()
             .oneshot(json_request("POST", "/api/runs/artifact-remove-run/iterate", serde_json::json!({"stage": "devsystem.plan", "feedback": "built it", "succeeded": true})))
@@ -12553,12 +12553,26 @@ exit 1"#);
         .await;
         let artifact_id = created["id"].as_str().unwrap();
 
+        // Real gap found live 2026-08-24 (consolidation sweep): this test's own
+        // name and remove_artifact's own doc comment ("real, permanent delete of
+        // both the metadata and the real file on disk") both claim this proves
+        // file deletion, but download_artifact's own 404 comes purely from the
+        // metadata index lookup, before it ever touches the filesystem -- this
+        // test used to pass unchanged even with the real fs::remove_file call
+        // deleted entirely, silently leaking artifact files on disk forever.
+        // Checking the real file on disk directly, before and after, is the only
+        // way to actually prove what the test's own name claims.
+        let file_path = artifact_file_path(&state, "artifact-remove-run", artifact_id);
+        assert!(file_path.exists(), "the real file must exist on disk before removal -- otherwise this test proves nothing about deletion");
+
         let response = app
             .clone()
             .oneshot(Request::builder().method("POST").uri(format!("/api/runs/artifact-remove-run/artifacts/{artifact_id}/remove")).body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), SC::OK);
+
+        assert!(!file_path.exists(), "the real file on disk must actually be deleted, not just the metadata entry");
 
         let response = app
             .oneshot(Request::builder().uri(format!("/api/runs/artifact-remove-run/artifacts/{artifact_id}/download")).body(Body::empty()).unwrap())
