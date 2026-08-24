@@ -2937,7 +2937,9 @@ async fn trigger_automode_initial_proposals(state: &AppState, run_id: &str, requ
                 }
             }
             if changed {
-                let _ = persist_run(&dir, &spec, &run_state);
+                if let Err(e) = persist_run(&dir, &spec, &run_state) {
+                    eprintln!("devsystem-web: could not persist automode triggered_by tagging for run {run_id}: {e}");
+                }
             }
         }
     }
@@ -4020,7 +4022,9 @@ async fn remove_artifact(State(state): State<AppState>, AxPath((id, artifact_id)
     if index.artifacts.len() == before {
         return (StatusCode::NOT_FOUND, format!("no artifact with id {artifact_id:?}")).into_response();
     }
-    let _ = fs::remove_file(artifact_file_path(&state, &id, &artifact_id));
+    if let Err(e) = fs::remove_file(artifact_file_path(&state, &id, &artifact_id)) {
+        eprintln!("devsystem-web: could not remove the real artifact file for {id}/{artifact_id} from disk (metadata removed regardless): {e}");
+    }
     match persist_artifact_index(&state, &id, &index) {
         Ok(()) => Json(serde_json::json!({"removed": artifact_id})).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("could not persist the artifact index: {e}")).into_response(),
@@ -5488,7 +5492,9 @@ async fn extract_via_channel_with_timeout(cfg: &DocumentExtractionChannelConfig,
     struct CleanupOnDrop(std::path::PathBuf);
     impl Drop for CleanupOnDrop {
         fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
+            if let Err(e) = std::fs::remove_file(&self.0) {
+                eprintln!("devsystem-web: could not clean up temp extraction upload {:?}: {e}", self.0);
+            }
         }
     }
     let _cleanup = CleanupOnDrop(tmp_path.clone());
@@ -5666,7 +5672,9 @@ async fn approve_issue_proposal(
             let _guard = state.write_lock.lock().await;
             if let Ok((spec, mut run_state)) = load_or_init_run(&dir, &id) {
                 run_state.pending_issue_proposals.push(proposal);
-                let _ = persist_run(&dir, &spec, &run_state);
+                if let Err(e) = persist_run(&dir, &spec, &run_state) {
+                    eprintln!("devsystem-web: could not restore issue proposal to pending for run {id} after a failed post (the proposal is now lost): {e}");
+                }
             }
             return (status, body).into_response();
         }
@@ -6031,7 +6039,9 @@ async fn persist_assistant_call(
     if let Some(response) = response_text {
         push_chat_exchange(&mut run_state, instruction.to_string(), response.to_string(), unix_now(), requirement_indices.to_vec());
     }
-    let _ = persist_run(&dir, &spec, &run_state);
+    if let Err(e) = persist_run(&dir, &spec, &run_state) {
+        eprintln!("devsystem-web: could not persist assistant usage/chat history for run {id}: {e}");
+    }
 }
 
 #[cfg(test)]
