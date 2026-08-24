@@ -5740,11 +5740,34 @@ async fn submit_offer(State(state): State<AppState>, AxPath(id): AxPath<String>,
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
     }
-    if !offer.is_valid(unix_now()) {
+    let now = unix_now();
+    if !offer.is_valid(now) {
         return (StatusCode::BAD_REQUEST, "offer signature is invalid or it is already expired").into_response();
     }
     let mut offers = state.offers.lock().await;
     let run_offers = offers.entry(id).or_default();
+    // Real gap (#91): this endpoint is deliberately public and unauthenticated
+    // (any real ed25519 key can submit, see this fn's own doc comment), and a
+    // resubmission from an EXISTING holder_pubkey always replaces in place below
+    // -- but generating a fresh keypair is microseconds of local CPU, no network
+    // round trip, no registration. Without this cap a caller could submit an
+    // unbounded number of distinct signed offers, growing this in-memory Vec
+    // without limit, the same defensive MAX_LIST_ITEMS cap every sibling list in
+    // this file already enforces before its own push. Prune already-expired
+    // offers first so benign churn doesn't lock out legitimate new bidders --
+    // `is_valid`'s own expiry check keeps this from resurrecting anything the
+    // read side (`auction_view`) wouldn't already treat as gone -- but this alone
+    // isn't the fix: `expires_at` is attacker-controlled with no upper bound, so
+    // the cap below is what actually closes the growth.
+    run_offers.retain(|o| o.expires_at > now);
+    let is_resubmission = run_offers.iter().any(|o| o.holder_pubkey == offer.holder_pubkey);
+    if !is_resubmission && run_offers.len() >= MAX_LIST_ITEMS {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("this run already has {MAX_LIST_ITEMS} distinct offers, its defensive cap -- wait for some to expire and try again"),
+        )
+            .into_response();
+    }
     run_offers.retain(|o| o.holder_pubkey != offer.holder_pubkey);
     run_offers.push(offer);
     (StatusCode::OK, Json(serde_json::json!({"accepted": true}))).into_response()
@@ -11790,6 +11813,58 @@ exit 1"#);
         let bids = body["roles"][0]["bids"].as_array().unwrap();
         assert_eq!(bids.len(), 1, "the same holder resubmitting must replace, not accumulate, its offer");
         assert_eq!(bids[0]["price"], 20, "the latest resubmission's price must be the one in effect");
+    }
+
+    /// Real gap (#91): `submit_offer` is deliberately public and unauthenticated
+    /// (any real ed25519 key can submit -- see its own doc comment), and unlike
+    /// every sibling list in this file it had no `MAX_LIST_ITEMS` cap, so a
+    /// caller generating a fresh keypair per request (microseconds of local CPU)
+    /// could grow the in-memory `state.offers[run_id]` Vec without limit. Prefills
+    /// distinct holders directly into `state.offers` (bypassing HTTP/signature
+    /// verification -- only their *presence* matters for the cap check; the real
+    /// `real_offer` helper's seed is a u8, only 256 distinct pubkeys possible,
+    /// nowhere near the real 500-item cap this exercises), then proves a
+    /// genuinely new, validly-signed offer submitted through the real endpoint is
+    /// rejected once the run is at capacity -- this must fail (return 200, not
+    /// 400) against the pre-fix code, which never checked the count at all.
+    #[tokio::test]
+    async fn submit_offer_rejects_a_new_holder_once_the_run_is_at_its_defensive_cap() {
+        let (state, _dir) = test_state();
+        let app = api_router(state.clone());
+        app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "auction-cap-run"}))).await.unwrap();
+
+        {
+            let mut offers = state.offers.lock().await;
+            let run_offers = offers.entry("auction-cap-run".to_string()).or_default();
+            for i in 0..MAX_LIST_ITEMS {
+                let mut holder_pubkey = [0u8; 32];
+                holder_pubkey[0..8].copy_from_slice(&(i as u64).to_le_bytes());
+                run_offers.push(CapacityOffer {
+                    holder_pubkey,
+                    kind: ct_common::channel::CapacityKind::CloudApiQuota,
+                    models: vec!["claude".into()],
+                    units_available: 1,
+                    min_price: 1,
+                    currency_id: "usd".into(),
+                    issued_at: 0,
+                    expires_at: u64::MAX,
+                    services: vec![],
+                    signature: [0u8; 64],
+                });
+            }
+            assert_eq!(run_offers.len(), MAX_LIST_ITEMS);
+        }
+
+        let new_offer = real_offer(250, "devsystem.plan", 10);
+        let response = app
+            .oneshot(json_request("POST", "/api/runs/auction-cap-run/offers/submit", serde_json::to_value(&new_offer).unwrap()))
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            SC::BAD_REQUEST,
+            "a genuinely new holder must be rejected once the run already has MAX_LIST_ITEMS distinct offers"
+        );
     }
 
     #[tokio::test]
