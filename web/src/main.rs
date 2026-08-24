@@ -5227,6 +5227,19 @@ const MAX_ISSUE_BODY_LEN: usize = 20_000;
 /// text) can never point a real GitHub write at an arbitrary repo.
 const ISSUE_PROPOSAL_REPO_ALLOWLIST: &[&str] = &["scimbe/CADS-webconference-demo"];
 
+/// Real gap closed (issue #85): none of the three `*_via_channel` helpers below
+/// (`post_issue_via_channel`, `extract_via_channel`, `embed_via_channel`) had any
+/// bound on how long they'd wait for their `pipeline/src/bin/*_client` subprocess --
+/// each of those clients dials a real `ct-agent channel` peer and blocks on the
+/// first line that parses as a real reply, so an unreachable broker/relay/handler
+/// (network partition, the handler process down) hung the calling async HTTP
+/// request handler indefinitely. Same 90s value already used by this file's own
+/// `http_client` (line ~524) -- generous enough for a real GitHub POST/OCR-of-a-
+/// scanned-document/embedding-batch round trip, but a genuine, honest bound rather
+/// than none at all. Matches the missing-timeout family already fixed repeatedly
+/// in ct-agent (#54/#57/#58) and CADS-Tunnel (#610/#619).
+const CHANNEL_CLIENT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
 #[derive(Deserialize)]
 struct ProposeIssueRequest {
     repo: String,
@@ -5386,29 +5399,54 @@ fn parse_issue_channel_client_stdout(stdout: &str) -> Option<PostedIssue> {
 /// exits non-zero) -- either way, a real failure, surfaced honestly via
 /// stderr, never treated as success.
 async fn post_issue_via_channel(cfg: &IssueChannelConfig, repo: &str, title: &str, body: &str) -> Result<PostedIssue, (StatusCode, Json<serde_json::Value>)> {
-    let output = tokio::process::Command::new(cfg.client_bin.as_ref())
-        .arg(repo)
-        .arg(title)
-        .arg(body)
-        .env("CT_AGENT_BIN", cfg.ct_agent_bin.as_ref())
-        .env("CT_CHANNEL_ADDR", cfg.addr.as_ref())
-        .env("CT_CHANNEL_NOISE_KEY", cfg.noise_key.as_ref())
-        .env("CT_CHANNEL_PEER_NOISE_KEY", cfg.peer_noise_key.as_ref())
-        .env("CT_CHANNEL_PEER_CERT_FILE", cfg.peer_cert_file.as_ref())
-        .stdin(std::process::Stdio::null())
-        .output()
-        .await;
+    post_issue_via_channel_with_timeout(cfg, repo, title, body, CHANNEL_CLIENT_TIMEOUT).await
+}
+
+/// Real body of `post_issue_via_channel`, with the bound injected rather than
+/// read from the module-level `CHANNEL_CLIENT_TIMEOUT` constant -- same
+/// dependency-injection shape this crate already established elsewhere
+/// (`devsystem_document_extraction_handler::extract`'s own injected-closure
+/// effects) so the real timeout PATH is unit-testable against a fake client
+/// that deliberately hangs, without a real test actually waiting 90 real
+/// seconds for it.
+async fn post_issue_via_channel_with_timeout(
+    cfg: &IssueChannelConfig,
+    repo: &str,
+    title: &str,
+    body: &str,
+    timeout: std::time::Duration,
+) -> Result<PostedIssue, (StatusCode, Json<serde_json::Value>)> {
+    let output = tokio::time::timeout(
+        timeout,
+        tokio::process::Command::new(cfg.client_bin.as_ref())
+            .arg(repo)
+            .arg(title)
+            .arg(body)
+            .env("CT_AGENT_BIN", cfg.ct_agent_bin.as_ref())
+            .env("CT_CHANNEL_ADDR", cfg.addr.as_ref())
+            .env("CT_CHANNEL_NOISE_KEY", cfg.noise_key.as_ref())
+            .env("CT_CHANNEL_PEER_NOISE_KEY", cfg.peer_noise_key.as_ref())
+            .env("CT_CHANNEL_PEER_CERT_FILE", cfg.peer_cert_file.as_ref())
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await;
     match output {
-        Ok(out) if out.status.success() => {
+        Ok(Ok(out)) if out.status.success() => {
             let stdout = String::from_utf8_lossy(&out.stdout);
             parse_issue_channel_client_stdout(&stdout)
                 .ok_or_else(|| issue_error(StatusCode::BAD_GATEWAY, format!("github_issue_channel_client exited 0 but printed no line this deployment recognizes: {stdout:?}")))
         }
-        Ok(out) => {
+        Ok(Ok(out)) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
             Err(issue_error(StatusCode::BAD_GATEWAY, format!("github_issue_channel_client exited with {}: {}", out.status, stderr.trim())))
         }
-        Err(e) => Err(issue_error(StatusCode::BAD_GATEWAY, format!("could not run the issue-channel client ({}): {e}", cfg.client_bin))),
+        Ok(Err(e)) => Err(issue_error(StatusCode::BAD_GATEWAY, format!("could not run the issue-channel client ({}): {e}", cfg.client_bin))),
+        Err(_) => Err(issue_error(
+            StatusCode::GATEWAY_TIMEOUT,
+            format!("the issue-channel client ({}) did not finish within {}s", cfg.client_bin, timeout.as_secs()),
+        )),
     }
 }
 
@@ -5424,6 +5462,12 @@ async fn post_issue_via_channel(cfg: &IssueChannelConfig, repo: &str, title: &st
 /// direct-address -- see `DocumentExtractionChannelConfig`'s own doc comment
 /// for why these two models aren't interchangeable.
 async fn extract_via_channel(cfg: &DocumentExtractionChannelConfig, filename: &str, bytes: &[u8]) -> Result<String, String> {
+    extract_via_channel_with_timeout(cfg, filename, bytes, CHANNEL_CLIENT_TIMEOUT).await
+}
+
+/// Real body of `extract_via_channel`, with the bound injected -- see
+/// `post_issue_via_channel_with_timeout`'s own doc comment for why.
+async fn extract_via_channel_with_timeout(cfg: &DocumentExtractionChannelConfig, filename: &str, bytes: &[u8], timeout: std::time::Duration) -> Result<String, String> {
     let ext = std::path::Path::new(filename).extension().and_then(|e| e.to_str()).unwrap_or("bin");
     let tmp_path = std::env::temp_dir().join(format!("devsystem-rag-upload-{:016x}.{ext}", rand::random::<u64>()));
     if let Err(e) = tokio::fs::write(&tmp_path, bytes).await {
@@ -5437,21 +5481,26 @@ async fn extract_via_channel(cfg: &DocumentExtractionChannelConfig, filename: &s
     }
     let _cleanup = CleanupOnDrop(tmp_path.clone());
 
-    let output = tokio::process::Command::new(cfg.client_bin.as_ref())
-        .arg(&tmp_path)
-        .env("CT_AGENT_BIN", cfg.ct_agent_bin.as_ref())
-        .env("CT_CHANNEL_BROKER", cfg.broker.as_ref())
-        .env("CT_CHANNEL_RELAY", cfg.relay.as_ref())
-        .env("CT_CHANNEL_GRANT", cfg.grant_hex.as_ref())
-        .env("CT_CHANNEL_HOLDER_KEY", cfg.holder_key_hex.as_ref())
-        .env("CT_CHANNEL_NOISE_KEY", cfg.noise_key.as_ref())
-        .stdin(std::process::Stdio::null())
-        .output()
-        .await;
+    let output = tokio::time::timeout(
+        timeout,
+        tokio::process::Command::new(cfg.client_bin.as_ref())
+            .arg(&tmp_path)
+            .env("CT_AGENT_BIN", cfg.ct_agent_bin.as_ref())
+            .env("CT_CHANNEL_BROKER", cfg.broker.as_ref())
+            .env("CT_CHANNEL_RELAY", cfg.relay.as_ref())
+            .env("CT_CHANNEL_GRANT", cfg.grant_hex.as_ref())
+            .env("CT_CHANNEL_HOLDER_KEY", cfg.holder_key_hex.as_ref())
+            .env("CT_CHANNEL_NOISE_KEY", cfg.noise_key.as_ref())
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await;
     match output {
-        Ok(out) if out.status.success() => Ok(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string()),
-        Ok(out) => Err(format!("devsystem_document_extraction_client exited with {}: {}", out.status, String::from_utf8_lossy(&out.stderr).trim())),
-        Err(e) => Err(format!("could not run the document-extraction channel client ({}): {e}", cfg.client_bin)),
+        Ok(Ok(out)) if out.status.success() => Ok(String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string()),
+        Ok(Ok(out)) => Err(format!("devsystem_document_extraction_client exited with {}: {}", out.status, String::from_utf8_lossy(&out.stderr).trim())),
+        Ok(Err(e)) => Err(format!("could not run the document-extraction channel client ({}): {e}", cfg.client_bin)),
+        Err(_) => Err(format!("the document-extraction channel client ({}) did not finish within {}s", cfg.client_bin, timeout.as_secs())),
     }
 }
 
@@ -5463,6 +5512,12 @@ async fn extract_via_channel(cfg: &DocumentExtractionChannelConfig, filename: &s
 /// operation with nothing to write to a temp file, unlike a single uploaded
 /// document.
 async fn embed_via_channel(cfg: &EmbeddingChannelConfig, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+    embed_via_channel_with_timeout(cfg, texts, CHANNEL_CLIENT_TIMEOUT).await
+}
+
+/// Real body of `embed_via_channel`, with the bound injected -- see
+/// `post_issue_via_channel_with_timeout`'s own doc comment for why.
+async fn embed_via_channel_with_timeout(cfg: &EmbeddingChannelConfig, texts: &[String], timeout: std::time::Duration) -> Result<Vec<Vec<f32>>, String> {
     let input = serde_json::to_vec(texts).map_err(|e| format!("could not serialize texts for the embedding channel client: {e}"))?;
 
     let mut child = match tokio::process::Command::new(cfg.client_bin.as_ref())
@@ -5475,23 +5530,31 @@ async fn embed_via_channel(cfg: &EmbeddingChannelConfig, texts: &[String]) -> Re
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
     {
         Ok(c) => c,
         Err(e) => return Err(format!("could not run the embedding channel client ({}): {e}", cfg.client_bin)),
     };
 
-    {
+    // Real gap closed (issue #85): the stdin-write + wait-for-output round trip
+    // used to have no bound at all, so a hung channel dial inside the client
+    // subprocess blocked this async request handler forever. One timeout around
+    // the whole exchange (not two separate ones) -- `kill_on_drop(true)` above
+    // means the timeout branch actually terminates the child, not just abandons
+    // the future while the process keeps running.
+    let outcome = tokio::time::timeout(timeout, async {
         use tokio::io::AsyncWriteExt;
         let mut stdin = child.stdin.take().expect("stdin was piped");
-        if let Err(e) = stdin.write_all(&input).await {
-            return Err(format!("could not write texts to the embedding channel client's stdin: {e}"));
-        }
-    }
-
-    let output = match child.wait_with_output().await {
-        Ok(o) => o,
-        Err(e) => return Err(format!("embedding channel client did not exit cleanly: {e}")),
+        stdin.write_all(&input).await.map_err(|e| format!("could not write texts to the embedding channel client's stdin: {e}"))?;
+        drop(stdin);
+        child.wait_with_output().await.map_err(|e| format!("embedding channel client did not exit cleanly: {e}"))
+    })
+    .await;
+    let output = match outcome {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => return Err(format!("the embedding channel client ({}) did not finish within {}s", cfg.client_bin, timeout.as_secs())),
     };
     if !output.status.success() {
         return Err(format!("devsystem_embedding_client exited with {}: {}", output.status, String::from_utf8_lossy(&output.stderr).trim()));
@@ -10049,6 +10112,29 @@ exit 1"#);
     }
 
     #[tokio::test]
+    /// Real gap closed (issue #85): a hung channel dial inside
+    /// `github_issue_channel_client` used to block this async request handler
+    /// forever -- no bound at all. A short injected timeout against a fake
+    /// client that deliberately never produces output proves the real timeout
+    /// PATH actually fires (a real 90s test would be impractical, not that the
+    /// bound exists at all).
+    async fn post_issue_via_channel_reports_an_honest_timeout_instead_of_hanging_forever() {
+        let (state, _dir) = test_state_with_issue_channel("sleep 5");
+        let cfg = state.issue_channel.as_ref().expect("test fixture always configures issue_channel");
+        let result = post_issue_via_channel_with_timeout(cfg, "scimbe/CADS-webconference-demo", "t", "b", std::time::Duration::from_millis(100)).await;
+        // PostedIssue (the Ok side) intentionally has no Debug impl, so
+        // expect_err (which would need to Debug-format an Ok value in its
+        // panic message) doesn't typecheck here -- match instead.
+        let (status, body) = match result {
+            Err(e) => e,
+            Ok(_) => panic!("a hung client must be a real timeout error, never hang the test/request forever"),
+        };
+        assert_eq!(status, SC::GATEWAY_TIMEOUT);
+        let body = body.0;
+        assert!(body["error"].as_str().unwrap().contains("did not finish within"), "real error: {body}");
+    }
+
+    #[tokio::test]
     async fn a_configured_channel_relay_is_preferred_over_a_configured_direct_github_token() {
         let (mut state, _dir) = test_state_with_issue_channel(r#"echo "created: #5 https://github.com/scimbe/CADS-webconference-demo/issues/5""#);
         // A real token is ALSO configured -- if the direct-POST path were used
@@ -12106,6 +12192,22 @@ exit 1"#);
     }
 
     #[tokio::test]
+    /// Real gap closed (issue #85), same class as
+    /// `post_issue_via_channel_reports_an_honest_timeout_instead_of_hanging_forever`
+    /// for `embed_via_channel`'s own subprocess call -- this one has its own
+    /// hand-rolled spawn/write-stdin/wait_with_output sequence (no
+    /// `Command::output()` convenience method, since it needs to write batched
+    /// texts to stdin first), so the timeout wrap needs its own direct proof.
+    async fn embed_via_channel_reports_an_honest_timeout_instead_of_hanging_forever() {
+        let (state, _dir) = test_state_with_embedding_channel("cat > /dev/null\nsleep 5");
+        let cfg = state.embedding_channel.as_ref().expect("test fixture always configures embedding_channel");
+        let err = embed_via_channel_with_timeout(cfg, &["hello".to_string()], std::time::Duration::from_millis(100))
+            .await
+            .expect_err("a hung client must be a real timeout error, never hang the request forever");
+        assert!(err.contains("did not finish within"), "real error: {err}");
+    }
+
+    #[tokio::test]
     /// Real priority: a static `RAG_EMBEDDING_API_KEY` stays tried first even
     /// when the channel is also configured -- the channel is the fallback for a
     /// deployment that lacks a static credential, not a replacement for one that
@@ -12177,6 +12279,19 @@ exit 1"#);
         assert_eq!(response.status(), SC::BAD_GATEWAY);
         let body = String::from_utf8(axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()).unwrap();
         assert!(body.contains("no bidder online"), "the real subprocess failure must be surfaced honestly, not hidden: {body}");
+    }
+
+    #[tokio::test]
+    /// Real gap closed (issue #85), same class as
+    /// `post_issue_via_channel_reports_an_honest_timeout_instead_of_hanging_forever`
+    /// for `extract_via_channel`'s own subprocess call.
+    async fn extract_via_channel_reports_an_honest_timeout_instead_of_hanging_forever() {
+        let (state, _dir) = test_state_with_document_extraction_channel("sleep 5");
+        let cfg = state.document_extraction_channel.as_ref().expect("test fixture always configures document_extraction_channel");
+        let err = extract_via_channel_with_timeout(cfg, "report.pdf", b"fake bytes", std::time::Duration::from_millis(100))
+            .await
+            .expect_err("a hung client must be a real timeout error, never hang the request forever");
+        assert!(err.contains("did not finish within"), "real error: {err}");
     }
 
     #[tokio::test]
