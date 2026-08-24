@@ -10122,7 +10122,13 @@ exit 1"#);
         let (state, _dir) = test_state_with_issue_channel("sleep 5");
         let cfg = state.issue_channel.as_ref().expect("test fixture always configures issue_channel");
         let result = post_issue_via_channel_with_timeout(cfg, "scimbe/CADS-webconference-demo", "t", "b", std::time::Duration::from_millis(100)).await;
-        let (status, body) = result.expect_err("a hung client must be a real timeout error, never hang the test/request forever");
+        // PostedIssue (the Ok side) intentionally has no Debug impl, so
+        // expect_err (which would need to Debug-format an Ok value in its
+        // panic message) doesn't typecheck here -- match instead.
+        let (status, body) = match result {
+            Err(e) => e,
+            Ok(_) => panic!("a hung client must be a real timeout error, never hang the test/request forever"),
+        };
         assert_eq!(status, SC::GATEWAY_TIMEOUT);
         let body = body.0;
         assert!(body["error"].as_str().unwrap().contains("did not finish within"), "real error: {body}");
