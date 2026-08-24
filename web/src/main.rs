@@ -4600,6 +4600,9 @@ async fn plan_canvas_verdict(State(state): State<AppState>, AxPath(id): AxPath<S
             )
                 .into_response();
         }
+        if run_state.backlog.len() >= MAX_LIST_ITEMS {
+            return (StatusCode::BAD_REQUEST, format!("backlog is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
+        }
         let summary = format!(
             "Plan Canvas: request changes -- {} annotation(s): {}",
             run_state.plan_canvas_annotations.len(),
@@ -5159,6 +5162,15 @@ async fn approve_stage_proposal(
     let Some(pos) = run_state.pending_stage_proposals.iter().position(|p| p.id == proposal_id) else {
         return (StatusCode::NOT_FOUND, format!("no pending proposal with id {proposal_id:?}")).into_response();
     };
+    // Same defensive cap as every other append-only list in this file (backlog,
+    // milestones, requirements, ...) -- unlike those, this one can't simply stop
+    // accepting new items once full without also blocking legitimate future
+    // approvals for unrelated stages, but leaving it truly unbounded lets a long-
+    // lived run's persisted JSON grow without limit across repeated
+    // propose(up to pending's own cap)+approve cycles.
+    if run_state.approved_stage_proposals.len() >= MAX_LIST_ITEMS {
+        return (StatusCode::BAD_REQUEST, format!("approved_stage_proposals is at its defensive cap of {MAX_LIST_ITEMS} items")).into_response();
+    }
     let pending = run_state.pending_stage_proposals.remove(pos);
     let outcome = apply_proposal(&mut spec, &pending.proposal);
     if outcome == ProposalOutcome::Added {
@@ -5591,36 +5603,56 @@ async fn approve_issue_proposal(
     if !run_exists(&state, &id) {
         return (StatusCode::NOT_FOUND, "no such run").into_response();
     }
-    let _guard = state.write_lock.lock().await;
-    let dir = run_dir(&state, &id);
-    let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
-        Ok(v) => v,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
-    };
-    if !owner_authorized(&headers, &run_state) {
-        return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
-    }
-    let Some(pos) = run_state.pending_issue_proposals.iter().position(|p| p.id == proposal_id) else {
-        return (StatusCode::NOT_FOUND, format!("no pending proposal with id {proposal_id:?}")).into_response();
-    };
-
     let issue_channel = state.issue_channel.clone();
     let github_token = state.github_token.clone();
-    if issue_channel.is_none() && github_token.is_none() {
-        let proposal = &run_state.pending_issue_proposals[pos];
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({
-                "error": "neither the issue-proposal channel relay nor DEVSYSTEM_GITHUB_TOKEN is configured on this deployment -- post it by hand instead",
-                "repo": proposal.repo,
-                "title": proposal.title,
-                "body": proposal.body,
-            })),
-        )
-            .into_response();
-    }
 
-    let proposal = run_state.pending_issue_proposals[pos].clone();
+    // Removes the pending proposal (and persists that removal) under the
+    // write_lock, then releases it before the real network round-trip below --
+    // AppState::write_lock's own doc comment assumes "writes are sub-millisecond",
+    // but this used to hold it across a call bounded only by CHANNEL_CLIENT_TIMEOUT
+    // (channel relay) or the 90s http_client timeout (direct GitHub REST),
+    // stalling every OTHER run's mutating requests, system-wide, for up to 90s.
+    // Removing the proposal before releasing the lock (rather than after, like
+    // `ask_assistant`/`persist_assistant_call` do for their own unlocked call)
+    // is deliberate here: `post_issue_directly`'s GitHub REST path has no
+    // idempotency (unlike the channel relay's own `already_filed` handling), so
+    // two concurrent approvals of the same `proposal_id` would otherwise both
+    // see it still pending and both file a real, duplicate GitHub issue. With
+    // the removal-then-release ordering, the second concurrent caller gets the
+    // same honest 404 it always got.
+    let (dir, proposal) = {
+        let _guard = state.write_lock.lock().await;
+        let dir = run_dir(&state, &id);
+        let (spec, mut run_state) = match load_or_init_run(&dir, &id) {
+            Ok(v) => v,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("load failed: {e}")).into_response(),
+        };
+        if !owner_authorized(&headers, &run_state) {
+            return (StatusCode::FORBIDDEN, "this run belongs to a different account").into_response();
+        }
+        let Some(pos) = run_state.pending_issue_proposals.iter().position(|p| p.id == proposal_id) else {
+            return (StatusCode::NOT_FOUND, format!("no pending proposal with id {proposal_id:?}")).into_response();
+        };
+        if issue_channel.is_none() && github_token.is_none() {
+            let proposal = &run_state.pending_issue_proposals[pos];
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "neither the issue-proposal channel relay nor DEVSYSTEM_GITHUB_TOKEN is configured on this deployment -- post it by hand instead",
+                    "repo": proposal.repo,
+                    "title": proposal.title,
+                    "body": proposal.body,
+                })),
+            )
+                .into_response();
+        }
+        let proposal = run_state.pending_issue_proposals.remove(pos);
+        if let Err(e) = persist_run(&dir, &spec, &run_state) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("persist failed: {e}")).into_response();
+        }
+        (dir, proposal)
+    };
+
     let posted = if let Some(cfg) = issue_channel {
         post_issue_via_channel(&cfg, &proposal.repo, &proposal.title, &proposal.body).await
     } else {
@@ -5628,14 +5660,19 @@ async fn approve_issue_proposal(
     };
     let posted = match posted {
         Ok(p) => p,
-        Err((status, body)) => return (status, body).into_response(),
+        Err((status, body)) => {
+            // The post failed -- put the proposal back so it can be retried
+            // rather than silently losing real, human-approved state.
+            let _guard = state.write_lock.lock().await;
+            if let Ok((spec, mut run_state)) = load_or_init_run(&dir, &id) {
+                run_state.pending_issue_proposals.push(proposal);
+                let _ = persist_run(&dir, &spec, &run_state);
+            }
+            return (status, body).into_response();
+        }
     };
 
-    run_state.pending_issue_proposals.remove(pos);
-    match persist_run(&dir, &spec, &run_state) {
-        Ok(()) => Json(serde_json::json!({"number": posted.number, "html_url": posted.html_url, "already_filed": posted.already_filed})).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("issue was posted ({}) but persisting the local state failed: {e}", posted.html_url)).into_response(),
-    }
+    Json(serde_json::json!({"number": posted.number, "html_url": posted.html_url, "already_filed": posted.already_filed})).into_response()
 }
 
 async fn reject_issue_proposal(
@@ -12496,7 +12533,7 @@ exit 1"#);
     #[tokio::test]
     async fn removing_an_artifact_deletes_both_the_metadata_and_the_real_file() {
         let (state, _dir) = test_state();
-        let app = api_router(state);
+        let app = api_router(state.clone());
         app.clone().oneshot(json_request("POST", "/api/runs", serde_json::json!({"run_id": "artifact-remove-run"}))).await.unwrap();
         app.clone()
             .oneshot(json_request("POST", "/api/runs/artifact-remove-run/iterate", serde_json::json!({"stage": "devsystem.plan", "feedback": "built it", "succeeded": true})))
@@ -12516,12 +12553,26 @@ exit 1"#);
         .await;
         let artifact_id = created["id"].as_str().unwrap();
 
+        // Real gap found live 2026-08-24 (consolidation sweep): this test's own
+        // name and remove_artifact's own doc comment ("real, permanent delete of
+        // both the metadata and the real file on disk") both claim this proves
+        // file deletion, but download_artifact's own 404 comes purely from the
+        // metadata index lookup, before it ever touches the filesystem -- this
+        // test used to pass unchanged even with the real fs::remove_file call
+        // deleted entirely, silently leaking artifact files on disk forever.
+        // Checking the real file on disk directly, before and after, is the only
+        // way to actually prove what the test's own name claims.
+        let file_path = artifact_file_path(&state, "artifact-remove-run", artifact_id);
+        assert!(file_path.exists(), "the real file must exist on disk before removal -- otherwise this test proves nothing about deletion");
+
         let response = app
             .clone()
             .oneshot(Request::builder().method("POST").uri(format!("/api/runs/artifact-remove-run/artifacts/{artifact_id}/remove")).body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), SC::OK);
+
+        assert!(!file_path.exists(), "the real file on disk must actually be deleted, not just the metadata entry");
 
         let response = app
             .oneshot(Request::builder().uri(format!("/api/runs/artifact-remove-run/artifacts/{artifact_id}/download")).body(Body::empty()).unwrap())
