@@ -16,7 +16,7 @@ path = "src/main.rs"
 # auction_view directly, not just via devsystem-pipeline's re-exports. Pinned to
 # the exact same tag devsystem-pipeline uses so both crates always agree on the
 # wire-compatible CapacityOffer/PipelineSpec shapes.
-ct-common = { git = "https://github.com/scimbe/CADS-Tunnel", tag = "v0.4.13" }
+ct-common = { git = "https://github.com/scimbe/CADS-Tunnel", tag = "v0.4.18" }
 devsystem-pipeline = { path = "../pipeline" }
 # "multipart" for POST /api/runs/{id}/rag/upload-file -- the operator's real
 # image/document upload endpoint accepts a real multipart file, not JSON.
